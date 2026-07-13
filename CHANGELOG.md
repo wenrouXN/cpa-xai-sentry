@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.9
+
+### Fix: disabled-quota align actually stamps cool-down
+- Direct `cooldown_quota` write (not only HandleUsage synthetic) when CPA file disabled + sentry Active.
+- Skip 401/403-signaled accounts so they are not rebranded as free-usage.
+
 ## 1.1.8
 
 ### Fix: full patrol skips CPA-disabled 429 accounts
@@ -167,6 +173,12 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.9
+
+### Fix: disabled-quota align actually stamps cool-down
+- Direct `cooldown_quota` write (not only HandleUsage synthetic) when CPA file disabled + sentry Active.
+- Skip 401/403-signaled accounts so they are not rebranded as free-usage.
 
 ## 1.1.8
 

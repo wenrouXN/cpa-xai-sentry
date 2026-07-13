@@ -1183,6 +1183,8 @@ func humanizeReason(reason, sigL, action string) string {
 		return "非自有禁用，已打开，等待下次真实报错再判定"
 	case "owned_disable_was_enabled":
 		return "自有冷却期间文件被打开，已重新关闭"
+	case "align_disabled_quota":
+		return "CPA已禁用额度号对齐为冷却（巡检未探测已禁用文件）"
 	case "closed_loop_clean", "half_recovered_residue", "stale_recover_at_only":
 		return "清理半恢复残留状态"
 	case "active_with_future_recover_at":

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/openclaw-local/cpa-xai-sentry/internal/cpaapi"
-	"github.com/openclaw-local/cpa-xai-sentry/internal/guard"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/state"
 )
 
@@ -289,7 +288,12 @@ func (r *Runner) alignDisabledQuotaAccounts(ctx context.Context, mode Mode) int 
 			case state.CooldownQuota, state.CooldownSpending, state.CooldownPermission, state.CandidateDead, state.UserManual, state.Trashed, state.Purged:
 				continue
 			}
-			if acc.DisableSource == "plugin_auto" || acc.DisableSource == "user_manual" {
+			if acc.DisableSource == "plugin_auto" || acc.DisableSource == "user_manual" || acc.DisableSource == "cpa_file_disabled" {
+				continue
+			}
+			// do not rebrand 401/403 accounts as free-usage cool-down
+			switch acc.LastSignal {
+			case "permission_403", "auth_401", "spending_limit_402":
 				continue
 			}
 		}
@@ -300,20 +304,30 @@ func (r *Runner) alignDisabledQuotaAccounts(ctx context.Context, mode Mode) int 
 		if auth == "" {
 			auth = name
 		}
-		provName := prov
-		if provName == "" {
-			provName = "xai"
+		// Direct cool-down stamp (do not rely on HTTP probe). File is already disabled.
+		if r.Guard.State != nil {
+			r.Guard.State.Touch(auth)
+			if name != "" || em != "" {
+				r.Guard.State.UpdateMeta(auth, name, em, "")
+			}
+			// 24h free-usage cool-down window
+			recoverAt := time.Now().Add(24 * time.Hour)
+			if r.Cfg.MaxResetSeconds > 0 {
+				maxAt := time.Now().Add(time.Duration(r.Cfg.MaxResetSeconds) * time.Second)
+				if recoverAt.After(maxAt) {
+					recoverAt = maxAt
+				}
+			}
+			r.Guard.State.SetAccountState(auth, state.CooldownQuota, "plugin_auto")
+			r.Guard.State.SetRecoverAt(auth, recoverAt)
+			r.Guard.State.SetLastSignal(auth, "free_usage_429")
+			r.Guard.State.IncStreak(auth, "free_usage_429")
+			r.Guard.State.Log(state.ActionLog{
+				Auth: auth, Source: "patrol", Signal: "free_usage_429",
+				Action: "cooldown", Reason: "align_disabled_quota",
+			})
+			_ = r.Guard.State.Save()
 		}
-		_ = r.Guard.HandleUsage(ctx, guard.UsageEvent{
-			Provider:   provName,
-			AuthIndex:  auth,
-			FileName:   name,
-			Email:      em,
-			StatusCode: 429,
-			Body:       `{"code":"subscription:free-usage-exhausted","error":"cpa file already disabled; aligned by patrol"}`,
-			Success:    false,
-			Source:     "patrol",
-		})
 		label := em
 		if label == "" {
 			label = name
