@@ -212,21 +212,22 @@ func (r *Runner) runJob(ctx context.Context, mode Mode) {
 		}
 		r.appendLog(res.AuthIndex, label, res.StatusCode, "info", "探测完成 HTTP "+itoa(res.StatusCode), "done")
 	}
+	msg := "完成：探测" + itoa(len(results)) + " · 存活" + itoa(alive) + " · 冷却信号" + itoa(cool) + " · 异常" + itoa(errs)
 	jobMu.Lock()
 	jobStatus.Probed = len(results)
 	jobStatus.Alive = alive
 	jobStatus.Cooldown = cool
 	jobStatus.Errors = errs
-	jobStatus.Message = "完成：探测" + itoa(len(results)) + " · 存活" + itoa(alive) + " · 冷却信号" + itoa(cool) + " · 异常" + itoa(errs)
+	jobStatus.Message = msg
 	jobMu.Unlock()
 	if r.Guard.State != nil {
 		r.Guard.State.Log(state.ActionLog{
 			Source: "patrol", Action: "patrol_done",
-			Reason: jobStatus.Message,
+			Reason: msg,
 		})
 		_ = r.Guard.State.Save()
 	}
-	r.appendLog("", "", 0, "info", jobStatus.Message, "done")
+	r.appendLog("", "", 0, "info", msg, "done")
 }
 
 func (r *Runner) collectTargets(ctx context.Context, mode Mode) []Target {

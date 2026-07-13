@@ -7,7 +7,7 @@ CLIProxyAPI **native CGO plugin** for xAI / Grok account fleet:
 - **Patrol** active probe jobs with expandable per-job logs
 - **Web panel** for live account state, error policies, trash bin, action logs
 
-Current version: **v0.5.26**
+Current version: **v1.0.0**
 
 > Successor to `cpa-xai-quota-guard`. Run **only this plugin** for xAI free-usage guarding.
 
@@ -212,3 +212,14 @@ Internal ops plugin for CLIProxyAPI + xAI free fleet.
 Do not commit live auth tokens, management keys, or production `state.json`.
 
 `.gitignore` already excludes `bin/`, `*.so`, `data/`.
+
+
+## Production readiness (v1.0.0)
+
+- Unit tests + race tests for state/guard/policy/patrol
+- Atomic state save (`*.tmp` + rename, mode 0600)
+- Account `Get` returns a snapshot copy (no concurrent map/field races on returned pointers)
+- Single version source: `internal/version.Version`
+- Permanent disable requires master `sentry_enabled`
+- Default remove path is trash (7d); 402 / Super-Heavy protected from auto-trash
+- Do not run together with `cpa-xai-quota-guard`

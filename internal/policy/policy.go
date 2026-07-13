@@ -134,12 +134,12 @@ func applyActionTier(cfg sentrycfg.Config, a Action, act errorsig.Action, neverT
 			a.Reason = "策略=候删但全局自动候选关闭"
 		}
 	case errorsig.ActionDisable:
-		// permanent disable: gated by master sentry via guard; not requiring auto_delete
-		if cfg.SentryEnabled || cfg.AutoCooldown || cfg.AutoCandidate || cfg.AutoDelete {
+		// permanent disable requires master sentry on; not gated by auto_delete
+		if cfg.SentryEnabled {
 			a.Disable = true
 			a.Reason = "策略阶梯=永久禁用(≥" + itoa(th) + ")"
 		} else {
-			a.Reason = "策略=永久禁用但总开关类动作均关闭"
+			a.Reason = "策略=永久禁用但总开关关闭"
 		}
 	case errorsig.ActionTrash:
 		if neverTrash {

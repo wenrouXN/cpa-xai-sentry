@@ -1,4 +1,5 @@
-# Cutover: cpa-xai-quota-guard → cpa-xai-sentry
+# Cutover: cpa-xai-quota-guard → cpa-xai-sentry (plugin v1.0.0+)
+
 
 ## Goal
 
@@ -10,7 +11,10 @@ Only run **cpa-xai-sentry**. Keep `cpa-xai-quota-guard` disabled permanently.
 
 ```bash
 cd projects/cpa-xai-sentry
-CGO_ENABLED=1 go build -buildmode=c-shared -o bin/cpa-xai-sentry.so .
+# recommended
+DEPLOY=1 bash scripts/build-plugin.sh
+# or manually (must include -tags cshared):
+CGO_ENABLED=1 go build -tags cshared -buildmode=c-shared -o bin/cpa-xai-sentry.so .
 ```
 
 2. Copy `.so` into CPA plugins dir, e.g.:

@@ -266,10 +266,30 @@ func (s *Store) Touch(authIndex string) *Account {
 	return acc
 }
 
+// Get returns a snapshot copy of the account (safe for concurrent readers).
+// Callers must not assume mutations on the result are persisted — use store setters.
 func (s *Store) Get(authIndex string) *Account {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.Accounts[authIndex]
+	acc := s.Accounts[authIndex]
+	if acc == nil {
+		return nil
+	}
+	return cloneAccount(acc)
+}
+
+func cloneAccount(acc *Account) *Account {
+	if acc == nil {
+		return nil
+	}
+	cp := *acc
+	if acc.Streaks != nil {
+		cp.Streaks = make(map[string]int, len(acc.Streaks))
+		for k, v := range acc.Streaks {
+			cp.Streaks[k] = v
+		}
+	}
+	return &cp
 }
 
 func (s *Store) IncStreak(authIndex, signal string) int {
@@ -489,8 +509,7 @@ func (s *Store) AccountsSnapshot() []*Account {
 	defer s.mu.Unlock()
 	out := make([]*Account, 0, len(s.Accounts))
 	for _, a := range s.Accounts {
-		cp := *a
-		out = append(out, &cp)
+		out = append(out, cloneAccount(a))
 	}
 	return out
 }

@@ -3,11 +3,11 @@
     {
       "id": "cpa-xai-sentry",
       "name": "XAI Sentry",
-      "version": "0.1.0",
-      "description": "xAI observe + guard + trash bin for CLIProxyAPI",
+      "version": "1.0.0",
+      "description": "xAI/Grok observe + policy ladder guard + patrol + trash for CLIProxyAPI",
       "author": "local",
       "license": "MIT",
-      "repo": "local/cpa-xai-sentry"
+      "repo": "https://github.com/wenrouXN/cpa-xai-sentry"
     }
   ]
 }

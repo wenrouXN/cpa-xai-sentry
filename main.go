@@ -62,13 +62,15 @@ import (
 	"fmt"
 	"unsafe"
 
+	"github.com/openclaw-local/cpa-xai-sentry/internal/version"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
 const (
 	pluginID   = "cpa-xai-sentry"
-	pluginVer  = "0.5.26"
+	// pluginVer kept for CGO export sites; source of truth is internal/version.
+	pluginVer = version.Version
 	pluginAuth = "local"
 	pluginRepo = "local/cpa-xai-sentry"
 	pluginLogo = ""
