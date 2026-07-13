@@ -94,22 +94,29 @@ tr:hover td{background:#409eff0c}
 .sig-sub{color:var(--muted);font-size:10.5px;margin-top:2px}
 .reqcell{display:flex;flex-direction:column;gap:4px;align-items:flex-start}
 .reqcell .nums{font-variant-numeric:tabular-nums;font-weight:700;font-size:12.5px}
-.reqchip{display:inline-flex;align-items:center;gap:5px;border-radius:8px;padding:3px 8px;font-size:11px;font-weight:700;border:1px solid var(--border);cursor:pointer;background:#fff}
+.reqchip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 10px;font-size:11px;font-weight:700;border:1px solid var(--border);cursor:pointer;background:#fff;line-height:1.2}
 .reqchip:hover{border-color:#409eff;box-shadow:0 0 0 2px #409eff22}
-.reqchip.fail{background:#fef0f0;border-color:#fbc4c4;color:#c45656}
-.reqchip.ok{background:#f0f9eb;border-color:#c2e7b0;color:#529b2e}
-.reqchip .http{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px}
-.reqchip .dot{width:7px;height:7px;border-radius:50%;background:currentColor}
-.err-pop{position:fixed;z-index:50;display:none;width:min(520px,calc(100vw - 24px));max-height:min(70vh,520px);overflow:auto;background:#fff;border:1px solid #0f172a22;border-radius:12px;box-shadow:0 16px 48px #0f172a33;padding:12px 14px}
+.reqchip.fail{background:#fff5f5;border-color:#f56c6c55;color:#c45656}
+.reqchip.ok{background:#f0f9eb;border-color:#67c23a55;color:#529b2e}
+.reqchip .http{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;font-weight:800}
+.reqchip .bars{display:inline-flex;gap:1px;align-items:flex-end;height:12px}
+.reqchip .bars i{display:block;width:2px;border-radius:1px;background:currentColor;opacity:.85}
+.reqchip .bars i:nth-child(1){height:4px}.reqchip .bars i:nth-child(2){height:7px}.reqchip .bars i:nth-child(3){height:10px}.reqchip .bars i:nth-child(4){height:12px}
+.reqchip.fail .bars{color:#f56c6c}
+.reqchip.ok .bars{color:#67c23a}
+.mask-btn.active{background:#ecf5ff;border-color:#b3d8ff;color:#337ecc}
+.err-pop{position:fixed;z-index:50;display:none;width:min(560px,calc(100vw - 24px));max-height:min(72vh,560px);overflow:auto;background:#fff;border:1px solid #0f172a18;border-radius:12px;box-shadow:0 18px 50px #0f172a2e;padding:0}
 .err-pop.open{display:block}
-.err-pop .ep-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;margin-bottom:8px}
-.err-pop .ep-code{font-size:16px;font-weight:800;color:#c45656}
-.err-pop .ep-sub{color:var(--muted);font-size:12px;margin-top:2px}
+.err-pop .ep-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px 14px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,#fff,#fafbfc)}
+.err-pop .ep-code{font-size:15px;font-weight:800;color:#c45656;display:flex;align-items:center;gap:8px}
+.err-pop .ep-code .fail-dot{width:8px;height:8px;border-radius:50%;background:#f56c6c}
+.err-pop .ep-sub{color:var(--muted);font-size:12px;margin-top:3px}
 .err-pop .ep-close{border:0;background:#f4f4f5;border-radius:8px;width:28px;height:28px;cursor:pointer;font-size:16px;line-height:1}
-.err-pop .ep-kv{display:grid;grid-template-columns:72px 1fr;gap:4px 8px;font-size:12px;margin:8px 0}
+.err-pop .ep-body{padding:12px 14px}
+.err-pop .ep-kv{display:grid;grid-template-columns:72px 1fr;gap:6px 10px;font-size:12px;margin:0 0 10px}
 .err-pop .ep-kv b{color:var(--muted);font-weight:600}
 .err-pop .ep-json{background:#0b1220;color:#e2e8f0;border-radius:10px;padding:10px 12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
-.err-pop .ep-msg{color:#fbbf24;font-weight:600;margin-bottom:6px}
+.err-pop .ep-msg{color:#fbbf24;font-weight:600;margin-bottom:8px;white-space:pre-wrap}
 .policy-log{margin-top:8px;max-height:180px;overflow:auto;background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:0}
 .policy-log table{width:100%;border-collapse:collapse;font-size:11.5px}
 .policy-log th,.policy-log td{padding:6px 8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
@@ -141,7 +148,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.3.8</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.3.9</span> <span id="modeBadge" class="badge">模式</span></h1>
     </div>
     <div class="row" style="align-items:center">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -150,6 +157,7 @@ select.act{min-width:100px}input.num{width:70px}
       </label>
       <input id="cfgKey" type="password" placeholder="管理密钥" style="width:130px"/>
       <button class="xs" onclick="saveKey()">保存</button>
+      <button class="xs mask-btn" id="maskBtn" onclick="toggleMask()" title="切换账号脱敏/完整显示">脱敏</button>
       <button class="xs" onclick="refresh()">刷新</button>
     </div>
   </div>
@@ -256,6 +264,7 @@ select.act{min-width:100px}input.num{width:70px}
 <script>
 let CFG={}, timer=null, LAST_LOGS=[], LAST_ACCOUNTS=[], ERRORS=[], CURRENT_TAB='accounts';
 let ERR_RENDERED=false, ERR_SNAPSHOT='';
+let MASKED = localStorage.getItem('cpa-xai-sentry-mask') !== '0'; // default masked like CPAMP
 const SIG_ZH={free_usage_429:'免费额度用尽',spending_limit_402:'消费限额',auth_401:'凭证失效',permission_403:'权限拒绝'};
 const API="/v0/management/cpa-xai-sentry";
 const KEY_LS="cpa-xai-sentry-management-key";
@@ -263,6 +272,54 @@ const STATE_ZH={active:'正常',cooldown_quota:'额度冷却',cooldown_spending:
 const ACT_ZH={observe:'仅观察',cooldown:'冷却',candidate:'进候选',trash:'进垃圾箱',wait:'等待恢复',review:'复查',manual:'手动',none:'无',restore_or_purge:'恢复/清除'};
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2400)}
 function esc(s){return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+// CPAMP-style mask: local part >8 => abc***wxyz@domain
+function maskEmail(email){
+  const n=String(email||'').trim();
+  if(!n) return '-';
+  const at=n.indexOf('@');
+  if(at<=0) return maskToken(n);
+  const r=n.slice(0,at), i=n.slice(at);
+  if(r.length<=8) return n;
+  return r.slice(0,3)+'***'+r.slice(-4)+i;
+}
+function maskToken(s){
+  const n=String(s||'');
+  if(n.length<=8) return n;
+  return n.slice(0,3)+'***'+n.slice(-4);
+}
+function dispName(a){
+  const full=a.display_name||a.email||a.file_name||a.auth_index||'-';
+  return MASKED ? maskEmail(full) : full;
+}
+function dispAuth(s){ return MASKED ? maskEmail(s) : (s||'-'); }
+function syncMaskBtn(){
+  const b=document.getElementById('maskBtn');
+  if(!b) return;
+  b.textContent = MASKED ? '脱敏' : '完整';
+  b.classList.toggle('active', !!MASKED);
+  b.title = MASKED ? '当前脱敏显示，点击显示完整账号' : '当前完整显示，点击脱敏账号';
+}
+function toggleMask(){
+  MASKED = !MASKED;
+  localStorage.setItem('cpa-xai-sentry-mask', MASKED ? '1' : '0');
+  syncMaskBtn();
+  // re-render from cache without full network roundtrip when possible
+  if(LAST_ACCOUNTS && LAST_ACCOUNTS.length){
+    const prevSel=new Set(selectedAuths());
+    document.getElementById('accBody').innerHTML=(LAST_ACCOUNTS||[]).map(a=>'<tr>'+
+      '<td><input type="checkbox" class="rowchk" data-auth="'+esc(a.auth_index)+'"'+(prevSel.has(a.auth_index)?' checked':'')+'/></td>'+
+      '<td>'+accountCell(a)+'</td>'+
+      '<td>'+stateTag(a.state)+'</td>'+
+      '<td>'+callsCell(a)+'</td>'+
+      '<td>'+quotaCell(a)+'</td>'+
+      '<td>'+timeCell(a.recover_at)+'</td></tr>').join('')||
+      '<tr><td colspan="6" class="muted">无匹配结果</td></tr>';
+  }
+  renderLogs(LAST_LOGS||[]);
+  if(CURRENT_TAB==='errors'){ ERR_RENDERED=false; renderErrorCards(ERRORS||[], true); }
+  if(CURRENT_TAB==='trash') refreshTrashOnly();
+  toast(MASKED ? '已切换为脱敏显示' : '已切换为完整显示');
+}
 function getKey(){return (document.getElementById('cfgKey').value||localStorage.getItem(KEY_LS)||'').trim()}
 function saveKey(){const k=document.getElementById('cfgKey').value.trim(); if(k) localStorage.setItem(KEY_LS,k); else localStorage.removeItem(KEY_LS); toast(k?'密钥已保存':'已清除密钥'); refresh()}
 async function j(path, opt){
@@ -328,17 +385,19 @@ function renderKPIs(s, trashCount, cool, inv, usage){
   ).join('');
 }
 function accountCell(a){
-  const name=a.display_name||a.email||a.file_name||a.auth_index||'-';
+  const name=dispName(a);
   const tier=a.tier&&a.tier!=='unknown'?a.tier:'';
-  return '<div class="acc-name">'+esc(name)+'</div>'+(tier?('<div class="acc-sub">'+esc(tier)+'</div>'):'');
+  const title=a.display_name||a.email||a.auth_index||'';
+  return '<div class="acc-name" title="'+esc(title)+'">'+esc(name)+'</div>'+(tier?('<div class="acc-sub">'+esc(tier)+'</div>'):'');
 }
 function callsCell(a){
   const req=a.day_calls||0, fail=a.day_fail_calls||0;
   const http=httpCodeOf(a.last_signal);
+  const bars='<span class="bars"><i></i><i></i><i></i><i></i></span>';
   const chip=fail>0
-    ? '<button type="button" class="reqchip fail" data-auth="'+esc(a.auth_index)+'" onclick="openAccountError(this)"><span class="dot"></span><span class="http">HTTP '+(http||'ERR')+'</span><span>报错 '+fail+'</span></button>'
-    : '<span class="reqchip ok"><span class="dot"></span>正常</span>';
-  return '<div class="reqcell"><div class="nums">'+req+' / '+fail+'</div>'+chip+'</div>';
+    ? '<button type="button" class="reqchip fail" data-auth="'+esc(a.auth_index)+'" onclick="openAccountError(this)">'+bars+'<span class="http">HTTP '+(http||'ERR')+'</span><span>失败</span></button>'
+    : '<span class="reqchip ok">'+bars+'<span>成功</span></span>';
+  return '<div class="reqcell"><div class="nums">'+req+(fail?(' · <span style="color:#c45656">'+fail+'</span>'):'')+'</div>'+chip+'</div>';
 }
 function httpCodeOf(sig){
   if(sig==='free_usage_429') return '429';
@@ -392,27 +451,32 @@ function openAccountError(btn){
   const http=httpCodeOf(sig)||'ERR';
   const err=(ERRORS||[]).find(e=>e.key===sig) || {};
   const body=parseErrorBody(err.sample||err.sample_pretty||'');
+  const fullName=a.display_name||a.email||a.auth_index||'-';
+  const name=MASKED?maskEmail(fullName):fullName;
   const title='HTTP '+http;
-  const sub=(SIG_ZH[sig]||sig||'错误')+(sig?(' · '+sig):'');
-  let html='<div class="ep-head"><div><div class="ep-code">'+esc(title)+'</div><div class="ep-sub">'+esc(sub)+'</div></div><button class="ep-close" onclick="closeErrPop()">×</button></div>';
+  const sub=(SIG_ZH[sig]||sig||'失败')+(sig?(' · '+sig):'');
+  let html='<div class="ep-head"><div><div class="ep-code"><span class="fail-dot"></span>'+esc(title)+'</div><div class="ep-sub">'+esc(sub)+'</div></div><button class="ep-close" onclick="closeErrPop()">×</button></div><div class="ep-body">';
   html+='<div class="ep-kv">'+
-    '<b>账号</b><span>'+esc(a.display_name||a.email||a.auth_index||'-')+'</span>'+
+    '<b>账号</b><span title="'+esc(fullName)+'">'+esc(name)+'</span>'+
     '<b>状态</b><span>'+esc(STATE_ZH[a.state]||a.state||'-')+'</span>'+
-    '<b>今日</b><span>请求 '+(a.day_calls||0)+' · 报错 '+(a.day_fail_calls||0)+'</span>'+
+    '<b>今日</b><span>请求 '+(a.day_calls||0)+' · 失败 '+(a.day_fail_calls||0)+'</span>'+
     (body.code?('<b>code</b><span class="mono">'+esc(body.code)+'</span>'):'')+
     (body.tokens?('<b>tokens</b><span>'+esc(body.tokens)+'</span>'):'')+
     (a.recover_at?('<b>恢复</b><span>'+esc(a.recover_at)+'</span>'):'')+
   '</div>';
-  if(body.message) html+='<div class="ep-json"><div class="ep-msg">'+esc(body.message)+'</div>'+esc(body.pretty||'')+'</div>';
-  else if(body.pretty) html+='<div class="ep-json">'+esc(body.pretty)+'</div>';
-  else html+='<div class="muted">暂无完整错误体样本；已根据信号/计数汇总。</div>';
-  // recent related logs compact
-  const logs=(LAST_LOGS||[]).filter(l=>l.auth===a.auth_index || l.auth_label===a.display_name || l.auth_label===a.email).slice().reverse().slice(0,5);
-  if(logs.length){
-    html+='<div class="meta" style="margin:10px 0 4px">最近相关</div><div class="policy-log"><table><thead><tr><th>时间</th><th>账号</th><th>信息</th></tr></thead><tbody>'+
-      logs.map(l=>'<tr><td class="mono">'+esc(l.at||'')+'</td><td>'+esc(l.auth_label||l.auth||'')+'</td><td>'+esc(l.reason||l.signal_label||l.text||'')+'</td></tr>').join('')+
-    '</tbody></table></div>';
+  if(body.message || body.pretty){
+    const msg=body.message||'';
+    // avoid duplicating full message twice if pretty JSON already contains it
+    let pretty=body.pretty||'';
+    if(msg && pretty && pretty.indexOf(String(msg).slice(0,40))>=0){
+      html+='<div class="ep-json">'+esc(pretty)+'</div>';
+    }else{
+      html+='<div class="ep-json">'+(msg?('<div class="ep-msg">'+esc(msg)+'</div>'):'')+esc(pretty)+'</div>';
+    }
+  }else{
+    html+='<div class="muted">暂无完整失败内容样本。</div>';
   }
+  html+='</div>';
   showErrPop(html, btn);
 }
 function showErrPop(html, anchor){
@@ -475,21 +539,21 @@ function renderLogs(logs){
   const lines=LAST_LOGS.slice().reverse().slice(0,300).map(e=>{
     const act=e.action_label||ACT_ZH[e.action]||e.action||'—';
     const sig=e.signal_label||SIG_ZH[e.signal]||e.signal||'';
-    const who=e.auth_label||e.auth||'';
-    const text=e.text || [act, sig, who, e.reason].filter(Boolean).join(' · ');
+    const who=dispAuth(e.auth_label||e.auth||'');
+    const text=act+(sig?(' · '+sig):'')+(who?(' · '+who):'');
     const cls=String(e.action||'').includes('fail')||String(e.action||'').includes('error')?'l-err':'l-act';
     return '<div><span class="muted">'+esc(e.at||'')+'</span> <span class="'+cls+'">'+esc(text)+'</span></div>';
   });
   box.innerHTML=lines.join('')||'暂无日志';
   const meta=document.getElementById('logMeta');
-  if(meta) meta.textContent=(LAST_LOGS.length||0)+' 条 · 中文';
+  if(meta) meta.textContent=(LAST_LOGS.length||0)+' 条'+(MASKED?' · 脱敏':'');
 }
 async function refreshTrashOnly(){
   try{
     const tr=await j('/trash');
     const items=tr.trash||[];
     document.getElementById('trashBody').innerHTML=items.length?items.map(t=>'<tr>'+
-      '<td><div class="acc-name">'+esc(t.email||t.file_name||t.auth_index||'-')+'</div><div class="acc-sub mono">'+esc(t.file_name||t.auth_index||'')+'</div></td>'+
+      '<td><div class="acc-name" title="'+esc(t.email||t.file_name||t.auth_index||'')+'">'+esc(dispAuth(t.email||t.file_name||t.auth_index||'-'))+'</div></td>'+
       '<td>'+esc(t.signal||'')+'</td><td class="mono">'+esc(t.expires_at||'')+'</td>'+
       '<td class="actions"><button class="xs btn-restore" data-id="'+esc(t.id)+'">恢复</button><button class="xs primary btn-restore-en" data-id="'+esc(t.id)+'">恢复并启用</button><button class="xs danger btn-purge" data-id="'+esc(t.id)+'">彻底清除</button></td></tr>').join('')
       :'<tr><td colspan="4" class="muted">垃圾箱为空</td></tr>';
@@ -505,7 +569,8 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.3.8');
+    document.getElementById('ver').textContent='v'+(st.version||'0.3.9');
+    syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
     const inv=st.inventory||{};
@@ -595,10 +660,11 @@ function policyLogsHTML(key){
   if(!rows.length) return '<div class="pl-empty">暂无该策略相关报错</div>';
   const err=(ERRORS||[]).find(e=>e.key===key)||{};
   const sample=err.sample?parseErrorBody(err.sample):null;
-  return '<table><thead><tr><th style="width:70px">时间</th><th>账号</th><th>错误信息</th><th style="width:70px">请求</th><th style="width:70px">报错</th></tr></thead><tbody>'+
+  return '<table><thead><tr><th style="width:70px">时间</th><th>账号</th><th>错误信息</th><th style="width:70px">请求</th><th style="width:70px">失败</th></tr></thead><tbody>'+
     rows.map(r=>{
       const msg=cleanSample(r.reason||'') || (sample&&sample.message) || (SIG_ZH[key]||key);
-      return '<tr><td class="mono">'+esc(r.lastAt||'')+'</td><td>'+esc(r.label||r.auth)+'</td><td title="'+esc(sample&&sample.pretty?sample.pretty:msg)+'">'+esc(String(msg).slice(0,120))+'</td><td>'+(r.req||0)+'</td><td>'+(r.fail||0)+'</td></tr>';
+      const label=dispAuth(r.label||r.auth);
+      return '<tr><td class="mono">'+esc(r.lastAt||'')+'</td><td title="'+esc(r.label||r.auth||'')+'">'+esc(label)+'</td><td title="'+esc(sample&&sample.pretty?sample.pretty:msg)+'">'+esc(String(msg).slice(0,120))+'</td><td>'+(r.req||0)+'</td><td>'+(r.fail||0)+'</td></tr>';
     }).join('')+
   '</tbody></table>';
 }
@@ -731,6 +797,7 @@ document.addEventListener('click',function(ev){
   if(t.classList.contains('btn-purge')) purge(t.getAttribute('data-id'));
 });
 const saved=localStorage.getItem(KEY_LS)||''; if(saved) document.getElementById('cfgKey').value=saved;
+syncMaskBtn();
 refresh(); setInterval(refresh,15000);
 </script>
 </body>
