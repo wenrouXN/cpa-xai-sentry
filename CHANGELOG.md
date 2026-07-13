@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.7
+
+### Fix: duplicate cool-down action logs
+- `applyCooldown` logged `cooldown` twice (before + after CPA SetDisabled).
+- Single log entry now; `cooldown_failed` still logged on disable failure.
+- Patrol targets deduped by email/file.
+
+
 ## 1.1.6
 
 ### Fix: patrol all accounts HTTP 400
@@ -151,6 +159,14 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.7
+
+### Fix: duplicate cool-down action logs
+- `applyCooldown` logged `cooldown` twice (before + after CPA SetDisabled).
+- Single log entry now; `cooldown_failed` still logged on disable failure.
+- Patrol targets deduped by email/file.
+
 
 ## 1.1.6
 

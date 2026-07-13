@@ -336,10 +336,7 @@ func (g *Guard) applyCooldown(ctx context.Context, ev UsageEvent, res match.Resu
 			return err
 		}
 	}
-	g.State.Log(state.ActionLog{
-		Auth: ev.AuthIndex, Source: ev.Source, Signal: string(res.Signal),
-		Action: "cooldown", Reason: res.Reason,
-	})
+	// cooldown already logged once before SetDisabled (avoid duplicate action log lines)
 	return nil
 }
 

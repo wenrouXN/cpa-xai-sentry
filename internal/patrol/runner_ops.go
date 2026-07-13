@@ -256,6 +256,7 @@ func (r *Runner) collectTargets(ctx context.Context, mode Mode) []Target {
 		_ = r.Guard.Resolver.Ensure(ctx)
 		ids = r.Guard.Resolver.All()
 	}
+	seenTarget := map[string]bool{}
 	for _, id := range ids {
 		if !cpaapi.IsXAIName(id.FileName, id.Provider) {
 			continue
@@ -301,6 +302,17 @@ func (r *Runner) collectTargets(ctx context.Context, mode Mode) []Target {
 				}
 			}
 		}
+		dk := strings.ToLower(strings.TrimSpace(id.Email))
+		if dk == "" {
+			dk = strings.ToLower(strings.TrimSpace(id.FileName))
+		}
+		if dk == "" {
+			dk = strings.ToLower(strings.TrimSpace(authIdx))
+		}
+		if seenTarget[dk] {
+			continue
+		}
+		seenTarget[dk] = true
 		out = append(out, Target{
 			AuthIndex: authIdx,
 			FileName:  id.FileName,
