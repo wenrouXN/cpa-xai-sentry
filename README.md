@@ -101,53 +101,95 @@ Key packages under `internal/`:
 
 ---
 
-## Build
+## Install / mount / config (start here)
+
+**Full production guide (build → Docker volumes → `config.yaml` → verify):**
+
+- **[docs/INSTALL.md](docs/INSTALL.md)** — how to install, where to put the `.so`, how to mount `plugins` / `auths` / state, full config, rollout, troubleshooting  
+- **[docs/CUTOVER.md](docs/CUTOVER.md)** — migrate from `cpa-xai-quota-guard`
+
+### Quick path (Docker host)
+
+```bash
+# 1) build
+git clone https://github.com/wenrouXN/cpa-xai-sentry.git
+cd cpa-xai-sentry
+DEPLOY=0 bash scripts/build-plugin.sh   # → bin/cpa-xai-sentry.so
+
+# 2) install binary into CPA plugins tree (host side)
+mkdir -p /path/to/CLIProxyAPIplus/plugins/linux/amd64
+cp -f bin/cpa-xai-sentry.so /path/to/CLIProxyAPIplus/plugins/linux/amd64/
+```
+
+**Docker mounts (required):**
+
+```yaml
+volumes:
+  - ./config.yaml:/CLIProxyAPI/config.yaml
+  - ./auths:/root/.cli-proxy-api          # auth files + durable state/trash
+  - ./plugins:/CLIProxyAPI/plugins        # must contain linux/amd64/cpa-xai-sentry.so
+  - ./logs:/CLIProxyAPI/logs
+```
+
+**Minimal plugin config** (inside CPA `config.yaml`):
+
+```yaml
+plugins:
+  enabled: true
+  dir: "plugins"
+  configs:
+    cpa-xai-quota-guard:
+      enabled: false          # never run two enforcers
+    cpa-xai-sentry:
+      enabled: true
+      sentry_enabled: true
+      auto_cooldown: false    # observe first
+      auto_candidate: false
+      auto_delete: false
+      management_url: "http://127.0.0.1:8317"
+      management_key: "<CPA_MANAGEMENT_KEY>"
+      auth_dir: "/root/.cli-proxy-api"
+      state_path: "/root/.cli-proxy-api/cpa-xai-sentry/state.json"
+      trash_dir: "/root/.cli-proxy-api/cpa-xai-sentry/trash"
+```
+
+```bash
+# 3) restart CPA
+cd /path/to/CLIProxyAPIplus && docker compose restart cli-proxy-api
+
+# 4) open panel
+# http://<host>:8317/v0/resource/plugins/cpa-xai-sentry/index.html
+# Header for API: X-Management-Key: <CPA_MANAGEMENT_KEY>
+```
+
+> Put `state_path` / `trash_dir` **under the mounted auth volume**, or state is lost on container recreate.
+
+---
+
+## Build (details)
 
 Requires Go + CGO, and CLIProxyAPI plugin ABI (vendored stubs under `third_party/CLIProxyAPI-src` for types).
 
 ```bash
-# tests
 go test ./...
-
-# plugin .so (Linux amd64 example)
 DEPLOY=0 bash scripts/build-plugin.sh
-# → bin/cpa-xai-sentry.so
+# MUST use -tags cshared (script does this)
+# → bin/cpa-xai-sentry.so → copy to plugins/linux/amd64/
 ```
-
-Deploy path depends on your CLIProxyAPI install, typically:
-
-```text
-CLIProxyAPI/plugins/linux/amd64/cpa-xai-sentry.so
-```
-
-Then restart the proxy / reload plugins.
 
 ---
 
 ## Panel
 
-After host loads the plugin, open management UI (example):
-
 ```text
-http://<host>:<mgmt-port>/v0/resource/plugins/cpa-xai-sentry/index.html
+http://<host>:8317/v0/resource/plugins/cpa-xai-sentry/index.html
 ```
 
-API base:
+API base: `/v0/management/cpa-xai-sentry`  
+Header: `X-Management-Key: <your key>` (or `Authorization: Bearer …`)
 
-```text
-/v0/management/cpa-xai-sentry
-```
-
-Header: `X-Management-Key: <your key>`
-
-Main tabs:
-
-1. **账号实况** — fleet table, bulk enable / permanent disable / trash / cooldown  
-2. **巡检** — start probe jobs, expandable job logs  
-3. **错误策略** — ladder editor, account hits, split unmatched shapes  
-4. **垃圾箱** — restore / purge  
-
-Action log stays on the **right**; patrol logs stay **inside 巡检**.
+Tabs: **账号实况** · **巡检** · **错误策略** · **垃圾箱**  
+Action log on the **right**; patrol logs **inside 巡检**.
 
 ---
 
@@ -161,19 +203,7 @@ go run . -addr 127.0.0.1:18999 -data ./data
 
 ---
 
-## Cutover from quota-guard
-
-See [`docs/CUTOVER.md`](docs/CUTOVER.md):
-
-1. Disable `cpa-xai-quota-guard`
-2. Install only `cpa-xai-sentry`
-3. Verify panel + one cooldown recover cycle
-
----
-
 ## Configuration (high level)
-
-Host YAML / plugin config fields include:
 
 | Field | Meaning |
 |---|---|
@@ -181,12 +211,13 @@ Host YAML / plugin config fields include:
 | `auto_cooldown` | Allow policy cooldown |
 | `auto_candidate` | Allow 401 candidate path |
 | `auto_delete` | Allow trash path |
+| `management_url` / `management_key` | CPA management loopback |
+| `auth_dir` / `state_path` / `trash_dir` | Auth + durable paths (mount these) |
 | `patrol_enabled` / `patrol_interval` | Scheduled patrol |
-| `permission_cooldown_seconds` | Default 403 cool window |
-| `auth401_cooldown_seconds` | Default 401 window |
 | `trash_retention_days` | Trash TTL |
 
-Per-error policy (panel) overrides threshold / ladder / count mode.
+Full field list + Docker examples: **[docs/INSTALL.md](docs/INSTALL.md)**.  
+Per-error ladder is edited in the panel (overrides YAML defaults).
 
 ---
 
