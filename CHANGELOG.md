@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.12
+
+### Patrol: real probe only (no synthetic disabled→429)
+- Removed `align_disabled_quota` heuristic (disabled file ≠ proven free-usage).
+- Full patrol includes **disabled** xAI auths when token is available; probe uses token directly.
+- Policy follows **real** HTTP status/body only (200/429/403/…).
+
+
 ## 1.1.11
 
 ### Fix: same-tick 「到期恢复」vs「冷却补关」fight
@@ -189,6 +197,14 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.12
+
+### Patrol: real probe only (no synthetic disabled→429)
+- Removed `align_disabled_quota` heuristic (disabled file ≠ proven free-usage).
+- Full patrol includes **disabled** xAI auths when token is available; probe uses token directly.
+- Policy follows **real** HTTP status/body only (200/429/403/…).
+
 
 ## 1.1.11
 

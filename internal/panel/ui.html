@@ -214,7 +214,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.11</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.12</span></h1>
     </div>
     <div class="top-actions">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -309,10 +309,10 @@ select.act{min-width:100px}input.num{width:70px}
       <div class="patrol-head">
         <div>
           <b>巡检中心</b>
-          <span class="meta">会真实请求 xAI，消耗免费额度 · 全量只扫已启用 · 仅冷却只扫冷却号</span>
+          <span class="meta">会真实请求 xAI，按返回处置 · 全量=有 token 的 xAI（含已禁用）· 仅冷却=冷却中账号</span>
         </div>
         <div class="row">
-          <button class="xs primary" onclick="patrolStart('full')" title="只探测当前已启用的 xAI 账号">手动全量</button>
+          <button class="xs primary" onclick="patrolStart('full')" title="探测有 token 的 xAI 账号（含 CPA 已禁用），按真实 HTTP 结果走策略">手动全量</button>
           <button class="xs warn" onclick="patrolStart('cooldown')" title="只探测当前冷却中的账号">手动查冷却</button>
           <button type="button" class="patrol-toggle" id="btnPatrolCfg" onclick="togglePatrolCfg()" title="展开/收起巡查参数">配置 ▾</button>
         </div>
@@ -972,7 +972,7 @@ async function refresh(){
     ]);
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'1.1.11');
+    document.getElementById('ver').textContent='v'+(st.version||'1.1.12');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -1442,7 +1442,7 @@ async function patrolStart(mode){
     const r=await j('/patrol/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:mode||'full'})});
     // when running, auto show progress; keep log closed unless user opened it
     paintPatrol(r.patrol||{}, []);
-    toast(mode==='cooldown'?'已启动：仅查冷却号':'已启动：全量巡查（会耗额度）');
+    toast(mode==='cooldown'?'已启动：仅查冷却号':'已启动：全量实探（含已禁用，按真实结果处置）');
     if(PATROL_TIMER) clearInterval(PATROL_TIMER);
     PATROL_TIMER=setInterval(patrolPoll, 1200);
     patrolPoll();

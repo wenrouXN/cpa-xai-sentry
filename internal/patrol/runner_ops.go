@@ -137,31 +137,30 @@ func (r *Runner) runJob(ctx context.Context, mode Mode) {
 		_ = r.Guard.Resolver.Ensure(ctx)
 	}
 
-	// Align CPA-disabled free accounts that sentry still shows as Active.
-	// Full patrol only probes enabled files, so already-disabled 429s would be skipped forever.
-	aligned := r.alignDisabledQuotaAccounts(ctx, mode)
-
+	// Real HTTP probe only — no synthetic "disabled ⇒ free_usage_429" alignment.
+	// Full mode probes all xAI auths that have a token (enabled + disabled);
+	// disabled CPA files still carry tokens, so upstream status is ground truth.
 	targets := r.collectTargets(ctx, mode)
 	jobMu.Lock()
-	jobStatus.Total = len(targets) + aligned
+	jobStatus.Total = len(targets)
 	jobMu.Unlock()
-	r.appendLog("", "", 0, "info", "开始巡查 · 模式="+string(mode)+" · 探测目标="+itoa(len(targets))+" · 已禁用额度对齐="+itoa(aligned), "start")
+	r.appendLog("", "", 0, "info", "开始巡查 · 模式="+string(mode)+" · 探测目标="+itoa(len(targets)), "start")
 	if r.Guard.State != nil {
 		r.Guard.State.Log(state.ActionLog{
 			Source: "patrol", Action: "patrol_start",
-			Reason: "mode=" + string(mode) + " probe=" + itoa(len(targets)) + " align_disabled_quota=" + itoa(aligned),
+			Reason: "mode=" + string(mode) + " probe=" + itoa(len(targets)),
 		})
 	}
-	if len(targets) == 0 && aligned == 0 {
-		r.appendLog("", "", 0, "warn", "没有可巡查目标（全量只扫已启用；仅冷却只扫冷却号；也无已禁用待对齐额度号）", "")
+	if len(targets) == 0 {
+		r.appendLog("", "", 0, "warn", "没有可巡查目标（全量=有 token 的 xAI 账号；仅冷却=冷却中账号）", "")
 		return
 	}
 
-	// run probes (existing Run feeds HandleUsage)
+	// run probes (existing Run feeds HandleUsage with real status/body)
 	results := r.Run(ctx, targets)
-	alive, cool, sig, errs := 0, aligned, 0, 0
-	// cool = free-usage/402 cool-down signals (+ aligned disabled-quota)
-	// sig  = 401/403 auth signals (fed to policy, not "errors")
+	alive, cool, sig, errs := 0, 0, 0, 0
+	// cool = free-usage/402 cool-down signals from real probe
+	// sig  = 401/403 auth signals (fed to policy)
 	for _, res := range results {
 		label := res.AuthIndex
 		// find target label
@@ -221,12 +220,8 @@ func (r *Runner) runJob(ctx context.Context, mode Mode) {
 		errs++
 		r.appendLog(res.AuthIndex, label, res.StatusCode, "info", "探测完成 HTTP "+itoa(res.StatusCode), "done")
 	}
-	// probed may be HTTP-only; show aligned separately when >0
 	probeN := len(results)
 	msg := "完成：探测" + itoa(probeN) + " · 存活" + itoa(alive) + " · 冷却信号" + itoa(cool) + " · 权限信号" + itoa(sig) + " · 异常" + itoa(errs)
-	if aligned > 0 {
-		msg += " · 其中已禁用额度对齐" + itoa(aligned)
-	}
 	jobMu.Lock()
 	jobStatus.Probed = len(results)
 	jobStatus.Alive = alive
@@ -244,109 +239,6 @@ func (r *Runner) runJob(ctx context.Context, mode Mode) {
 	r.appendLog("", "", 0, "info", msg, "done")
 }
 
-
-// alignDisabledQuotaAccounts finds xAI auth files that are CPA-disabled while
-// sentry state is still Active (typical free-usage 429 already disabled by CPA
-// or another tool). Feeds a synthetic free_usage_429 into Guard so state becomes
-// cooldown_quota without needing a live probe (full patrol skips disabled files).
-func (r *Runner) alignDisabledQuotaAccounts(ctx context.Context, mode Mode) int {
-	if r.Guard == nil || r.CPA == nil || mode != ModeFull {
-		return 0
-	}
-	files, err := r.CPA.ListAuthFiles(ctx)
-	if err != nil || len(files) == 0 {
-		return 0
-	}
-	n := 0
-	for _, f := range files {
-		if !f.Disabled {
-			continue
-		}
-		name := strings.TrimSpace(f.Name)
-		prov := f.Provider
-		if prov == "" {
-			prov = f.Type
-		}
-		if name == "" || !cpaapi.IsXAIName(name, prov) {
-			continue
-		}
-		em := strings.TrimSpace(f.Email)
-		if em == "" {
-			em = strings.TrimSpace(f.Account)
-		}
-		ai := strings.TrimSpace(f.AuthIndex)
-		var acc *state.Account
-		if r.Guard.State != nil {
-			if ai != "" {
-				acc = r.Guard.State.Get(ai)
-			}
-			if acc == nil {
-				for _, a := range r.Guard.State.AccountsSnapshot() {
-					if (em != "" && strings.EqualFold(a.Email, em)) ||
-						(name != "" && strings.EqualFold(a.FileName, name)) {
-						acc = a
-						break
-					}
-				}
-			}
-			if acc == nil {
-				acc = r.Guard.State.Get(name)
-			}
-		}
-		if acc != nil {
-			switch acc.State {
-			case state.CooldownQuota, state.CooldownSpending, state.CooldownPermission, state.CandidateDead, state.UserManual, state.Trashed, state.Purged:
-				continue
-			}
-			if acc.DisableSource == "plugin_auto" || acc.DisableSource == "user_manual" || acc.DisableSource == "cpa_file_disabled" {
-				continue
-			}
-			// do not rebrand 401/403 accounts as free-usage cool-down
-			switch acc.LastSignal {
-			case "permission_403", "auth_401", "spending_limit_402":
-				continue
-			}
-		}
-		auth := ai
-		if auth == "" && acc != nil {
-			auth = acc.AuthIndex
-		}
-		if auth == "" {
-			auth = name
-		}
-		// Direct cool-down stamp (do not rely on HTTP probe). File is already disabled.
-		if r.Guard.State != nil {
-			r.Guard.State.Touch(auth)
-			if name != "" || em != "" {
-				r.Guard.State.UpdateMeta(auth, name, em, "")
-			}
-			// 24h free-usage cool-down window
-			recoverAt := time.Now().Add(24 * time.Hour)
-			if r.Cfg.MaxResetSeconds > 0 {
-				maxAt := time.Now().Add(time.Duration(r.Cfg.MaxResetSeconds) * time.Second)
-				if recoverAt.After(maxAt) {
-					recoverAt = maxAt
-				}
-			}
-			r.Guard.State.SetAccountState(auth, state.CooldownQuota, "plugin_auto")
-			r.Guard.State.SetRecoverAt(auth, recoverAt)
-			r.Guard.State.SetLastSignal(auth, "free_usage_429")
-			r.Guard.State.IncStreak(auth, "free_usage_429")
-			r.Guard.State.Log(state.ActionLog{
-				Auth: auth, Source: "patrol", Signal: "free_usage_429",
-				Action: "cooldown", Reason: "align_disabled_quota",
-			})
-			_ = r.Guard.State.Save()
-		}
-		label := em
-		if label == "" {
-			label = name
-		}
-		r.appendLog(auth, label, 429, "warn", "CPA 已禁用且哨兵仍为正常 → 按免费额度用尽对齐冷却（全量巡检不探测已禁用号）", "align_disabled_quota")
-		n++
-	}
-	return n
-}
 
 func (r *Runner) collectTargets(ctx context.Context, mode Mode) []Target {
 	out := make([]Target, 0, 64)
@@ -394,9 +286,7 @@ func (r *Runner) collectTargets(ctx context.Context, mode Mode) []Target {
 		}
 		switch mode {
 		case ModeFull:
-			if id.Disabled {
-				continue // only enabled
-			}
+			// include enabled + disabled; token probe is source of truth
 		case ModeCooldown:
 			// only cooling accounts
 			_, ok1 := cooling[id.AuthIndex]
