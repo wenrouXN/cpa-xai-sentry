@@ -318,6 +318,23 @@ func (s *Store) ClearAuthStreaksExcept(authIndex string, keep map[string]bool) {
 	acc.UpdatedAt = time.Now()
 }
 
+// ClearCoolDownResidue clears half-recovered cool-down fields but keeps streaks.
+func (s *Store) ClearCoolDownResidue(authIndex string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	acc := s.Accounts[authIndex]
+	if acc == nil {
+		return
+	}
+	acc.State = Active
+	if acc.DisableSource == "plugin_auto" {
+		acc.DisableSource = ""
+	}
+	acc.RecoverAt = time.Time{}
+	// do not clear LastSignal/Streaks — needed for policy ladders on live accounts
+	acc.UpdatedAt = time.Now()
+}
+
 // ResetToActive is the closed-loop recovery: back to clean normal state.
 // Clears cool-down locks, recover timer, last error signal and streaks.
 func (s *Store) ResetToActive(authIndex string) {

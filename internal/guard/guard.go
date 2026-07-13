@@ -517,9 +517,13 @@ func (g *Guard) reopenForeignDisabled(ctx context.Context, now time.Time) (int, 
 	return n, nil
 }
 
-// scrubDirtyActiveAccounts fixes half-recovered accounts:
-// state=active but still carrying last_signal / plugin_auto / streaks / recover_at.
-// These show as "正常" while reason still looks like 403冷却 — closed-loop violation.
+// scrubDirtyActiveAccounts fixes half-recovered cool-downs only:
+// state=active but still carrying plugin_auto lock / recover_at / stale last_signal
+// from a previous cool-down recovery path.
+//
+// Do NOT treat non-empty Streaks as dirty — active accounts normally accumulate
+// consecutive-error counters toward policy thresholds; clearing them every tick
+// would spam "清理脏正常态" forever (e.g. failing requests that only observe).
 func (g *Guard) scrubDirtyActiveAccounts() {
 	if g.State == nil {
 		return
@@ -528,18 +532,22 @@ func (g *Guard) scrubDirtyActiveAccounts() {
 		if acc.State != state.Active && acc.State != "" {
 			continue
 		}
-		dirty := acc.LastSignal != "" ||
-			acc.DisableSource == "plugin_auto" ||
-			len(acc.Streaks) > 0 ||
-			!acc.RecoverAt.IsZero()
-		if !dirty {
+		// real half-recovery residues only
+		hasLock := acc.DisableSource == "plugin_auto"
+		hasRecover := !acc.RecoverAt.IsZero()
+		// last_signal alone is OK while counting; only scrub signal if paired with lock/recover
+		if !hasLock && !hasRecover {
 			continue
 		}
-		// only auto-scrub plugin-owned residues; leave pure empty active alone if clean
-		g.State.ResetToActive(acc.AuthIndex)
+		prevSig := acc.LastSignal
+		// keep streaks — only clear lock/recover/signal leftovers
+		g.State.SetAccountState(acc.AuthIndex, state.Active, "")
+		// SetAccountState with "" disableSource may not clear DisableSource — use Reset fields carefully
+		// ResetToActive clears streaks too which we don't want here.
+		g.State.ClearCoolDownResidue(acc.AuthIndex)
 		g.State.Log(state.ActionLog{
-			Auth: acc.AuthIndex, Source: "tick", Signal: acc.LastSignal,
-			Action: "scrub_active", Reason: "closed_loop_clean",
+			Auth: acc.AuthIndex, Source: "tick", Signal: prevSig,
+			Action: "scrub_active", Reason: "half_recovered_residue",
 		})
 	}
 }
