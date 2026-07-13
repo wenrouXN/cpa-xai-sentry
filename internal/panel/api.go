@@ -214,7 +214,7 @@ func suggestAction(acc *state.Account) (action, reason string) {
 		if acc.DisableSource == "cpa_file_disabled" || acc.DisableSource == "cpa_disabled" {
 			return "manual", "CPA文件已禁用"
 		}
-		return "manual", "手动禁用"
+		return "manual", "永久禁用"
 	case state.Trashed:
 		return "restore_or_purge", "垃圾箱"
 	}
@@ -485,7 +485,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			// broad match: email/file/auth/state/signal/action/reason/quota text/tokens
 			stZH := map[string]string{
 				"active": "正常", "cooldown_quota": "429·额度冷却", "cooldown_spending": "402·消费冷却",
-				"cooldown_permission": "403·权限冷却", "candidate_dead": "401·候删", "user_manual": "手动禁用",
+				"cooldown_permission": "403·权限冷却", "candidate_dead": "401·候删", "user_manual": "永久禁用",
 				"trashed": "垃圾箱", "purged": "已清除",
 			}
 			blob := strings.ToLower(strings.Join([]string{
@@ -683,7 +683,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":         "cpa-xai-sentry",
-		"version":        "0.5.18",
+		"version":        "0.5.19",
 		"mode":           modeOf(*a.Cfg),
 		"mode_label":     modeLabel(modeOf(*a.Cfg)),
 		"summary":        summary,
@@ -1059,7 +1059,7 @@ func composeLogText(actL, action, sigL, signal, who, reason, srcL, source string
 		return "维护发现 CPA 凭证文件已禁用（不是面板手动禁用）", "warn"
 	case "manual_disable":
 		if who != "" {
-			return "已在面板手动禁用 " + who, level
+			return "已永久禁用 " + who, level
 		}
 		return "已手动禁用账号", level
 	case "manual_enable":
@@ -1377,7 +1377,7 @@ func (a *API) handlePatrolStatus(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.18",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.19",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 		"cooldown_stats": a.State.CooldownStats(time.Now()),
 	})

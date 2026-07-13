@@ -207,7 +207,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.18</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.19</span></h1>
     </div>
     <div class="top-actions">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -267,7 +267,7 @@ select.act{min-width:100px}input.num{width:70px}
         <option value="cooldown_spending">402·消费冷却</option>
         <option value="cooldown_permission">403·权限冷却</option>
         <option value="candidate_dead">401·候删</option>
-        <option value="user_manual">禁用/CPA禁用</option>
+        <option value="user_manual">永久禁用/CPA禁用</option>
         <option value="trashed">垃圾箱</option>
       </select>
       <select id="signalFilter" style="display:none" onchange="refresh()"><option value=""></option></select>
@@ -275,7 +275,7 @@ select.act{min-width:100px}input.num{width:70px}
       <button class="xs" onclick="selAll(true)" title="勾选当前列表全部账号">全选</button>
       <button class="xs" onclick="selAll(false)" title="取消全部勾选">清空</button>
       <button class="xs primary" onclick="bulk('enable')" title="对勾选账号：CPA 重新启用">启用</button>
-      <button class="xs warn" onclick="bulk('disable')" title="对勾选账号：手动禁用（不会自动恢复）">禁用</button>
+      <button class="xs warn" onclick="bulk('disable')" title="永久禁用：CPA 关闭且不会自动恢复，直到你点「启用」">永久禁用</button>
       <button class="xs danger" onclick="bulk('trash')" title="移入垃圾箱，可恢复">进垃圾箱</button>
       <button class="xs warn" onclick="bulk('cooldown')" title="对勾选账号执行冷却">冷却</button>
     </div>
@@ -374,7 +374,7 @@ let MASKED = localStorage.getItem('cpa-xai-sentry-mask') !== '0'; // default mas
 const SIG_ZH={free_usage_429:'免费额度用尽',spending_limit_402:'消费限额',auth_401:'凭证失效',permission_403:'权限拒绝',http_404:'HTTP 404', 'code:invalid-argument':'参数无效/上下文过长'};
 const API="/v0/management/cpa-xai-sentry";
 const KEY_LS="cpa-xai-sentry-management-key";
-const STATE_ZH={active:'正常',cooldown_quota:'429·额度冷却',cooldown_spending:'402·消费冷却',cooldown_permission:'403·权限冷却',candidate_dead:'401·候删',user_manual:'手动禁用',trashed:'垃圾箱',purged:'已清除'};
+const STATE_ZH={active:'正常',cooldown_quota:'429·额度冷却',cooldown_spending:'402·消费冷却',cooldown_permission:'403·权限冷却',candidate_dead:'401·候删',user_manual:'永久禁用',trashed:'垃圾箱',purged:'已清除'};
 const ACT_ZH={observe:'仅观察',cooldown:'冷却',candidate:'候删',trash:'进垃圾箱',wait:'等待恢复',review:'复查',manual:'禁用',none:'无',restore_or_purge:'恢复/清除'};
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2400)}
 function esc(s){return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -437,14 +437,7 @@ async function j(path, opt){
   }
   return data;
 }
-function modeBadge(mode,label){
-  const el=document.getElementById('modeBadge'); el.className='badge';
-  if(mode==='observe') el.classList.add('ok');
-  else if(mode==='safe-guard'||mode==='cooldown') el.classList.add('warn');
-  else if(mode==='auto_trash') el.classList.add('danger');
-  else el.classList.add('off');
-  el.innerHTML='<span class="dot"></span>'+esc(label||mode||'-');
-}
+function modeBadge(mode,label){ /* removed from header: switches already show mode */ }
 function setSwitch(id,on){const el=document.getElementById(id); if(el) el.checked=!!on}
 function tag(cls,text){return '<span class="tag '+cls+'">'+esc(text)+'</span>'}
 function stateLabel(st, a){
@@ -459,7 +452,7 @@ function stateLabel(st, a){
   if(st==='user_manual'){
     if(a.disable_source==='cpa_file_disabled' || a.disable_source==='cpa_disabled')
       return {text:'CPA已禁用', cls:'manual', tip:'CPA凭证文件 disabled（非面板手动点禁用）'};
-    return {text:'手动禁用', cls:'manual', tip:'面板手动禁用'};
+    return {text:'永久禁用', cls:'manual', tip:'面板永久禁用，不会自动恢复，需手动启用'};
   }
   if(st==='trashed') return {text:'垃圾箱', cls:'trash', tip:'已进垃圾箱，可恢复'};
   if(st==='purged') return {text:'已清除', cls:'trash', tip:'已彻底清除'};
@@ -813,7 +806,7 @@ function composeLogClient(e){
   if(act==='trash'||act==='delete') return why?('因'+why+'，已将 '+(who||'账号')+' 移入垃圾箱'):('已将 '+(who||'账号')+' 移入垃圾箱');
   if(act==='reopen_foreign') return '维护发现非本哨兵冷却禁用，已重新打开 '+(who||'账号')+'，等待下次真实报错';
   if(act==='file_disabled_sync') return '维护发现 CPA 凭证文件已禁用，已将 '+(who||'账号')+' 标记为「CPA已禁用」（不是你点的）';
-  if(act==='manual_disable') return '已在面板手动禁用 '+(who||'账号');
+  if(act==='manual_disable') return '已永久禁用 '+(who||'账号')+'（不会自动恢复）';
   if(act==='manual_enable') return '已在面板手动启用 '+(who||'账号');
   if(act==='cooldown_failed') return '冷却 '+(who||'账号')+' 失败'+(why?('：'+why):'');
   if(act==='reenable_failed') return '恢复启用 '+(who||'账号')+' 失败'+(why?('：'+why):'');
@@ -842,7 +835,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.5.18');
+    document.getElementById('ver').textContent='v'+(st.version||'0.5.19');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};

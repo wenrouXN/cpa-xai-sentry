@@ -633,7 +633,7 @@ func (g *Guard) ManualDisable(ctx context.Context, authIndex string) error {
 	}
 	g.State.SetAccountState(authIndex, state.UserManual, "user_manual")
 	g.State.SetRecoverAt(authIndex, time.Time{})
-	g.State.Log(state.ActionLog{Auth: authIndex, Source: "panel", Action: "manual_disable", Reason: "panel bulk/manual"})
+	g.State.Log(state.ActionLog{Auth: authIndex, Source: "panel", Action: "manual_disable", Reason: "permanent_disable"})
 	return g.State.Save()
 }
 
