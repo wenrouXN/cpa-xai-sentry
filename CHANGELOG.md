@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.13
+
+### Full patrol = sentry-not-disabled (schedulable) accounts
+- **Full** no longer means "all CPA files" or "CPA-enabled only".
+- Full = accounts **not** in sentry cool-down / 候删 / 永久禁用 / 垃圾箱 (still may receive traffic).
+- CPA file `disabled` does **not** exclude a target if sentry still treats it as open — probe with token, real HTTP decides.
+- No synthetic disabled→429 alignment.
+- Cooldown mode = sentry cool-down accounts only.
+
+
 ## 1.1.12
 
 ### Patrol: real probe only (no synthetic disabled→429)
@@ -197,6 +207,16 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.13
+
+### Full patrol = sentry-not-disabled (schedulable) accounts
+- **Full** no longer means "all CPA files" or "CPA-enabled only".
+- Full = accounts **not** in sentry cool-down / 候删 / 永久禁用 / 垃圾箱 (still may receive traffic).
+- CPA file `disabled` does **not** exclude a target if sentry still treats it as open — probe with token, real HTTP decides.
+- No synthetic disabled→429 alignment.
+- Cooldown mode = sentry cool-down accounts only.
+
 
 ## 1.1.12
 

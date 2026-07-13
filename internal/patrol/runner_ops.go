@@ -137,9 +137,8 @@ func (r *Runner) runJob(ctx context.Context, mode Mode) {
 		_ = r.Guard.Resolver.Ensure(ctx)
 	}
 
-	// Real HTTP probe only — no synthetic "disabled ⇒ free_usage_429" alignment.
-	// Full mode probes all xAI auths that have a token (enabled + disabled);
-	// disabled CPA files still carry tokens, so upstream status is ground truth.
+	// Full = sentry-not-disabled accounts (still schedulable). Real HTTP only.
+	// Cooldown mode = sentry cool-down accounts. No synthetic disabled→429.
 	targets := r.collectTargets(ctx, mode)
 	jobMu.Lock()
 	jobStatus.Total = len(targets)
@@ -152,7 +151,7 @@ func (r *Runner) runJob(ctx context.Context, mode Mode) {
 		})
 	}
 	if len(targets) == 0 {
-		r.appendLog("", "", 0, "warn", "没有可巡查目标（全量=有 token 的 xAI 账号；仅冷却=冷却中账号）", "")
+		r.appendLog("", "", 0, "warn", "没有可巡查目标（全量=哨兵未禁用且可接流；仅冷却=哨兵冷却中）", "")
 		return
 	}
 
@@ -242,20 +241,39 @@ func (r *Runner) runJob(ctx context.Context, mode Mode) {
 
 func (r *Runner) collectTargets(ctx context.Context, mode Mode) []Target {
 	out := make([]Target, 0, 64)
-	// map sentry cooling accounts by email/file/auth
+	// Sentry-side "disabled for traffic" = cool-down / 候删 / 永久禁用 / 垃圾箱.
+	// Full patrol = NOT these (哨兵未禁用、仍可能接流). Real HTTP probe; no synthetic 429.
+	blocked := map[string]*state.Account{} // by auth/email/file
 	cooling := map[string]*state.Account{}
 	if r.Guard != nil && r.Guard.State != nil {
 		for _, acc := range r.Guard.State.AccountsSnapshot() {
-			if acc.State == state.CooldownQuota || acc.State == state.CooldownSpending || acc.State == state.CooldownPermission {
-				if acc.DisableSource == "user_manual" {
-					continue
+			keys := []string{}
+			if acc.AuthIndex != "" {
+				keys = append(keys, strings.ToLower(strings.TrimSpace(acc.AuthIndex)))
+			}
+			if acc.Email != "" {
+				keys = append(keys, strings.ToLower(strings.TrimSpace(acc.Email)))
+			}
+			if acc.FileName != "" {
+				keys = append(keys, strings.ToLower(strings.TrimSpace(acc.FileName)))
+			}
+			isCool := acc.State == state.CooldownQuota || acc.State == state.CooldownSpending || acc.State == state.CooldownPermission
+			// Full-patrol "sentry disabled" = not schedulable for new traffic.
+			isBlocked := isCool ||
+				acc.State == state.CandidateDead ||
+				acc.State == state.UserManual ||
+				acc.State == state.Trashed ||
+				acc.State == state.Purged ||
+				acc.DisableSource == "user_manual"
+			// Active + residual plugin_auto tag remains probeable
+			if isCool {
+				for _, k := range keys {
+					cooling[k] = acc
 				}
-				cooling[acc.AuthIndex] = acc
-				if acc.Email != "" {
-					cooling[strings.ToLower(acc.Email)] = acc
-				}
-				if acc.FileName != "" {
-					cooling[strings.ToLower(acc.FileName)] = acc
+			}
+			if isBlocked {
+				for _, k := range keys {
+					blocked[k] = acc
 				}
 			}
 		}
@@ -271,51 +289,82 @@ func (r *Runner) collectTargets(ctx context.Context, mode Mode) []Target {
 		if !cpaapi.IsXAIName(id.FileName, id.Provider) {
 			continue
 		}
-		// need token to probe
+		// need token to probe (works even if CPA file is disabled)
 		tok := id.Token
 		base := id.BaseURL
 		if tok == "" && r.CPA != nil && id.FileName != "" {
 			if raw, err := r.CPA.ReadAuthFileFromDir(id.FileName); err == nil {
-				_, _, _, t, b, dis := cpaapi.PeekAuthMeta(raw)
-				tok, base = t, b
+				_, _, _, tk, b, dis := cpaapi.PeekAuthMeta(raw)
+				tok, base = tk, b
 				id.Disabled = dis
 			}
 		}
 		if tok == "" {
 			continue
 		}
-		switch mode {
-		case ModeFull:
-			// include enabled + disabled; token probe is source of truth
-		case ModeCooldown:
-			// only cooling accounts
-			_, ok1 := cooling[id.AuthIndex]
-			_, ok2 := cooling[strings.ToLower(id.Email)]
-			_, ok3 := cooling[strings.ToLower(id.FileName)]
-			if !ok1 && !ok2 && !ok3 {
-				// also allow disabled files as cooldown candidates
-				if !id.Disabled {
-					continue
-				}
-			}
-		}
 		authIdx := id.AuthIndex
 		// prefer hashed/runtime auth index if sentry already knows this email/file
+		var sentryAcc *state.Account
 		if r.Guard != nil && r.Guard.State != nil {
 			for _, acc := range r.Guard.State.AccountsSnapshot() {
 				if (id.Email != "" && strings.EqualFold(acc.Email, id.Email)) ||
-					(id.FileName != "" && strings.EqualFold(acc.FileName, id.FileName)) {
+					(id.FileName != "" && strings.EqualFold(acc.FileName, id.FileName)) ||
+					(id.AuthIndex != "" && strings.EqualFold(acc.AuthIndex, id.AuthIndex)) {
 					authIdx = acc.AuthIndex
+					sentryAcc = acc
 					break
 				}
 			}
 		}
-		dk := strings.ToLower(strings.TrimSpace(id.Email))
+		emKey := strings.ToLower(strings.TrimSpace(id.Email))
+		fnKey := strings.ToLower(strings.TrimSpace(id.FileName))
+		aiKey := strings.ToLower(strings.TrimSpace(authIdx))
+		switch mode {
+		case ModeFull:
+			// 全量 = 哨兵侧未禁用（可接流）：Active / 无状态；不含冷却/候删/永禁/垃圾箱
+			// CPA 文件是否 disabled 不作为排除条件 — 有 token 就实探，结果按真实 HTTP 走策略
+			if sentryAcc != nil {
+				if _, ok := blocked[strings.ToLower(strings.TrimSpace(sentryAcc.AuthIndex))]; ok {
+					continue
+				}
+				if emKey != "" {
+					if _, ok := blocked[emKey]; ok {
+						continue
+					}
+				}
+				if fnKey != "" {
+					if _, ok := blocked[fnKey]; ok {
+						continue
+					}
+				}
+			} else {
+				// no sentry row: only skip if listed as blocked under email/file/auth keys
+				if (aiKey != "" && blocked[aiKey] != nil) || (emKey != "" && blocked[emKey] != nil) || (fnKey != "" && blocked[fnKey] != nil) {
+					continue
+				}
+			}
+		case ModeCooldown:
+			// 仅冷却 = 哨兵冷却中的号（可含 CPA disabled）
+			ok := false
+			if aiKey != "" && cooling[aiKey] != nil {
+				ok = true
+			}
+			if emKey != "" && cooling[emKey] != nil {
+				ok = true
+			}
+			if fnKey != "" && cooling[fnKey] != nil {
+				ok = true
+			}
+			if !ok {
+				continue
+			}
+		}
+		dk := emKey
 		if dk == "" {
-			dk = strings.ToLower(strings.TrimSpace(id.FileName))
+			dk = fnKey
 		}
 		if dk == "" {
-			dk = strings.ToLower(strings.TrimSpace(authIdx))
+			dk = aiKey
 		}
 		if seenTarget[dk] {
 			continue
