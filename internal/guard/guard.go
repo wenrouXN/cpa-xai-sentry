@@ -348,8 +348,8 @@ func (g *Guard) Tick(ctx context.Context) error {
 			}
 		}
 	}
-	// Align sentry state with CPA auth-file disabled flags (no network probe, no quota cost).
-	// Covers cases where file was disabled outside sentry (manual / other tools) or usage callback missed.
+	// One-shot import: Active in sentry but CPA file already disabled (outside sentry).
+	// Does NOT re-touch accounts already cooling — avoids cooldown↔sync loop.
 	synced, syncErr := g.syncDisabledFromCPA(ctx, now)
 	_ = synced
 	if syncErr != nil {
@@ -395,6 +395,10 @@ func (g *Guard) Tick(ctx context.Context) error {
 }
 
 // clean up verbose comments in sync - simplify the signal stamp block
+// syncDisabledFromCPA is a ONE-WAY import for "CPA file disabled but sentry still Active".
+// It must NOT re-process accounts already in cooldown/candidate/manual/trash — that creates
+// a feedback loop: usage cools account → disables file → every tick re-logs "aligned to cooldown".
+// Real 429/401/403 cool-downs come from usage/patrol HandleUsage, not from this sync.
 func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, error) {
 	if g.CPA == nil {
 		return 0, nil
@@ -415,14 +419,28 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 			byEmail[em] = f
 		}
 	}
-	// one sentry account per auth file
-	seenFile := map[string]bool{}
-	n := 0
+	// mark files already owned by a non-active sentry account so we don't re-import
+	handledFile := map[string]bool{}
 	for _, acc := range g.State.AccountsSnapshot() {
-		if acc.State == state.UserManual || acc.State == state.Trashed || acc.State == state.Purged || acc.State == state.CandidateDead {
+		if acc.State == state.Active || acc.State == "" {
 			continue
 		}
-		if (acc.State == state.CooldownQuota || acc.State == state.CooldownSpending || acc.State == state.CooldownPermission) && !acc.RecoverAt.IsZero() {
+		// already cooling / candidate / manual / trash => file disabled is expected, do nothing
+		fn := strings.ToLower(strings.TrimSpace(acc.FileName))
+		em := strings.ToLower(strings.TrimSpace(acc.Email))
+		if fn != "" {
+			handledFile[fn] = true
+		}
+		if em != "" {
+			handledFile["xai-"+em+".json"] = true
+			handledFile[em] = true
+		}
+	}
+	n := 0
+	seen := map[string]bool{}
+	for _, acc := range g.State.AccountsSnapshot() {
+		// ONLY import into still-active accounts. Never touch cooling/候删/manual again.
+		if acc.State != state.Active && acc.State != "" {
 			continue
 		}
 		fn := strings.ToLower(strings.TrimSpace(acc.FileName))
@@ -442,70 +460,24 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 			fileKey = fn
 		}
 		if fileKey != "" {
-			if seenFile[fileKey] {
+			if seen[fileKey] || handledFile[fileKey] {
 				continue
 			}
-			seenFile[fileKey] = true
+			seen[fileKey] = true
 		}
-		// STRICT free-usage evidence only. Do NOT treat generic disabled / day_tokens as 额度冷却.
-		isFree := acc.LastSignal == string(match.SignalFreeUsage429) || strings.Contains(acc.QuotaSource, "free_usage")
-		if !isFree && acc.QuotaSource == "cpamp_fail_body" && acc.QuotaLimit > 0 && acc.QuotaUsed >= acc.QuotaLimit && acc.LastSignal == string(match.SignalFreeUsage429) {
-			isFree = true
-		}
-		if !isFree {
-			for _, o := range g.State.ListObserved() {
-				if o.Key != "free_usage_429" {
-					continue
-				}
-				if o.LastAuth == acc.AuthIndex || (acc.FileName != "" && o.LastFile == acc.FileName) {
-					isFree = true
-					break
-				}
-				for _, h := range o.Hits {
-					if h.Auth == acc.AuthIndex || (acc.FileName != "" && h.File == acc.FileName) {
-						isFree = true
-						break
-					}
-				}
-				if isFree {
-					break
-				}
-			}
-		}
-		if isFree {
-			sig := string(match.SignalFreeUsage429)
-			if acc.State == state.Active || acc.State == "" || ((acc.State == state.CooldownQuota || acc.State == state.CooldownSpending || acc.State == state.CooldownPermission) && acc.RecoverAt.IsZero()) {
-				g.State.SetAccountState(acc.AuthIndex, state.CooldownQuota, "plugin_auto")
-			}
-			if acc.RecoverAt.IsZero() || acc.RecoverAt.Before(now) {
-				rec := now.Add(24 * time.Hour)
-				if g.Cfg.MaxResetSeconds > 0 {
-					maxAt := now.Add(time.Duration(g.Cfg.MaxResetSeconds) * time.Second)
-					if rec.After(maxAt) {
-						rec = maxAt
-					}
-				}
-				g.State.SetRecoverAt(acc.AuthIndex, rec)
-			}
-			g.stampLastSignal(acc.AuthIndex, sig)
-			g.State.ObserveError("free_usage_429", "免费额度用尽(429)", "free_usage_429", "subscription:free-usage-exhausted", "CPA disabled + free-usage evidence; maintenance sync", acc.AuthIndex, acc.FileName, "tick", 429)
-			g.State.Log(state.ActionLog{Auth: acc.AuthIndex, Source: "tick", Signal: sig, Action: "cooldown", Reason: "cpa_disabled_free_usage_sync"})
-			n++
-			continue
-		}
-		// Generic CPA disabled, no free-usage proof => manual-disabled, NOT 额度冷却
-		if acc.State == state.Active || acc.State == "" || acc.State == state.CooldownQuota {
-			// if previously false-positive free cooldown without signal, correct it
-			g.State.SetAccountState(acc.AuthIndex, state.UserManual, "cpa_file_disabled")
-			g.State.SetRecoverAt(acc.AuthIndex, time.Time{})
-			g.State.ObserveError("unmatched", "未分类错误", "", "cpa_disabled", "CPA auth file disabled (no free-usage evidence)", acc.AuthIndex, acc.FileName, "tick", 0)
-			g.State.Log(state.ActionLog{Auth: acc.AuthIndex, Source: "tick", Signal: "", Action: "file_disabled_sync", Reason: "cpa_disabled_sync"})
-			n++
-		}
+		// Sentry still thinks Active, but CPA file is disabled outside our cooldown path.
+		// Do NOT invent 额度冷却 here — that belongs to real 429 usage/patrol.
+		// Just mark as CPA-file-disabled so panel shows "CPA已禁用" once.
+		g.State.SetAccountState(acc.AuthIndex, state.UserManual, "cpa_file_disabled")
+		g.State.SetRecoverAt(acc.AuthIndex, time.Time{})
+		g.State.Log(state.ActionLog{
+			Auth: acc.AuthIndex, Source: "tick", Signal: "",
+			Action: "file_disabled_sync", Reason: "cpa_disabled_sync",
+		})
+		n++
 	}
 	return n, nil
 }
-
 
 // correctFalseQuotaCooldowns demotes cooldown_quota without free-usage evidence.
 func (g *Guard) correctFalseQuotaCooldowns(now time.Time) {
