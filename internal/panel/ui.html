@@ -13,9 +13,10 @@
 *{box-sizing:border-box}
 body{margin:0;font-family:var(--font);color:var(--text);background:linear-gradient(120deg,#f0f7ff,#e7f2ff 50%,#edf7ff);font-size:12.5px}
 .wrap{max-width:1680px;margin:0 auto;padding:10px 12px 20px}
-.main-grid{display:block}
-.bottom-log{margin-top:10px}
-.bottom-log .logbox{max-height:min(42vh,420px)}
+.main-grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:10px;align-items:start}
+@media(max-width:1100px){.main-grid{grid-template-columns:1fr}}
+.side-log{position:sticky;top:10px;max-height:calc(100vh - 20px);display:flex;flex-direction:column;margin:0}
+.side-log .logbox{flex:1;min-height:280px;max-height:calc(100vh - 110px)}
 .job-list{display:flex;flex-direction:column;gap:8px;margin-top:8px}
 .job-card{border:1px solid var(--border);border-radius:10px;background:#fff;overflow:hidden}
 .job-head{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;padding:10px 12px;cursor:pointer;user-select:none}
@@ -206,7 +207,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.17</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.18</span> <span id="modeBadge" class="badge">模式</span></h1>
     </div>
     <div class="top-actions">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -245,6 +246,8 @@ select.act{min-width:100px}input.num{width:70px}
     </div>
   </div>
 
+  <div class="main-grid">
+  <div class="main-left">
   <div class="tabs" role="tablist">
     <button type="button" class="active" data-tab="accounts" onclick="switchTab('accounts')">账号实况</button>
     <button type="button" data-tab="patrol" onclick="switchTab('patrol')">巡检</button>
@@ -354,10 +357,13 @@ select.act{min-width:100px}input.num{width:70px}
     </div>
   </div>
 
-  <div class="card bottom-log" id="sideLogCard">
+  </div><!-- main-left -->
+
+  <div class="card side-log" id="sideLogCard">
     <h2><span>动作日志</span><span class="meta" id="logMeta">实时</span></h2>
     <div id="logbox" class="logbox">-</div>
   </div>
+  </div><!-- main-grid -->
 </div>
 <div class="toast" id="toast"></div>
 <div class="err-pop" id="errPop" role="dialog" aria-modal="true"></div>
@@ -836,7 +842,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.5.17');
+    document.getElementById('ver').textContent='v'+(st.version||'0.5.18');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -1309,7 +1315,7 @@ function paintPatrol(p, history){
     seen.add(k); uniq.push(j);
   });
   if(!uniq.length){
-    box.innerHTML='<div class="meta" style="padding:8px">暂无巡检任务记录 · 点「手动全量/查冷却」开始</div>';
+    box.innerHTML='<div class="meta" style="padding:8px">暂无巡检任务 · 每次任务可点开看该次巡检日志（与右侧动作日志分开）</div>';
     return;
   }
   if(!window.PATROL_OPEN_JOBS) window.PATROL_OPEN_JOBS=new Set();
