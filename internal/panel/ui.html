@@ -158,7 +158,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.4.9</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.0</span> <span id="modeBadge" class="badge">模式</span></h1>
     </div>
     <div class="row" style="align-items:center">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -426,14 +426,17 @@ function rateCell(a){
   return html;
 }
 function callsCell(a){
-  // 15-slot bar = last 15 REAL request outcomes (oldest→newest). Not a day-ratio fill.
+  // 最近15次真实请求：从右到左为新→旧；不足15时左边留灰
   const slots=15;
   let seq=Array.isArray(a.recent15)?a.recent15.slice(-slots):[];
+  // seq is oldest→newest; right-align into 15 slots (left empty gray)
   const parts=[];
+  const pad=slots-seq.length;
   for(let i=0;i<slots;i++){
     let cls='empty';
-    if(i<seq.length){
-      cls = seq[i] ? 'on' : 'fail';
+    if(i>=pad){
+      const v=seq[i-pad];
+      cls = v ? 'on' : 'fail';
     }
     parts.push('<i class="slot '+cls+'"></i>');
   }
@@ -441,7 +444,9 @@ function callsCell(a){
   const ok = seq.filter(x=>x===true).length;
   const clickable = fail>0 ? ' clickable' : '';
   const wrapClick = fail>0 ? ' data-auth="'+esc(a.auth_index)+'" onclick="openAccountError(this)"' : '';
-  const title = seq.length ? ('最近'+seq.length+'次 · 成'+ok+' 败'+fail+(fail>0?' · 点红格看报错':'')) : '暂无请求记录';
+  const title = seq.length
+    ? ('最近'+seq.length+'次（右新左旧）· 成'+ok+' 败'+fail+(fail>0?' · 点红格看报错':''))
+    : '暂无请求记录';
   return '<div class="reqcell"><div class="sigbars'+clickable+'"'+wrapClick+' title="'+esc(title)+'">'+parts.join('')+'</div></div>';
 }
 function totalTokensCell(a){
@@ -685,7 +690,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.4.9');
+    document.getElementById('ver').textContent='v'+(st.version||'0.5.0');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
