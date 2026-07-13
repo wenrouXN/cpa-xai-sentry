@@ -94,3 +94,42 @@ func (c Config) Validate() Config {
 	}
 	return out
 }
+
+// Redact returns a public view without secrets.
+func (c Config) Redact() map[string]any {
+	return map[string]any{
+		"enabled":                     c.Enabled,
+		"sentry_enabled":              c.SentryEnabled,
+		"auto_cooldown":               c.AutoCooldown,
+		"auto_candidate":              c.AutoCandidate,
+		"auto_delete":                 c.AutoDelete,
+		"cooldown_signals":            c.CooldownSignals,
+		"candidate_signals":           c.CandidateSignals,
+		"delete_signals":              c.DeleteSignals,
+		"signal_thresholds":           c.SignalThresholds,
+		"tick_seconds":                c.TickSeconds,
+		"max_reset_seconds":           c.MaxResetSeconds,
+		"min_reset_seconds":           c.MinResetSeconds,
+		"permission_cooldown_seconds": c.PermissionCooldownSec,
+		"auth401_cooldown_seconds":    c.Auth401CooldownSec,
+		"trash_retention_days":        c.TrashRetentionDays,
+		"trash_auto_purge":            c.TrashAutoPurge,
+		"restore_default_disabled":    c.RestoreDefaultDis,
+		"management_url":              c.ManagementURL,
+		"management_key_set":          c.ManagementKey != "",
+		"state_path":                  c.StatePath,
+		"auth_dir":                    c.AuthDir,
+		"trash_dir":                   c.TrashDir,
+		"patrol_enabled":              c.PatrolEnabled,
+		"patrol_interval":             c.PatrolInterval,
+		"patrol_timeout":              c.PatrolTimeout,
+		"patrol_concurrency":          c.PatrolConcurrency,
+		"patrol_batch_size":           c.PatrolBatchSize,
+		"patrol_model":                c.PatrolModel,
+		"patrol_proxy_url":            c.PatrolProxyURL,
+		"patrol_auto_model_switch":    c.PatrolAutoModelSwitch,
+		"cpamp_url":                   c.CPAMPURL,
+		"cpamp_admin_key_set":         c.CPAMPAdminKey != "",
+		"cpamp_usage_floor":           c.CPAMPUsageFloor,
+	}
+}

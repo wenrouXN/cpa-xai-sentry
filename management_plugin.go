@@ -66,6 +66,8 @@ func buildManagementRegistration() managementRegistration {
 			{Method: "POST", Path: "/" + pluginID + "/trash/purge", Description: "彻底清除"},
 			{Method: "POST", Path: "/" + pluginID + "/run-tick", Description: "手动 tick"},
 			{Method: "GET", Path: "/" + pluginID + "/health", Description: "健康检查"},
+			{Method: "POST", Path: "/" + pluginID + "/toggle", Description: "切换开关"},
+			{Method: "POST", Path: "/" + pluginID + "/preset", Description: "应用预设"},
 		},
 	}
 }
