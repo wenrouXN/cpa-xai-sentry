@@ -197,6 +197,95 @@ func dedupeAccountsForPanel(accs []*state.Account) []*state.Account {
 	return out
 }
 
+
+func itoaPanel(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var b [16]byte
+	i := len(b)
+	for n > 0 {
+		i--
+		b[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(b[i:])
+}
+
+func streakTotal(acc *state.Account) int {
+	if acc == nil || acc.Streaks == nil {
+		return 0
+	}
+	n := 0
+	for _, v := range acc.Streaks {
+		n += v
+	}
+	return n
+}
+
+func liveActiveReason(acc *state.Account) string {
+	if acc == nil {
+		return "正常·观察中"
+	}
+	bestK, bestN := "", 0
+	if acc.Streaks != nil {
+		for k, v := range acc.Streaks {
+			if v > bestN {
+				bestK, bestN = k, v
+			}
+		}
+	}
+	sig := acc.LastSignal
+	if bestN > 0 {
+		sig = bestK
+	}
+	switch sig {
+	case "permission_403":
+		if bestN > 0 {
+			return "正常·403×" + itoaPanel(bestN)
+		}
+		return "正常·403观察"
+	case "free_usage_429":
+		if bestN > 0 {
+			return "正常·429×" + itoaPanel(bestN)
+		}
+		return "正常·429观察"
+	case "spending_limit_402":
+		return "正常·402观察"
+	case "auth_401":
+		if bestN > 0 {
+			return "正常·401×" + itoaPanel(bestN)
+		}
+		return "正常·401观察"
+	case "code:invalid-argument":
+		return "正常·参数观察"
+	}
+	if bestN > 0 {
+		return "正常·观察×" + itoaPanel(bestN)
+	}
+	return "正常·观察中"
+}
+
+func matchStateFilter(acc *state.Account, filter string) bool {
+	if acc == nil {
+		return false
+	}
+	switch filter {
+	case "", "all":
+		return true
+	case "active", "active_clean":
+		return (acc.State == state.Active || acc.State == "") && acc.LastSignal == "" && streakTotal(acc) == 0 && acc.DisableSource != "plugin_auto"
+	case "active_watch":
+		return (acc.State == state.Active || acc.State == "") && (acc.LastSignal != "" || streakTotal(acc) > 0)
+	case "user_manual", "permanent_disable":
+		return acc.State == state.UserManual && acc.DisableSource != "cpa_file_disabled" && acc.DisableSource != "cpa_disabled"
+	case "cpa_disabled":
+		return acc.State == state.UserManual && (acc.DisableSource == "cpa_file_disabled" || acc.DisableSource == "cpa_disabled")
+	default:
+		return string(acc.State) == filter
+	}
+}
+
 func suggestAction(acc *state.Account) (action, reason string) {
 	if acc == nil {
 		return "none", ""
@@ -218,12 +307,11 @@ func suggestAction(acc *state.Account) (action, reason string) {
 	case state.Trashed:
 		return "restore_or_purge", "垃圾箱"
 	}
-	// active is terminal clean/dirty; never show cool-down reason from residual signal alone
 	if acc.State == state.Active || acc.State == "" {
-		if acc.LastSignal != "" || acc.DisableSource == "plugin_auto" {
-			return "observe", "状态正常（残留信号待清理）"
+		if n := streakTotal(acc); n > 0 || acc.LastSignal != "" {
+			return "observe", liveActiveReason(acc)
 		}
-		return "none", ""
+		return "none", "正常·可用"
 	}
 	switch acc.LastSignal {
 	case "auth_401":
@@ -467,11 +555,11 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			summary["suggest_wait"]++
 		}
 		if view == "focus" {
-			if acc.State == state.Active && acc.LastSignal == "" {
+			if acc.State == state.Active && acc.LastSignal == "" && streakTotal(acc) == 0 {
 				continue
 			}
 		}
-		if stateFilter != "" && string(acc.State) != stateFilter {
+		if stateFilter != "" && !matchStateFilter(acc, stateFilter) {
 			continue
 		}
 		if signalFilter != "" && acc.LastSignal != signalFilter {
@@ -484,7 +572,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		if q != "" {
 			// broad match: email/file/auth/state/signal/action/reason/quota text/tokens
 			stZH := map[string]string{
-				"active": "正常", "cooldown_quota": "429·额度冷却", "cooldown_spending": "402·消费冷却",
+				"active": "正常·可用", "cooldown_quota": "429·额度冷却", "cooldown_spending": "402·消费冷却",
 				"cooldown_permission": "403·权限冷却", "candidate_dead": "401·候删", "user_manual": "永久禁用",
 				"trashed": "垃圾箱", "purged": "已清除",
 			}
@@ -683,7 +771,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":         "cpa-xai-sentry",
-		"version":        "0.5.21",
+		"version":        "0.5.22",
 		"mode":           modeOf(*a.Cfg),
 		"mode_label":     modeLabel(modeOf(*a.Cfg)),
 		"summary":        summary,
@@ -1377,7 +1465,7 @@ func (a *API) handlePatrolStatus(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.21",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.22",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 		"cooldown_stats": a.State.CooldownStats(time.Now()),
 	})

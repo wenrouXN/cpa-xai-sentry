@@ -211,7 +211,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.21</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.22</span></h1>
     </div>
     <div class="top-actions">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -266,12 +266,14 @@ select.act{min-width:100px}input.num{width:70px}
       <select id="view" onchange="refresh()"><option value="focus">问题账号</option><option value="all">全部观测</option></select>
       <select id="stateFilter" onchange="refresh()">
         <option value="">全部状态</option>
-        <option value="active">正常</option>
+        <option value="active_clean">正常·可用</option>
+        <option value="active_watch">正常·观察中</option>
         <option value="cooldown_quota">429·额度冷却</option>
         <option value="cooldown_spending">402·消费冷却</option>
         <option value="cooldown_permission">403·权限冷却</option>
         <option value="candidate_dead">401·候删</option>
-        <option value="user_manual">永久禁用/CPA禁用</option>
+        <option value="user_manual">永久禁用</option>
+        <option value="cpa_disabled">CPA已禁用</option>
         <option value="trashed">垃圾箱</option>
       </select>
       <select id="signalFilter" style="display:none" onchange="refresh()"><option value=""></option></select>
@@ -378,7 +380,7 @@ let MASKED = localStorage.getItem('cpa-xai-sentry-mask') !== '0'; // default mas
 const SIG_ZH={free_usage_429:'免费额度用尽',spending_limit_402:'消费限额',auth_401:'凭证失效',permission_403:'权限拒绝',http_404:'HTTP 404', 'code:invalid-argument':'参数无效/上下文过长'};
 const API="/v0/management/cpa-xai-sentry";
 const KEY_LS="cpa-xai-sentry-management-key";
-const STATE_ZH={active:'正常',cooldown_quota:'429·额度冷却',cooldown_spending:'402·消费冷却',cooldown_permission:'403·权限冷却',candidate_dead:'401·候删',user_manual:'永久禁用',trashed:'垃圾箱',purged:'已清除'};
+const STATE_ZH={active:'正常·可用',cooldown_quota:'429·额度冷却',cooldown_spending:'402·消费冷却',cooldown_permission:'403·权限冷却',candidate_dead:'401·候删',user_manual:'永久禁用',trashed:'垃圾箱',purged:'已清除'};
 const ACT_ZH={observe:'仅观察',cooldown:'冷却',candidate:'候删',disable:'永久禁用',trash:'进垃圾箱',wait:'等待恢复',review:'复查',manual:'永久禁用',none:'无',restore_or_purge:'恢复/清除'};
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2400)}
 function esc(s){return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -444,11 +446,37 @@ async function j(path, opt){
 function modeBadge(mode,label){ /* removed from header: switches already show mode */ }
 function setSwitch(id,on){const el=document.getElementById(id); if(el) el.checked=!!on}
 function tag(cls,text){return '<span class="tag '+cls+'">'+esc(text)+'</span>'}
+function streakN(a){
+  a=a||{};
+  const s=a.streaks||{};
+  let n=0, key='';
+  Object.keys(s).forEach(k=>{ const v=Number(s[k]||0); if(v>n){ n=v; key=k; } });
+  return {n, key};
+}
 function stateLabel(st, a){
-  // 状态码 + 执行动作（一句话）
+  // 状态码 + 执行动作：正常也不能是空壳
   a=a||{};
   const sig=a.last_signal||'';
-  if(st==='active') return {text:'正常', cls:'active', tip:'正常可用'};
+  if(st==='active' || st===''){
+    const stn=streakN(a);
+    const s=sig || stn.key;
+    if(s==='permission_403' || stn.key==='permission_403'){
+      const n=stn.key==='permission_403'?stn.n:stn.n;
+      return {text: n>0?('正常·403×'+n):'正常·403观察', cls:'observe', tip:'仍在接流，403 连续计数中'};
+    }
+    if(s==='free_usage_429' || stn.key==='free_usage_429'){
+      const n=stn.key==='free_usage_429'?stn.n:stn.n;
+      return {text: n>0?('正常·429×'+n):'正常·429观察', cls:'observe', tip:'仍在接流，有额度相关信号/计数'};
+    }
+    if(s==='spending_limit_402') return {text:'正常·402观察', cls:'observe', tip:'仍在接流，有消费限额信号'};
+    if(s==='auth_401' || stn.key==='auth_401'){
+      const n=stn.key==='auth_401'?stn.n:stn.n;
+      return {text: n>0?('正常·401×'+n):'正常·401观察', cls:'observe', tip:'仍在接流，有凭证异常计数'};
+    }
+    if(s==='code:invalid-argument' || stn.key==='code:invalid-argument') return {text:'正常·参数观察', cls:'observe', tip:'仍在接流，参数/上下文问题'};
+    if(stn.n>0 || sig) return {text:'正常·观察中', cls:'observe', tip:'仍在接流，有错误计数或最近信号'};
+    return {text:'正常·可用', cls:'active', tip:'干净正常，可接流量'};
+  }
   if(st==='cooldown_quota') return {text:'429·额度冷却', cls:'cooldown', tip:'HTTP 429 免费额度用尽 → 冷却'};
   if(st==='cooldown_spending') return {text:'402·消费冷却', cls:'cooldown', tip:'HTTP 402 消费限额 → 冷却'};
   if(st==='cooldown_permission') return {text:'403·权限冷却', cls:'cooldown', tip:'HTTP 403 权限拒绝 → 冷却'};
@@ -839,7 +867,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.5.21');
+    document.getElementById('ver').textContent='v'+(st.version||'0.5.22');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -1009,7 +1037,7 @@ function policyLogsHTML(key){
         '<td class="actions">'+
           '<button class="xs" data-auth="'+auth+'" onclick="bulkOne(this.getAttribute(\'data-auth\'),\'enable\')">启用</button>'+
           '<button class="xs warn" data-auth="'+auth+'" onclick="bulkOne(this.getAttribute(\'data-auth\'),\'cooldown\')">冷却</button>'+
-          '<button class="xs danger" data-auth="'+auth+'" onclick="bulkOne(this.getAttribute(\'data-auth\'),\'disable\')">禁用</button>'+
+          '<button class="xs danger" data-auth="'+auth+'" onclick="bulkOne(this.getAttribute(\'data-auth\'),\'disable\')" title="永久禁用，不会自动恢复">永久禁用</button>'+
         '</td>'+
       '</tr>';
     }).join('')+
@@ -1424,7 +1452,7 @@ function selAll(on){
 async function bulk(action){
   const auths=selectedAuths();
   if(!auths.length){ toast('请先勾选账号'); return; }
-  const label={disable:'禁用',enable:'启用',trash:'移入垃圾箱',cooldown:'冷却'}[action]||action;
+  const label={disable:'永久禁用',enable:'启用',trash:'移入垃圾箱',cooldown:'冷却'}[action]||action;
   if(!confirm('对当前勾选的 '+auths.length+' 个账号执行「'+label+'」?'+(action==='trash'?'\n删除会进垃圾箱(可恢复),不是立刻硬删。':''))) return;
   try{
     const res=await j('/accounts/bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,auths,confirm:true})});
@@ -1434,7 +1462,7 @@ async function bulk(action){
 }
 async function bulkOne(auth, action){
   if(!auth){ toast('账号为空'); return; }
-  const label={disable:'禁用',enable:'启用',trash:'移入垃圾箱',cooldown:'冷却'}[action]||action;
+  const label={disable:'永久禁用',enable:'启用',trash:'移入垃圾箱',cooldown:'冷却'}[action]||action;
   if(!confirm('对账号执行「'+label+'」?')) return;
   try{
     const res=await j('/accounts/bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,auths:[auth],confirm:true})});
