@@ -92,18 +92,21 @@ tr:hover td{background:#409eff0c}
 .acc-file{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10.5px;color:#64748b;margin-top:2px;word-break:break-all}
 .sig-main{font-weight:700;font-size:12px}
 .sig-sub{color:var(--muted);font-size:10.5px;margin-top:2px}
-.reqcell{display:flex;flex-direction:column;gap:4px;align-items:flex-start}
-.reqcell .nums{font-variant-numeric:tabular-nums;font-weight:700;font-size:12.5px}
-.reqchip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 10px;font-size:11px;font-weight:700;border:1px solid var(--border);cursor:pointer;background:#fff;line-height:1.2}
-.reqchip:hover{border-color:#409eff;box-shadow:0 0 0 2px #409eff22}
-.reqchip.fail{background:#fff5f5;border-color:#f56c6c55;color:#c45656}
-.reqchip.ok{background:#f0f9eb;border-color:#67c23a55;color:#529b2e}
-.reqchip .http{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;font-weight:800}
-.reqchip .bars{display:inline-flex;gap:1px;align-items:flex-end;height:12px}
-.reqchip .bars i{display:block;width:2px;border-radius:1px;background:currentColor;opacity:.85}
-.reqchip .bars i:nth-child(1){height:4px}.reqchip .bars i:nth-child(2){height:7px}.reqchip .bars i:nth-child(3){height:10px}.reqchip .bars i:nth-child(4){height:12px}
-.reqchip.fail .bars{color:#f56c6c}
-.reqchip.ok .bars{color:#67c23a}
+.reqcell{display:flex;flex-direction:column;gap:3px;align-items:flex-start;min-width:92px}
+.reqcell .nums{font-variant-numeric:tabular-nums;font-weight:600;font-size:11px;color:var(--reg);letter-spacing:.01em}
+.reqcell .nums .failn{color:var(--danger);font-weight:700}
+.reqcell .pct{font-size:10.5px;color:var(--ok);font-weight:600;font-variant-numeric:tabular-nums}
+/* CPAMP request-monitor style: 15 vertical slots */
+.sigbars{display:inline-flex;align-items:flex-end;gap:1.5px;height:18px;padding:1px 2px;cursor:default;user-select:none}
+.sigbars .slot{width:3px;height:100%;border-radius:1px;background:#e5e7eb;position:relative;overflow:hidden}
+.sigbars .slot.on{background:#67c23a}
+.sigbars .slot.fail{background:#f56c6c;cursor:pointer}
+.sigbars .slot.fail:hover{outline:1px solid #f56c6c;outline-offset:1px}
+.sigbars .slot.empty{background:#eef1f5}
+.sigbars.clickable{cursor:pointer}
+.sigbars.clickable:hover .slot.fail{filter:brightness(.95)}
+.fail-label{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--danger);font-weight:600}
+.fail-label .rd{width:6px;height:6px;border-radius:50%;background:var(--danger)}
 .mask-btn.active{background:#ecf5ff;border-color:#b3d8ff;color:#337ecc}
 .err-pop{position:fixed;z-index:50;display:none;width:min(560px,calc(100vw - 24px));max-height:min(72vh,560px);overflow:auto;background:#fff;border:1px solid #0f172a18;border-radius:12px;box-shadow:0 18px 50px #0f172a2e;padding:0}
 .err-pop.open{display:block}
@@ -148,7 +151,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.3.9</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.4.0</span> <span id="modeBadge" class="badge">模式</span></h1>
     </div>
     <div class="row" style="align-items:center">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -226,7 +229,7 @@ select.act{min-width:100px}input.num{width:70px}
             <th style="width:28px"><input type="checkbox" id="chkAll" onchange="selAll(this.checked)"/></th>
             <th>账号</th>
             <th style="width:90px">状态</th>
-            <th style="width:90px">请求/报错</th>
+            <th style="width:110px">请求/报错</th>
             <th style="width:150px">用量</th>
             <th style="width:100px">恢复时间</th>
           </tr>
@@ -391,13 +394,40 @@ function accountCell(a){
   return '<div class="acc-name" title="'+esc(title)+'">'+esc(name)+'</div>'+(tier?('<div class="acc-sub">'+esc(tier)+'</div>'):'');
 }
 function callsCell(a){
-  const req=a.day_calls||0, fail=a.day_fail_calls||0;
-  const http=httpCodeOf(a.last_signal);
-  const bars='<span class="bars"><i></i><i></i><i></i><i></i></span>';
-  const chip=fail>0
-    ? '<button type="button" class="reqchip fail" data-auth="'+esc(a.auth_index)+'" onclick="openAccountError(this)">'+bars+'<span class="http">HTTP '+(http||'ERR')+'</span><span>失败</span></button>'
-    : '<span class="reqchip ok">'+bars+'<span>成功</span></span>';
-  return '<div class="reqcell"><div class="nums">'+req+(fail?(' · <span style="color:#c45656">'+fail+'</span>'):'')+'</div>'+chip+'</div>';
+  const req=Number(a.day_calls||0), fail=Number(a.day_fail_calls||0);
+  const ok=Math.max(0, req-fail);
+  const slots=15;
+  // fill 15 slots: success green first, then fail red (CPAMP request monitor style)
+  let green=0, red=0;
+  if(req<=0 && fail<=0){
+    green=0; red=0;
+  }else if(req<=slots){
+    green=ok; red=Math.min(fail, slots-green);
+  }else{
+    // scale into 15 slots by proportion
+    red=Math.max(1, Math.round(fail/req*slots));
+    if(fail<=0) red=0;
+    if(red>slots) red=slots;
+    green=slots-red;
+  }
+  const parts=[];
+  for(let i=0;i<slots;i++){
+    let cls='empty';
+    if(i<green) cls='on';
+    else if(i<green+red) cls='fail';
+    const click=cls==='fail' ? ' data-auth="'+esc(a.auth_index)+'" onclick="openAccountError(this)"' : '';
+    parts.push('<i class="slot '+cls+'"'+click+'></i>');
+  }
+  const pct = req>0 ? ((ok/req)*100) : (fail>0?0:100);
+  const pctTxt = req>0 || fail>0 ? ('<div class="pct">'+(pct%1?pct.toFixed(1):pct)+'%</div>') : '';
+  const failLab = fail>0 ? ('<div class="fail-label"><span class="rd"></span>失败</div>') : '';
+  const clickable = fail>0 ? ' clickable' : '';
+  const wrapClick = fail>0 ? ' data-auth="'+esc(a.auth_index)+'" onclick="openAccountError(this)"' : '';
+  return '<div class="reqcell">'+
+    '<div class="nums">'+req+(fail?(' · <span class="failn">'+fail+'</span>'):'')+'</div>'+
+    '<div class="sigbars'+clickable+'"'+wrapClick+' title="'+(fail>0?'点击查看报错详情':'')+'">'+parts.join('')+'</div>'+
+    pctTxt+failLab+
+  '</div>';
 }
 function httpCodeOf(sig){
   if(sig==='free_usage_429') return '429';
@@ -440,11 +470,11 @@ function parseErrorBody(raw){
   return out;
 }
 function findAccountByAuth(auth){
-  // recover from last rendered state via data attrs if needed
   return (LAST_ACCOUNTS||[]).find(a=>a.auth_index===auth) || null;
 }
-function openAccountError(btn){
-  const auth=btn.getAttribute('data-auth');
+function openAccountError(el){
+  // accept button/slot/sigbars wrapper
+  const auth = el.getAttribute('data-auth') || (el.closest && el.closest('[data-auth]') && el.closest('[data-auth]').getAttribute('data-auth'));
   const a=findAccountByAuth(auth);
   if(!a){ toast('找不到账号详情'); return; }
   const sig=a.last_signal||'';
@@ -466,7 +496,6 @@ function openAccountError(btn){
   '</div>';
   if(body.message || body.pretty){
     const msg=body.message||'';
-    // avoid duplicating full message twice if pretty JSON already contains it
     let pretty=body.pretty||'';
     if(msg && pretty && pretty.indexOf(String(msg).slice(0,40))>=0){
       html+='<div class="ep-json">'+esc(pretty)+'</div>';
@@ -477,7 +506,7 @@ function openAccountError(btn){
     html+='<div class="muted">暂无完整失败内容样本。</div>';
   }
   html+='</div>';
-  showErrPop(html, btn);
+  showErrPop(html, el);
 }
 function showErrPop(html, anchor){
   const pop=document.getElementById('errPop');
@@ -499,7 +528,7 @@ document.addEventListener('click',function(ev){
   const pop=document.getElementById('errPop');
   if(!pop || !pop.classList.contains('open')) return;
   if(pop.contains(ev.target)) return;
-  if(ev.target.closest && ev.target.closest('.reqchip')) return;
+  if(ev.target.closest && (ev.target.closest('.sigbars') || ev.target.closest('.slot.fail') || ev.target.closest('.reqchip'))) return;
   closeErrPop();
 });
 function quotaCell(a){
@@ -569,7 +598,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.3.9');
+    document.getElementById('ver').textContent='v'+(st.version||'0.4.0');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
