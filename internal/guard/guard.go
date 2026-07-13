@@ -265,8 +265,6 @@ func (g *Guard) applyCooldown(ctx context.Context, ev UsageEvent, res match.Resu
 			recoverAt = maxAt
 		}
 	}
-	g.State.SetAccountState(ev.AuthIndex, st, "plugin_auto")
-	g.State.SetRecoverAt(ev.AuthIndex, recoverAt)
 	name := ev.FileName
 	if name == "" || cpaapi.LooksLikeOpaqueID(name) {
 		if acc != nil && acc.FileName != "" && !cpaapi.LooksLikeOpaqueID(acc.FileName) {
@@ -280,12 +278,20 @@ func (g *Guard) applyCooldown(ctx context.Context, ev UsageEvent, res match.Resu
 			g.State.UpdateMeta(ev.AuthIndex, id.FileName, id.Email, "")
 		}
 	}
+	// Always stamp ownership first so tick protect() cannot treat this as foreign disable
+	// even if CPA SetDisabled is slow/racy with the next tick.
+	g.State.SetAccountState(ev.AuthIndex, st, "plugin_auto")
+	g.State.SetRecoverAt(ev.AuthIndex, recoverAt)
+	if name != "" && !cpaapi.LooksLikeOpaqueID(name) {
+		g.State.UpdateMeta(ev.AuthIndex, name, ev.Email, "")
+	}
 	if g.CPA != nil && name != "" && !cpaapi.LooksLikeOpaqueID(name) {
 		if err := g.CPA.SetDisabled(ctx, name, true); err != nil {
 			g.State.Log(state.ActionLog{
 				Auth: ev.AuthIndex, Source: ev.Source, Signal: string(res.Signal),
 				Action: "cooldown_failed", Reason: err.Error(),
 			})
+			// keep plugin_auto cool-down ownership even if file disable failed
 			return err
 		}
 	}
@@ -439,30 +445,64 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 			byEmail[strings.ToLower(strings.TrimSpace(acc.Email))] = acc
 		}
 	}
-	// protect=true: sentry intentionally disabled this account — do not reopen / do not re-tag
+	// protect=true: sentry owns this disable — never reopen, never re-tag as foreign.
+	// Be conservative: any cool-down/候删/manual/plugin_auto residue is owned.
 	protect := func(acc *state.Account) bool {
 		if acc == nil {
 			return false
 		}
-		if acc.State == state.Trashed || acc.State == state.Purged {
+		switch acc.State {
+		case state.Trashed, state.Purged:
+			return true
+		case state.CooldownQuota, state.CooldownSpending, state.CooldownPermission, state.CandidateDead:
+			// cool-down / 候删 regardless of disable_source (source may be wiped by bugs)
+			return true
+		case state.UserManual:
 			return true
 		}
-		// panel permanent disable (or any user_manual state)
-		if acc.State == state.UserManual || acc.DisableSource == "user_manual" || acc.PreDisabled {
+		if acc.PreDisabled {
 			return true
 		}
-		// already marked as CPA-file disable (operator/external)
-		if acc.DisableSource == "cpa_file_disabled" || acc.DisableSource == "cpa_disabled" {
+		switch acc.DisableSource {
+		case "user_manual", "plugin_auto", "cpa_file_disabled", "cpa_disabled":
+			// plugin_auto on Active is half-dirty but still OUR prior action — do not reopen
 			return true
 		}
-		// our auto cool-down / 候删
-		if acc.DisableSource == "plugin_auto" {
-			switch acc.State {
-			case state.CooldownQuota, state.CooldownSpending, state.CooldownPermission, state.CandidateDead:
-				return true
-			}
+		// future recover_at means we still intend a cool-down window
+		if !acc.RecoverAt.IsZero() && acc.RecoverAt.After(now) {
+			return true
 		}
 		return false
+	}
+	// When multiple state rows map to one auth file, prefer the most "owned" one.
+	pickAcc := func(cands ...*state.Account) *state.Account {
+		var best *state.Account
+		bestScore := -1
+		for _, a := range cands {
+			if a == nil {
+				continue
+			}
+			score := 0
+			if protect(a) {
+				score += 1000
+			}
+			switch a.State {
+			case state.CooldownQuota, state.CooldownSpending, state.CooldownPermission:
+				score += 50
+			case state.CandidateDead, state.UserManual:
+				score += 40
+			}
+			if a.DisableSource == "plugin_auto" {
+				score += 30
+			}
+			if a.LastSignal != "" {
+				score += 5
+			}
+			if score > bestScore {
+				bestScore, best = score, a
+			}
+		}
+		return best
 	}
 
 	n := 0
@@ -480,13 +520,28 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 		}
 		low := strings.ToLower(name)
 		em := strings.ToLower(strings.TrimSpace(f.Email))
-		acc := byFile[low]
-		if acc == nil && em != "" {
-			acc = byEmail[em]
+		// gather all candidates (map last-write is lossy; also scan snapshot keys)
+		var cands []*state.Account
+		if a := byFile[low]; a != nil {
+			cands = append(cands, a)
 		}
-		if acc == nil && em != "" {
-			acc = byFile["xai-"+em+".json"]
+		if em != "" {
+			if a := byEmail[em]; a != nil {
+				cands = append(cands, a)
+			}
+			if a := byFile["xai-"+em+".json"]; a != nil {
+				cands = append(cands, a)
+			}
 		}
+		// also match by auth_index==name for rows keyed by filename
+		for _, acc := range g.State.AccountsSnapshot() {
+			if strings.EqualFold(strings.TrimSpace(acc.FileName), name) ||
+				strings.EqualFold(strings.TrimSpace(acc.AuthIndex), name) ||
+				(em != "" && strings.EqualFold(strings.TrimSpace(acc.Email), em)) {
+				cands = append(cands, acc)
+			}
+		}
+		acc := pickAcc(cands...)
 		// sentry-owned disable: leave file alone
 		if protect(acc) {
 			continue
@@ -553,22 +608,43 @@ func (g *Guard) scrubDirtyActiveAccounts() {
 		if acc.State != state.Active && acc.State != "" {
 			continue
 		}
-		// real half-recovery residues only
-		hasLock := acc.DisableSource == "plugin_auto"
-		hasRecover := !acc.RecoverAt.IsZero()
-		// last_signal alone is OK while counting; only scrub signal if paired with lock/recover
-		if !hasLock && !hasRecover {
+		// Active + future recover_at + plugin_auto = cool-down still in force but state flipped wrong.
+		// Restore cool-down state instead of scrubbing ownership away (which caused false "foreign reopen").
+		if acc.DisableSource == "plugin_auto" && !acc.RecoverAt.IsZero() && acc.RecoverAt.After(g.Now()) {
+			st := state.CooldownQuota
+			switch acc.LastSignal {
+			case string(match.SignalSpendingLimit402):
+				st = state.CooldownSpending
+			case string(match.SignalPermission403):
+				st = state.CooldownPermission
+			case string(match.SignalAuth401):
+				st = state.CandidateDead
+			}
+			g.State.SetAccountState(acc.AuthIndex, st, "plugin_auto")
+			g.State.Log(state.ActionLog{
+				Auth: acc.AuthIndex, Source: "tick", Signal: acc.LastSignal,
+				Action: "repair_cooldown_state", Reason: "active_with_future_recover_at",
+			})
+			continue
+		}
+		// Active + plugin_auto without future recover: keep plugin_auto marker (ownership),
+		// only clear expired recover_at. Do NOT wipe disable_source — ownership must stick
+		// until explicit reenable/ResetToActive.
+		if acc.DisableSource == "plugin_auto" {
+			if !acc.RecoverAt.IsZero() && !acc.RecoverAt.After(g.Now()) {
+				// expired: normal recover path in Tick loop will handle; don't scrub ownership here
+			}
+			continue
+		}
+		// only scrub pure recover_at residue without ownership lock (should be rare)
+		if acc.RecoverAt.IsZero() {
 			continue
 		}
 		prevSig := acc.LastSignal
-		// keep streaks — only clear lock/recover/signal leftovers
-		g.State.SetAccountState(acc.AuthIndex, state.Active, "")
-		// SetAccountState with "" disableSource may not clear DisableSource — use Reset fields carefully
-		// ResetToActive clears streaks too which we don't want here.
 		g.State.ClearCoolDownResidue(acc.AuthIndex)
 		g.State.Log(state.ActionLog{
 			Auth: acc.AuthIndex, Source: "tick", Signal: prevSig,
-			Action: "scrub_active", Reason: "half_recovered_residue",
+			Action: "scrub_active", Reason: "stale_recover_at_only",
 		})
 	}
 }

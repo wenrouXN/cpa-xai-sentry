@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.2
+
+### Fixed (plugin_auto ownership holes)
+- Protect **any** cool-down/候删/manual/plugin_auto residue from foreign-reopen, not only exact state+source pairs.
+- Pick the best matching account row when multiple state keys map to one auth file (email/file duplicates).
+- Do not scrub away `plugin_auto` on Active; if `recover_at` is still in the future, **repair** cool-down state instead.
+- Stamp cool-down ownership before CPA disable to close race with concurrent ticks.
+
+
 ## 1.0.1
 
 ### Fixed
@@ -8,6 +17,15 @@
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.0.2
+
+### Fixed (plugin_auto ownership holes)
+- Protect **any** cool-down/候删/manual/plugin_auto residue from foreign-reopen, not only exact state+source pairs.
+- Pick the best matching account row when multiple state keys map to one auth file (email/file duplicates).
+- Do not scrub away `plugin_auto` on Active; if `recover_at` is still in the future, **repair** cool-down state instead.
+- Stamp cool-down ownership before CPA disable to close race with concurrent ticks.
+
 
 ## 1.0.0 — production release
 
