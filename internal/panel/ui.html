@@ -3,384 +3,363 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>XAI Sentry</title>
+<title>XAI Sentry · 账号巡检</title>
 <style>
 :root{
-  --app-bg:#eff2f7; --app-accent:#409eff; --app-accent-soft:#409eff1f;
-  --text:#2c3e50; --muted:#8b95a6; --regular:#5f6c7b;
-  --surface:#ffffffe6; --border:#0f172a14;
-  --ok:#67c23a; --warn:#e6a23c; --danger:#f56c6c;
-  --radius:14px; --font:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  --bg:#eff2f7; --accent:#409eff; --accent2:#79bbff; --text:#2c3e50; --muted:#8b95a6; --reg:#5f6c7b;
+  --card:#fffffff2; --border:#0f172a14; --ok:#67c23a; --warn:#e6a23c; --danger:#f56c6c; --soft:#f5f9ff;
+  --font:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
 }
 *{box-sizing:border-box}
-body{margin:0;font-family:var(--font);color:var(--text);
-  background:linear-gradient(120deg,#f0f7ff 0%,#e7f2ff 50%,#edf7ff 100%); min-height:100vh}
-.wrap{max-width:1180px;margin:0 auto;padding:20px}
-.top{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start;margin-bottom:14px}
-h1{font-size:22px;margin:0 0 4px}
-.sub{color:var(--muted);font-size:13px}
-.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.badge{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;background:var(--app-accent-soft);color:#337ecc;border:1px solid #409eff33}
+body{margin:0;font-family:var(--font);color:var(--text);background:linear-gradient(120deg,#f0f7ff,#e7f2ff 50%,#edf7ff);font-size:12.5px}
+.wrap{max-width:1400px;margin:0 auto;padding:12px 14px 24px}
+.top{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start;margin-bottom:8px}
+h1{font-size:16px;margin:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.eyebrow{font-size:11px;color:var(--accent);font-weight:700;letter-spacing:.04em}
+.sub{color:var(--muted);font-size:11.5px;margin-top:2px;max-width:760px;line-height:1.4}
+.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.badge{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;border:1px solid #409eff33;background:#409eff14;color:#337ecc}
 .badge.ok{background:#f0f9eb;color:#529b2e;border-color:#c2e7b0}
 .badge.warn{background:#fdf6ec;color:#b88230;border-color:#f5dab1}
 .badge.danger{background:#fef0f0;color:#c45656;border-color:#fbc4c4}
 .badge.off{background:#f4f4f5;color:#909399;border-color:#dcdfe6}
-.dot{width:8px;height:8px;border-radius:50%;background:currentColor;display:inline-block}
-.grid{display:grid;gap:14px}
-.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;backdrop-filter:blur(14px);box-shadow:0 1px 2px #0f172a0a}
-.card h2{font-size:15px;margin:0 0 10px}
-.stats{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px}
-@media(max-width:960px){.stats{grid-template-columns:repeat(3,1fr)}}
-@media(max-width:560px){.stats{grid-template-columns:repeat(2,1fr)}.wrap{padding:12px}}
-.stat{background:#fff;border:1px solid var(--border);border-radius:12px;padding:10px 12px;min-height:78px}
-.stat b{display:block;font-size:22px;margin:4px 0;font-variant-numeric:tabular-nums}
-.stat span{color:var(--muted);font-size:12px;font-weight:600}
-.stat.accent{border-color:#409eff55;background:linear-gradient(160deg,#ecf5ff,#fff)}
-.stat.warn{border-color:#e6a23c55;background:linear-gradient(160deg,#fdf6ec,#fff)}
-.stat.danger{border-color:#f56c6c55;background:linear-gradient(160deg,#fef0f0,#fff)}
-button,.btn{appearance:none;border:1px solid var(--border);background:#fff;color:var(--text);border-radius:10px;padding:8px 12px;font-size:13px;cursor:pointer}
-button.primary{background:var(--app-accent);border-color:#337ecc;color:#fff}
+.dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:10px 12px;backdrop-filter:blur(10px);margin-bottom:8px}
+.card h2{font-size:12.5px;margin:0 0 8px;display:flex;justify-content:space-between;gap:8px;align-items:center}
+.kpis{display:grid;grid-template-columns:repeat(10,minmax(0,1fr));gap:6px}
+@media(max-width:1200px){.kpis{grid-template-columns:repeat(5,1fr)}}
+@media(max-width:700px){.kpis{grid-template-columns:repeat(3,1fr)}}
+.kpi{border:1px solid var(--border);border-radius:10px;padding:7px 8px;background:#fff;min-height:58px}
+.kpi b{display:block;font-size:18px;line-height:1.1;margin:2px 0;font-variant-numeric:tabular-nums}
+.kpi span{color:var(--muted);font-size:10.5px;font-weight:700}
+.kpi.accent{border-color:#409eff55;background:linear-gradient(160deg,#ecf5ff,#fff)}
+.kpi.warn{border-color:#e6a23c55;background:linear-gradient(160deg,#fdf6ec,#fff)}
+.kpi.danger{border-color:#f56c6c55;background:linear-gradient(160deg,#fef0f0,#fff)}
+.kpi.ok{border-color:#67c23a55;background:linear-gradient(160deg,#f0f9eb,#fff)}
+button,input,select{font:inherit}
+button{appearance:none;border:1px solid var(--border);background:#fff;color:var(--text);border-radius:8px;padding:5px 9px;cursor:pointer;line-height:1.2}
+button.primary{background:var(--accent);border-color:#337ecc;color:#fff}
 button.warn{background:#fdf6ec;border-color:#f5dab1;color:#b88230}
 button.danger{background:var(--danger);border-color:#c45656;color:#fff}
-button:disabled{opacity:.5;cursor:not-allowed}
 button.on{background:#67c23a;border-color:#529b2e;color:#fff}
 button.off{background:#fff;border-color:#fbc4c4;color:#c45656}
-input,select{border:1px solid var(--border);border-radius:10px;padding:8px 10px;font-size:13px;background:#fff;color:var(--text);min-width:0}
-.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px;padding:10px;background:linear-gradient(180deg,#f6faff,#fff);border:1px solid var(--border);border-radius:12px}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--border);vertical-align:top}
-th{color:var(--muted);font-weight:600;position:sticky;top:0;background:#fff}
-tr:hover td{background:#409eff0f}
-.table-wrap{max-height:min(58vh,560px);overflow:auto;border:1px solid var(--border);border-radius:12px}
-.tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;border:1px solid var(--border);background:#f8fafc}
-.tag.active{background:#f0f9eb;color:#529b2e;border-color:#c2e7b0}
-.tag.cooldown{background:#fdf6ec;color:#b88230;border-color:#f5dab1}
-.tag.candidate{background:#fef0f0;color:#c45656;border-color:#fbc4c4}
-.tag.manual{background:#f4f4f5;color:#909399}
-.tag.trashed{background:#f4f4f5;color:#606266}
+button:disabled{opacity:.5;cursor:not-allowed}
+button.xs{padding:3px 7px;font-size:11px;border-radius:7px}
+input,select{border:1px solid var(--border);border-radius:8px;padding:5px 8px;background:#fff;color:var(--text);min-width:0}
+.toolbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 6px;padding:7px 8px;background:linear-gradient(180deg,#f6faff,#fff);border:1px solid var(--border);border-radius:10px}
+.table-wrap{max-height:min(62vh,640px);overflow:auto;border:1px solid var(--border);border-radius:10px;background:#fff}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--border);vertical-align:top}
+th{position:sticky;top:0;background:#f8fbff;color:var(--muted);font-weight:700;font-size:11px;z-index:1}
+tr:hover td{background:#409eff0c}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px}
 .muted{color:var(--muted)}
-.toast{position:fixed;right:16px;top:16px;background:#fff;border:1px solid var(--border);padding:10px 14px;border-radius:10px;display:none;box-shadow:0 8px 24px #0f172a1a;z-index:20;max-width:360px}
-.switches{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
-@media(max-width:720px){.switches{grid-template-columns:1fr}}
-.sw{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:#fff}
-.sw .hint{font-size:12px;color:var(--muted);margin-top:2px}
-.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px}
-.tabs button{border-radius:999px}
-.tabs button.active{background:var(--app-accent);border-color:#337ecc;color:#fff}
-.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
-.footer{margin-top:8px;color:var(--muted);font-size:12px}
+.tag{display:inline-block;padding:1px 6px;border-radius:999px;font-size:10.5px;border:1px solid var(--border);background:#f8fafc;white-space:nowrap}
+.tag.active{background:#f0f9eb;color:#529b2e;border-color:#c2e7b0}
+.tag.cooldown,.tag.wait{background:#fdf6ec;color:#b88230;border-color:#f5dab1}
+.tag.candidate,.tag.trash{background:#fef0f0;color:#c45656;border-color:#fbc4c4}
+.tag.manual,.tag.review{background:#f4f4f5;color:#606266}
+.tag.observe,.tag.none{background:#ecf5ff;color:#337ecc;border-color:#b3d8ff}
+.chips{display:flex;gap:5px;flex-wrap:wrap}
+.chip{border:1px solid var(--border);background:#fff;border-radius:999px;padding:2px 8px;font-size:11px}
+.chip b{color:var(--accent)}
+.grid2{display:grid;grid-template-columns:1.4fr .9fr;gap:8px}
+@media(max-width:980px){.grid2{grid-template-columns:1fr}}
+.swbar{display:flex;gap:6px;flex-wrap:wrap}
+.sw{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:999px;padding:3px 8px;background:#fff}
+.sw label{font-size:11px;color:var(--reg)}
+.toast{position:fixed;right:12px;top:12px;background:#fff;border:1px solid var(--border);padding:8px 12px;border-radius:10px;display:none;box-shadow:0 8px 24px #0f172a1a;z-index:20;max-width:380px}
+.logbox{max-height:220px;overflow:auto;background:#0b1220;color:#dbe7ff;border-radius:10px;padding:8px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.45}
+.logbox .l-act{color:#79bbff}.logbox .l-sig{color:#fbbf24}.logbox .l-err{color:#f87171}
+.pending{display:flex;gap:8px;flex-wrap:wrap}
+.pending .box{flex:1;min-width:120px;border:1px dashed #409eff55;border-radius:10px;padding:7px 8px;background:#f5f9ff}
+.pending b{display:block;font-size:16px}
+.reason{color:var(--reg);font-size:11px;line-height:1.3;max-width:220px}
+.meta{color:var(--muted);font-size:11px}
+.actions{display:flex;gap:4px;flex-wrap:wrap}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="top">
     <div>
-      <h1>XAI Sentry <span id="ver" class="badge muted">v0.1.0</span></h1>
-      <div class="sub">观察 / 冷却 / 候选 / 垃圾箱（7天可恢复） · CPAMP 风格运维台</div>
+      <div class="eyebrow">XAI ACCOUNT INSPECTION</div>
+      <h1>XAI Sentry 账号巡检 <span id="ver" class="badge">v0.1.1</span> <span id="modeBadge" class="badge">mode</span></h1>
+      <div class="sub">对标 CPAMP Codex 巡检信息密度：KPI 条 + 建议动作 + 密表 + 可折叠日志。仅在确认后执行破坏性操作；observe 默认不自动处置。</div>
     </div>
     <div class="row">
-      <span id="modeBadge" class="badge">mode</span>
-      <input id="cfgKey" type="password" placeholder="X-Management-Key" style="width:180px" />
-      <button onclick="saveKey()">保存 Key</button>
-      <button id="btnTheme" onclick="refresh()">刷新</button>
-      <button class="primary" onclick="runTick()">Run tick</button>
+      <input id="cfgKey" type="password" placeholder="X-Management-Key" style="width:160px"/>
+      <button class="xs" onclick="saveKey()">保存 Key</button>
+      <button class="xs" onclick="refresh()">刷新</button>
+      <button class="xs primary" onclick="runTick()">Run tick</button>
+      <button class="xs warn" onclick="applyPreset('safe-guard')">safe-guard</button>
+      <button class="xs" onclick="applyPreset('observe')">观察</button>
     </div>
   </div>
 
-  <div class="grid">
-    <div class="card">
-      <div class="row" style="justify-content:space-between">
-        <h2 style="margin:0">运行状态</h2>
-        <div class="row">
-          <button onclick="applyPreset('observe')">预设：观察</button>
-          <button class="warn" onclick="applyPreset('safe-guard')">预设：safe-guard</button>
-          <button class="off" onclick="applyPreset('off')">关闭管控</button>
-        </div>
+  <div class="card">
+    <h2><span>巡检集合 / 建议动作</span><span class="meta" id="updatedAt">—</span></h2>
+    <div class="kpis" id="kpis"></div>
+    <div class="pending" id="pending" style="margin-top:8px"></div>
+    <div class="chips" id="signalChips" style="margin-top:8px"></div>
+    <div class="swbar" style="margin-top:8px">
+      <div class="sw"><label>Sentry</label><button id="swSentry" class="xs" onclick="toggle('sentry_enabled')">—</button></div>
+      <div class="sw"><label>自动冷却</label><button id="swCool" class="xs" onclick="toggle('auto_cooldown')">—</button></div>
+      <div class="sw"><label>自动候选</label><button id="swCand" class="xs" onclick="toggle('auto_candidate')">—</button></div>
+      <div class="sw"><label>自动垃圾箱</label><button id="swDel" class="xs" onclick="toggle('auto_delete')">—</button></div>
+      <div class="sw"><label>巡查</label><button id="swPatrol" class="xs" onclick="toggle('patrol_enabled')">—</button></div>
+      <span class="meta" id="cfgLine"></span>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="card" style="margin:0">
+      <h2><span>巡检结果</span><span class="meta" id="accMeta">0</span></h2>
+      <div class="toolbar">
+        <input id="q" placeholder="搜索账号 / 文件 / 信号 / 建议动作" style="flex:1;min-width:160px" oninput="debouncedRefresh()"/>
+        <select id="view" onchange="refresh()">
+          <option value="focus">focus</option>
+          <option value="all">all</option>
+        </select>
+        <select id="stateFilter" onchange="refresh()">
+          <option value="">状态</option>
+          <option>active</option>
+          <option>cooldown_quota</option>
+          <option>cooldown_spending</option>
+          <option>cooldown_permission</option>
+          <option>candidate_dead</option>
+          <option>user_manual</option>
+          <option>trashed</option>
+        </select>
+        <select id="signalFilter" onchange="refresh()">
+          <option value="">信号</option>
+          <option>free_usage_429</option>
+          <option>spending_limit_402</option>
+          <option>auth_401</option>
+          <option>permission_403</option>
+        </select>
+        <select id="actionFilter" onchange="refresh()">
+          <option value="">建议动作</option>
+          <option value="cooldown">cooldown</option>
+          <option value="candidate">candidate</option>
+          <option value="trash">trash</option>
+          <option value="wait">wait</option>
+          <option value="review">review</option>
+          <option value="manual">manual</option>
+          <option value="observe">observe</option>
+          <option value="none">none</option>
+        </select>
       </div>
-      <div class="stats" id="stats" style="margin-top:12px"></div>
-      <div class="switches" style="margin-top:12px">
-        <div class="sw"><div><b>Sentry 总开关</b><div class="hint">关则只旁路，不处置</div></div><button id="swSentry" onclick="toggle('sentry_enabled')">—</button></div>
-        <div class="sw"><div><b>自动冷却</b><div class="hint">429/402/401/403 按阈值冷却</div></div><button id="swCool" onclick="toggle('auto_cooldown')">—</button></div>
-        <div class="sw"><div><b>自动候选</b><div class="hint">默认 auth_401 进候选</div></div><button id="swCand" onclick="toggle('auto_candidate')">—</button></div>
-        <div class="sw"><div><b>自动进垃圾箱</b><div class="hint">危险；仅 Free，402 永不自动</div></div><button id="swDel" onclick="toggle('auto_delete')">—</button></div>
-        <div class="sw"><div><b>定时巡查</b><div class="hint">主动探测（默认关）</div></div><button id="swPatrol" onclick="toggle('patrol_enabled')">—</button></div>
-        <div class="sw"><div><b>垃圾箱自动清</b><div class="hint">默认 7 天硬清</div></div><span id="trashPolicy" class="badge">7d</span></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>账号 / Auth</th>
+              <th>文件名</th>
+              <th>认证状态</th>
+              <th>信号</th>
+              <th>Streak</th>
+              <th>建议动作</th>
+              <th>判定原因</th>
+              <th>恢复</th>
+              <th>更新</th>
+            </tr>
+          </thead>
+          <tbody id="accBody"></tbody>
+        </table>
       </div>
-      <div class="footer" id="cfgLine">config…</div>
     </div>
 
-    <div class="card">
-      <div class="tabs">
-        <button class="active" data-tab="accounts" onclick="switchTab('accounts')">账号</button>
-        <button data-tab="trash" onclick="switchTab('trash')">垃圾箱</button>
-        <button data-tab="logs" onclick="switchTab('logs')">动作日志</button>
-        <button data-tab="candidates" onclick="switchTab('candidates')">候选</button>
-      </div>
-
-      <div id="tab-accounts">
-        <div class="toolbar">
-          <input id="q" placeholder="搜索 email / file / auth / signal" style="flex:1;min-width:180px" oninput="debouncedRefresh()"/>
-          <select id="view" onchange="refresh()">
-            <option value="focus">focus（有信号/非闲置）</option>
-            <option value="all">all（本插件见过的账号）</option>
-          </select>
-          <select id="stateFilter" onchange="refresh()">
-            <option value="">全部状态</option>
-            <option>active</option>
-            <option>cooldown_quota</option>
-            <option>cooldown_spending</option>
-            <option>cooldown_permission</option>
-            <option>candidate_dead</option>
-            <option>user_manual</option>
-            <option>trashed</option>
-          </select>
-          <select id="signalFilter" onchange="refresh()">
-            <option value="">全部信号</option>
-            <option>free_usage_429</option>
-            <option>spending_limit_402</option>
-            <option>auth_401</option>
-            <option>permission_403</option>
-          </select>
-          <span class="muted" id="accMeta">0</span>
-        </div>
-        <div class="table-wrap">
+    <div>
+      <div class="card" style="margin:0 0 8px">
+        <h2>
+          <span>垃圾箱 · 待恢复/清除</span>
+          <span class="row">
+            <button class="xs danger" onclick="purgeExpired()">清到期</button>
+          </span>
+        </h2>
+        <div class="table-wrap" style="max-height:220px">
           <table>
-            <thead><tr><th>Email / Auth</th><th>File</th><th>Tier</th><th>State</th><th>Signal</th><th>Source</th><th>Recover</th><th>Updated</th></tr></thead>
-            <tbody id="accBody"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <div id="tab-trash" hidden>
-        <p class="muted">删除默认进垃圾箱；可恢复（默认禁用）或彻底清除。到期 7 天 auto-purge。</p>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Email</th><th>File</th><th>Tier</th><th>Signal</th><th>Source</th><th>Expires</th><th>Actions</th></tr></thead>
+            <thead><tr><th>账号</th><th>信号</th><th>到期</th><th>动作</th></tr></thead>
             <tbody id="trashBody"></tbody>
           </table>
         </div>
       </div>
-
-      <div id="tab-logs" hidden>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>At</th><th>Auth</th><th>Action</th><th>Signal</th><th>Source</th><th>Reason</th></tr></thead>
-            <tbody id="logBody"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <div id="tab-candidates" hidden>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Email</th><th>File</th><th>Signal</th><th>Auth</th></tr></thead>
-            <tbody id="candBody"></tbody>
-          </table>
-        </div>
+      <div class="card" style="margin:0">
+        <h2>
+          <span>巡检日志</span>
+          <button class="xs" id="logToggle" onclick="toggleLogs()">折叠</button>
+        </h2>
+        <div id="logbox" class="logbox">尚未加载</div>
+        <div class="meta" id="logMeta" style="margin-top:6px"></div>
       </div>
     </div>
   </div>
 </div>
 <div class="toast" id="toast"></div>
 <script>
-let CFG = {};
-let timer = null;
-const API = "/v0/management/cpa-xai-sentry";
-const KEY_LS = "cpa-xai-sentry-management-key";
-function toast(m){const t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2400)}
+let CFG={}, timer=null, logsOpen=true, LAST_LOGS=[];
+const API="/v0/management/cpa-xai-sentry";
+const KEY_LS="cpa-xai-sentry-management-key";
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2200)}
 function esc(s){return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function getKey(){ return (document.getElementById('cfgKey').value || localStorage.getItem(KEY_LS) || '').trim(); }
-function saveKey(){
-  const k=document.getElementById('cfgKey').value.trim();
-  if(k) localStorage.setItem(KEY_LS, k); else localStorage.removeItem(KEY_LS);
-  toast(k?'Key 已保存到本机浏览器':'已清除本机 Key');
-  refresh();
-}
+function getKey(){return (document.getElementById('cfgKey').value||localStorage.getItem(KEY_LS)||'').trim()}
+function saveKey(){const k=document.getElementById('cfgKey').value.trim(); if(k) localStorage.setItem(KEY_LS,k); else localStorage.removeItem(KEY_LS); toast(k?'Key 已保存':'已清除 Key'); refresh()}
 async function j(path, opt){
-  opt = opt || {};
-  const headers = Object.assign({}, opt.headers||{});
-  const k=getKey();
-  if(k){
-    headers['X-Management-Key']=k;
-    headers['Authorization']='Bearer '+k;
-  }
-  // accept absolute or relative plugin path
+  opt=opt||{}; const headers=Object.assign({},opt.headers||{});
+  const k=getKey(); if(k){headers['X-Management-Key']=k; headers['Authorization']='Bearer '+k}
   let url=path;
-  if(path.startsWith('/state')||path.startsWith('/config')||path.startsWith('/logs')||path.startsWith('/trash')||path.startsWith('/candidates')||path.startsWith('/run-tick')||path.startsWith('/toggle')||path.startsWith('/preset')||path.startsWith('/health')){
-    url = API + path;
-  } else if(path.startsWith('/')) {
-    // keep
-  } else {
-    url = API + '/' + path;
-  }
-  const r = await fetch(url, Object.assign({}, opt, {headers}));
-  const text = await r.text();
-  let data; try{ data=JSON.parse(text) }catch(e){ data={raw:text} }
+  if(path.startsWith('/')) url=API+path; else url=API+'/'+path;
+  const r=await fetch(url,Object.assign({},opt,{headers}));
+  const text=await r.text(); let data; try{data=JSON.parse(text)}catch(e){data={raw:text}}
   if(!r.ok) throw new Error((data&&data.error)||text||('HTTP '+r.status));
-  // management envelope unwrap if present
-  if(data && data.ok===true && data.result!=null){
-    // host may nest ManagementResponse
-    if(typeof data.result==='object' && data.result.Body!=null){
-      try{
-        const body = typeof data.result.Body==='string' ? data.result.Body : new TextDecoder().decode(new Uint8Array(data.result.Body));
-        return JSON.parse(body);
-      }catch(e){ return data.result; }
+  if(data&&data.ok===true&&data.result!=null){
+    if(typeof data.result==='object'&&data.result.Body!=null){
+      try{const body=typeof data.result.Body==='string'?data.result.Body:new TextDecoder().decode(new Uint8Array(data.result.Body)); return JSON.parse(body)}catch(e){return data.result}
     }
-    if(typeof data.result==='string'){
-      try{return JSON.parse(data.result)}catch(e){return data}
-    }
+    if(typeof data.result==='string'){try{return JSON.parse(data.result)}catch(e){return data}}
     return data.result;
   }
   return data;
 }
 function modeBadge(mode){
-  const el=document.getElementById('modeBadge');
-  el.className='badge';
+  const el=document.getElementById('modeBadge'); el.className='badge';
   if(mode==='observe') el.classList.add('ok');
   else if(mode==='safe-guard'||mode==='cooldown') el.classList.add('warn');
   else if(mode==='auto_trash') el.classList.add('danger');
   else el.classList.add('off');
   el.innerHTML='<span class="dot"></span>'+esc(mode||'—');
 }
-function swBtn(id, on, labelOn, labelOff){
-  const b=document.getElementById(id);
-  b.className = on ? 'on' : 'off';
-  b.textContent = on ? (labelOn||'ON') : (labelOff||'OFF');
-}
+function sw(id,on){const b=document.getElementById(id); b.className='xs '+(on?'on':'off'); b.textContent=on?'ON':'OFF'}
+function tag(cls,text){return '<span class="tag '+cls+'">'+esc(text)+'</span>'}
 function stateTag(st){
-  let cls='tag';
-  if(st==='active') cls+=' active';
-  else if(String(st).startsWith('cooldown')) cls+=' cooldown';
-  else if(st==='candidate_dead') cls+=' candidate';
-  else if(st==='user_manual') cls+=' manual';
-  else if(st==='trashed'||st==='purged') cls+=' trashed';
-  return '<span class="'+cls+'">'+esc(st)+'</span>';
+  if(st==='active') return tag('active',st);
+  if(String(st).startsWith('cooldown')) return tag('cooldown',st);
+  if(st==='candidate_dead') return tag('candidate',st);
+  if(st==='user_manual') return tag('manual',st);
+  if(st==='trashed'||st==='purged') return tag('trash',st);
+  return tag('',st);
 }
-function renderStats(s){
+function actionTag(a){
+  const cls=({cooldown:'cooldown',candidate:'candidate',trash:'trash',wait:'wait',review:'review',manual:'manual',observe:'observe',none:'none',restore_or_purge:'trash'}[a]||'');
+  return tag(cls,a||'—');
+}
+function renderKPIs(s, trashCount){
   s=s||{};
   const items=[
-    ['total','已观测',s.total||0,''],
-    ['active','Active',s.active||0,'accent'],
-    ['cooldown','冷却中',s.cooldown||0,'warn'],
-    ['candidate','候选',s.candidate||0,'danger'],
-    ['user_manual','手动禁用',s.user_manual||0,''],
-    ['with_signal','有信号',s.with_signal||0,''],
+    ['巡检集合',s.total||0,'accent'],
+    ['Active',s.active||0,'ok'],
+    ['冷却中',s.cooldown||0,'warn'],
+    ['候选',s.candidate||0,'danger'],
+    ['有信号',s.with_signal||0,''],
+    ['建议冷却',s.suggest_cooldown||0,'warn'],
+    ['建议候选',s.suggest_candidate||0,'danger'],
+    ['建议垃圾箱',s.suggest_trash||0,'danger'],
+    ['待复查',s.suggest_review||0,'warn'],
+    ['垃圾箱',trashCount||0,''],
   ];
-  document.getElementById('stats').innerHTML=items.map(([k,l,v,c])=>
-    '<div class="stat '+(c||'')+'"><span>'+l+'</span><b>'+v+'</b></div>'
-  ).join('');
+  document.getElementById('kpis').innerHTML=items.map(([l,v,c])=>'<div class="kpi '+(c||'')+'"><span>'+l+'</span><b>'+v+'</b></div>').join('');
+  document.getElementById('pending').innerHTML=[
+    ['建议冷却',s.suggest_cooldown||0],
+    ['建议候选',s.suggest_candidate||0],
+    ['建议垃圾箱',s.suggest_trash||0],
+    ['等待恢复',s.suggest_wait||0],
+    ['手动禁用',s.user_manual||0],
+  ].map(([l,v])=>'<div class="box"><span class="muted">'+l+'</span><b>'+v+'</b></div>').join('');
 }
-function switchTab(name){
-  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
-  ['accounts','trash','logs','candidates'].forEach(n=>{
-    document.getElementById('tab-'+n).hidden = (n!==name);
+function renderSignals(sc){
+  sc=sc||{};
+  const keys=Object.keys(sc);
+  document.getElementById('signalChips').innerHTML=keys.length?keys.map(k=>'<span class="chip">'+esc(k)+' <b>'+sc[k]+'</b></span>').join(''):'<span class="muted">暂无信号聚合</span>';
+}
+function renderLogs(logs){
+  LAST_LOGS=logs||[];
+  document.getElementById('logMeta').textContent='共 '+(LAST_LOGS.length)+' 条 · 最新在上';
+  if(!logsOpen){
+    document.getElementById('logbox').innerHTML='<span class="muted">日志已折叠，共 '+LAST_LOGS.length+' 条</span>';
+    return;
+  }
+  const lines=(LAST_LOGS).slice().reverse().slice(0,120).map(e=>{
+    const cls=String(e.action||'').includes('fail')||String(e.action||'').includes('error')?'l-err':'l-act';
+    return '<div><span class="muted">'+esc((e.at||'').replace('T',' ').replace('Z',''))+'</span> '+
+      '<span class="'+cls+'">'+esc(e.action)+'</span> '+
+      '<span class="l-sig">'+esc(e.signal||'-')+'</span> '+
+      '<span>'+esc(e.auth||'')+'</span> '+
+      '<span class="muted">'+esc(e.reason||'')+'</span></div>';
   });
+  document.getElementById('logbox').innerHTML=lines.join('')||'暂无日志';
 }
-function debouncedRefresh(){
-  clearTimeout(timer); timer=setTimeout(refresh, 250);
+function toggleLogs(){
+  logsOpen=!logsOpen;
+  document.getElementById('logToggle').textContent=logsOpen?'折叠':'展开';
+  renderLogs(LAST_LOGS);
 }
+function debouncedRefresh(){clearTimeout(timer); timer=setTimeout(refresh,220)}
 async function refresh(){
   try{
-    const view=document.getElementById('view').value;
-    const q=document.getElementById('q').value.trim();
-    const state=document.getElementById('stateFilter').value;
-    const signal=document.getElementById('signalFilter').value;
-    const qs=new URLSearchParams({view});
-    if(q) qs.set('q',q);
-    if(state) qs.set('state',state);
-    if(signal) qs.set('signal',signal);
+    const qs=new URLSearchParams({view:document.getElementById('view').value});
+    const q=document.getElementById('q').value.trim(); if(q) qs.set('q',q);
+    const stf=document.getElementById('stateFilter').value; if(stf) qs.set('state',stf);
+    const sif=document.getElementById('signalFilter').value; if(sif) qs.set('signal',sif);
+    const af=document.getElementById('actionFilter').value; if(af) qs.set('action',af);
     const st=await j('/state?'+qs.toString());
-    CFG = st.config||{};
+    CFG=st.config||{};
     modeBadge(st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.1.0');
-    renderStats(st.summary);
-    swBtn('swSentry', !!CFG.sentry_enabled);
-    swBtn('swCool', !!CFG.auto_cooldown);
-    swBtn('swCand', !!CFG.auto_candidate);
-    swBtn('swDel', !!CFG.auto_delete);
-    swBtn('swPatrol', !!CFG.patrol_enabled);
-    document.getElementById('trashPolicy').textContent=(CFG.trash_retention_days||7)+'d '+(CFG.trash_auto_purge?'auto':'manual');
-    document.getElementById('cfgLine').textContent=
-      'auth_dir='+(CFG.auth_dir||'—')+' · trash='+(CFG.trash_dir||'—')+' · tick='+(CFG.tick_seconds||30)+'s · key='+(CFG.management_key_set?'set':'missing')+' · trash_count='+(st.trash_count||0);
-    document.getElementById('accMeta').textContent=(st.account_count||0)+' rows / observed '+(st.summary&&st.summary.total||0);
+    document.getElementById('ver').textContent='v'+(st.version||'0.1.1');
+    document.getElementById('updatedAt').textContent='更新 '+(st.updated_at||'—').replace('T',' ').replace('Z','');
+    renderKPIs(st.summary, st.trash_count||0);
+    renderSignals(st.signal_counts||{});
+    sw('swSentry',!!CFG.sentry_enabled); sw('swCool',!!CFG.auto_cooldown); sw('swCand',!!CFG.auto_candidate); sw('swDel',!!CFG.auto_delete); sw('swPatrol',!!CFG.patrol_enabled);
+    document.getElementById('cfgLine').textContent='tick '+(CFG.tick_seconds||30)+'s · trash '+(CFG.trash_retention_days||7)+'d'+(CFG.trash_auto_purge?' auto':'')+' · key '+(CFG.management_key_set?'set':'missing');
+    document.getElementById('accMeta').textContent=(st.account_count||0)+' rows / observed '+((st.summary&&st.summary.total)||0);
     document.getElementById('accBody').innerHTML=(st.accounts||[]).map(a=>'<tr>'+
-      '<td><div>'+esc(a.email||'—')+'</div><div class="mono muted">'+esc(a.auth_index)+'</div></td>'+
+      '<td><div>'+esc(a.email||'—')+'</div><div class="mono muted">'+esc(a.auth_index)+'</div><div class="muted">'+esc(a.tier||'')+(a.disable_source?(' · '+a.disable_source):'')+'</div></td>'+
       '<td class="mono">'+esc(a.file_name||'')+'</td>'+
-      '<td>'+esc(a.tier||'')+'</td>'+
       '<td>'+stateTag(a.state)+'</td>'+
       '<td>'+esc(a.last_signal||'')+'</td>'+
-      '<td>'+esc(a.disable_source||'')+'</td>'+
+      '<td class="mono">'+esc(a.streak_summary||'')+'</td>'+
+      '<td>'+actionTag(a.suggested_action)+'</td>'+
+      '<td class="reason">'+esc(a.reason||'')+'</td>'+
       '<td class="mono">'+esc(a.recover_at||'')+'</td>'+
-      '<td class="mono">'+esc(a.updated_at||'')+'</td></tr>').join('') || '<tr><td colspan="8" class="muted">暂无账号行（focus 模式下无信号会隐藏）</td></tr>';
+      '<td class="mono">'+esc(a.updated_at||'')+'</td></tr>').join('')||
+      '<tr><td colspan="9" class="muted">无匹配结果</td></tr>';
 
     const tr=await j('/trash');
     const items=tr.trash||[];
     document.getElementById('trashBody').innerHTML=items.length?items.map(t=>'<tr>'+
-      '<td>'+esc(t.email||'')+'</td><td class="mono">'+esc(t.file_name||'')+'</td><td>'+esc(t.tier||'')+'</td>'+
-      '<td>'+esc(t.signal||'')+'</td><td>'+esc(t.source||'')+'</td><td class="mono">'+esc(t.expires_at||'')+'</td>'+
-      '<td class="row">'+
-      '<button data-id="'+esc(t.id)+'" class="btn-restore">恢复</button>'+
-      '<button data-id="'+esc(t.id)+'" class="primary btn-restore-en">恢复并启用</button>'+
-      '<button data-id="'+esc(t.id)+'" class="danger btn-purge">彻底清除</button></td></tr>').join('')
-      :'<tr><td colspan="7" class="muted">垃圾箱为空</td></tr>';
+      '<td><div>'+esc(t.email||'—')+'</div><div class="mono muted">'+esc(t.file_name||t.auth_index||'')+'</div></td>'+
+      '<td>'+esc(t.signal||'')+'</td>'+
+      '<td class="mono">'+esc(t.expires_at||'')+'</td>'+
+      '<td class="actions">'+
+        '<button class="xs btn-restore" data-id="'+esc(t.id)+'">恢复</button>'+
+        '<button class="xs primary btn-restore-en" data-id="'+esc(t.id)+'">启用</button>'+
+        '<button class="xs danger btn-purge" data-id="'+esc(t.id)+'">清除</button></td></tr>').join('')
+      :'<tr><td colspan="4" class="muted">垃圾箱为空</td></tr>';
 
     const lg=await j('/logs');
-    const logs=(lg.logs||[]).slice().reverse().slice(0,100);
-    document.getElementById('logBody').innerHTML=logs.map(e=>'<tr>'+
-      '<td class="mono">'+esc(e.at)+'</td><td class="mono">'+esc(e.auth)+'</td><td>'+esc(e.action)+'</td>'+
-      '<td>'+esc(e.signal)+'</td><td>'+esc(e.source)+'</td><td>'+esc(e.reason)+'</td></tr>').join('')
-      || '<tr><td colspan="6" class="muted">暂无日志</td></tr>';
-
-    const cd=await j('/candidates');
-    const cands=cd.candidates||[];
-    document.getElementById('candBody').innerHTML=cands.length?cands.map(c=>'<tr>'+
-      '<td>'+esc(c.email||'')+'</td><td class="mono">'+esc(c.file_name||'')+'</td><td>'+esc(c.signal||'')+'</td><td class="mono">'+esc(c.auth_index||'')+'</td></tr>').join('')
-      :'<tr><td colspan="4" class="muted">无候选</td></tr>';
-  }catch(e){ toast('刷新失败: '+e.message); console.error(e); }
+    renderLogs(lg.logs||[]);
+  }catch(e){ toast('刷新失败: '+e.message); console.error(e) }
 }
 async function toggle(field){
   const body={}; body[field]=!CFG[field];
-  try{
-    const res=await j('/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    toast(field+' => '+(res.config&&res.config[field]));
-    await refresh();
-  }catch(e){ toast(e.message) }
+  try{ const res=await j('/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); toast(field+' => '+(res.config&&res.config[field])); await refresh() }catch(e){toast(e.message)}
 }
 async function applyPreset(name){
-  if(name==='safe-guard' && !confirm('启用 safe-guard？将自动冷却+候选，仍不会自动进垃圾箱。')) return;
-  if(name==='off' && !confirm('关闭 Sentry 管控？')) return;
-  try{
-    await j('/preset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
-    toast('preset: '+name); await refresh();
-  }catch(e){ toast(e.message) }
+  if(name==='safe-guard' && !confirm('启用 safe-guard？自动冷却+候选，不自动进垃圾箱。')) return;
+  try{ await j('/preset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}); toast('preset '+name); await refresh() }catch(e){toast(e.message)}
 }
-async function runTick(){
-  try{ await j('/run-tick',{method:'POST'}); toast('tick done'); await refresh(); }
-  catch(e){ toast(e.message) }
-}
-async function restore(id, enable){
-  try{
-    await j('/trash/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,enable})});
-    toast(enable?'已恢复并启用':'已恢复(禁用)'); await refresh();
-  }catch(e){ toast(e.message) }
-}
-async function purge(id){
-  if(!confirm('彻底清除不可恢复，确认？')) return;
-  try{
-    await j('/trash/purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,confirm:true})});
-    toast('已清除'); await refresh();
-  }catch(e){ toast(e.message) }
-}
+async function runTick(){ try{ await j('/run-tick',{method:'POST'}); toast('tick done'); await refresh() }catch(e){toast(e.message)} }
+async function restore(id,enable){ try{ await j('/trash/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,enable})}); toast(enable?'恢复并启用':'已恢复'); await refresh() }catch(e){toast(e.message)} }
+async function purge(id){ if(!confirm('彻底清除不可恢复？')) return; try{ await j('/trash/purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,confirm:true})}); toast('已清除'); await refresh() }catch(e){toast(e.message)} }
+async function purgeExpired(){ if(!confirm('清除所有到期垃圾箱项？')) return; try{ await j('/trash/purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({expired:true,confirm:true})}); toast('到期项已清'); await refresh() }catch(e){toast(e.message)} }
 document.addEventListener('click',function(ev){
   const t=ev.target;
   if(t.classList.contains('btn-restore')) restore(t.getAttribute('data-id'), false);
   if(t.classList.contains('btn-restore-en')) restore(t.getAttribute('data-id'), true);
   if(t.classList.contains('btn-purge')) purge(t.getAttribute('data-id'));
 });
-const saved=localStorage.getItem(KEY_LS)||'';
-if(saved) document.getElementById('cfgKey').value=saved;
-refresh();
-setInterval(refresh, 15000);
+const saved=localStorage.getItem(KEY_LS)||''; if(saved) document.getElementById('cfgKey').value=saved;
+refresh(); setInterval(refresh,12000);
 </script>
 </body>
 </html>

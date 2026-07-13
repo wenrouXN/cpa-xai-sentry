@@ -45,6 +45,41 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+
+func suggestAction(acc *state.Account) (action, reason string) {
+	if acc == nil {
+		return "none", ""
+	}
+	switch acc.State {
+	case state.CandidateDead:
+		return "trash", "候选死号，建议移入垃圾箱"
+	case state.CooldownQuota:
+		return "wait", "free-usage 冷却中，到期自动恢复"
+	case state.CooldownSpending:
+		return "wait", "spending-limit 冷却中，勿删除"
+	case state.CooldownPermission:
+		return "review", "permission 软故障，复查后决定"
+	case state.UserManual:
+		return "manual", "用户手动禁用，不自动启用"
+	case state.Trashed:
+		return "restore_or_purge", "已在垃圾箱"
+	}
+	switch acc.LastSignal {
+	case "auth_401":
+		return "candidate", "凭证失效信号，建议候选/人工确认"
+	case "permission_403":
+		return "cooldown", "权限拒绝，默认可恢复冷却"
+	case "free_usage_429":
+		return "cooldown", "免费额度耗尽，应冷却不应删除"
+	case "spending_limit_402":
+		return "cooldown", "消费限额，硬禁止自动删除"
+	}
+	if acc.State == state.Active && acc.LastSignal == "" {
+		return "none", "正常"
+	}
+	return "observe", "仅观察"
+}
+
 func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	view := r.URL.Query().Get("view")
 	if view == "" {
@@ -53,23 +88,30 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
 	stateFilter := strings.TrimSpace(r.URL.Query().Get("state"))
 	signalFilter := strings.TrimSpace(r.URL.Query().Get("signal"))
+	actionFilter := strings.TrimSpace(r.URL.Query().Get("action"))
 	accs := a.State.AccountsSnapshot()
 	type row struct {
-		AuthIndex     string         `json:"auth_index"`
-		FileName      string         `json:"file_name"`
-		Email         string         `json:"email"`
-		Tier          string         `json:"tier"`
-		State         string         `json:"state"`
-		Signal        string         `json:"last_signal"`
-		DisableSource string         `json:"disable_source"`
-		Streaks       map[string]int `json:"streaks,omitempty"`
-		RecoverAt     any            `json:"recover_at,omitempty"`
-		UpdatedAt     any            `json:"updated_at,omitempty"`
+		AuthIndex       string         `json:"auth_index"`
+		FileName        string         `json:"file_name"`
+		Email           string         `json:"email"`
+		Tier            string         `json:"tier"`
+		State           string         `json:"state"`
+		Signal          string         `json:"last_signal"`
+		DisableSource   string         `json:"disable_source"`
+		Streaks         map[string]int `json:"streaks,omitempty"`
+		StreakSummary   string         `json:"streak_summary"`
+		SuggestedAction string         `json:"suggested_action"`
+		Reason          string         `json:"reason"`
+		RecoverAt       any            `json:"recover_at,omitempty"`
+		UpdatedAt       any            `json:"updated_at,omitempty"`
 	}
 	summary := map[string]int{
 		"total": 0, "active": 0, "cooldown": 0, "candidate": 0,
 		"user_manual": 0, "trashed": 0, "with_signal": 0,
+		"suggest_cooldown": 0, "suggest_candidate": 0, "suggest_trash": 0,
+		"suggest_review": 0, "suggest_wait": 0,
 	}
+	signalCounts := map[string]int{}
 	rows := make([]row, 0, len(accs))
 	for _, acc := range accs {
 		summary["total"]++
@@ -87,6 +129,20 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		}
 		if acc.LastSignal != "" {
 			summary["with_signal"]++
+			signalCounts[acc.LastSignal]++
+		}
+		act, reason := suggestAction(acc)
+		switch act {
+		case "cooldown":
+			summary["suggest_cooldown"]++
+		case "candidate":
+			summary["suggest_candidate"]++
+		case "trash":
+			summary["suggest_trash"]++
+		case "review":
+			summary["suggest_review"]++
+		case "wait":
+			summary["suggest_wait"]++
 		}
 		if view == "focus" {
 			if acc.State == state.Active && acc.LastSignal == "" {
@@ -99,8 +155,11 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		if signalFilter != "" && acc.LastSignal != signalFilter {
 			continue
 		}
+		if actionFilter != "" && act != actionFilter {
+			continue
+		}
 		if q != "" {
-			blob := strings.ToLower(acc.Email + " " + acc.FileName + " " + acc.AuthIndex + " " + acc.Tier + " " + acc.LastSignal)
+			blob := strings.ToLower(acc.Email + " " + acc.FileName + " " + acc.AuthIndex + " " + acc.Tier + " " + acc.LastSignal + " " + act + " " + reason)
 			if !strings.Contains(blob, q) {
 				continue
 			}
@@ -112,24 +171,51 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		if !acc.UpdatedAt.IsZero() {
 			ua = acc.UpdatedAt.UTC().Format(time.RFC3339)
 		}
+		streakSum := ""
+		if len(acc.Streaks) > 0 {
+			parts := make([]string, 0, len(acc.Streaks))
+			for k, v := range acc.Streaks {
+				if v > 0 {
+					parts = append(parts, k+":"+itoa(v))
+				}
+			}
+			streakSum = strings.Join(parts, " ")
+		}
 		rows = append(rows, row{
 			AuthIndex: acc.AuthIndex, FileName: acc.FileName, Email: acc.Email,
 			Tier: acc.Tier, State: string(acc.State), Signal: acc.LastSignal,
-			DisableSource: acc.DisableSource, Streaks: acc.Streaks,
-			RecoverAt: ra, UpdatedAt: ua,
+			DisableSource: acc.DisableSource, Streaks: acc.Streaks, StreakSummary: streakSum,
+			SuggestedAction: act, Reason: reason, RecoverAt: ra, UpdatedAt: ua,
 		})
 	}
 	writeJSON(w, 200, map[string]any{
-		"plugin":      "cpa-xai-sentry",
-		"version":     "0.1.0",
-		"mode":        modeOf(*a.Cfg),
-		"summary":     summary,
-		"accounts":    rows,
+		"plugin":        "cpa-xai-sentry",
+		"version":       "0.1.1",
+		"mode":          modeOf(*a.Cfg),
+		"summary":       summary,
+		"signal_counts": signalCounts,
+		"accounts":      rows,
 		"account_count": len(rows),
-		"trash_count": len(a.State.ListTrash()),
-		"config":      a.Cfg.Redact(),
+		"trash_count":   len(a.State.ListTrash()),
+		"config":        a.Cfg.Redact(),
+		"updated_at":    time.Now().UTC().Format(time.RFC3339),
 	})
 }
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var b [12]byte
+	i := len(b)
+	for n > 0 {
+		i--
+		b[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(b[i:])
+}
+
 
 func modeOf(c sentrycfg.Config) string {
 	if !c.SentryEnabled {
