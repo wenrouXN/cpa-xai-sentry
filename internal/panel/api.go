@@ -946,7 +946,7 @@ func humanizeReason(reason, sigL, action string) string {
 		}
 		return ""
 	case "recover_at":
-		return "冷却到期，自动恢复"
+		return "冷却/额度重置到期，状态闭环恢复为正常"
 	case "panel bulk/manual":
 		return "面板批量操作"
 	case "cpa_disabled_sync":
