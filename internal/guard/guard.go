@@ -444,6 +444,33 @@ func (g *Guard) Tick(ctx context.Context) error {
 	return g.State.Save()
 }
 
+
+// authFileBase normalizes CPA auth file names for matching (strip dirs, lower).
+func authFileBase(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	// path-like from some list APIs
+	if i := strings.LastIndexAny(name, "/\\"); i >= 0 {
+		name = name[i+1:]
+	}
+	return strings.ToLower(strings.TrimSpace(name))
+}
+
+// emailFromXAIFile extracts email from xai-<email>.json style names.
+func emailFromXAIFile(name string) string {
+	base := authFileBase(name)
+	base = strings.TrimSuffix(base, ".json")
+	if strings.HasPrefix(base, "xai-") {
+		em := strings.TrimSpace(base[4:])
+		if strings.Contains(em, "@") {
+			return em
+		}
+	}
+	return ""
+}
+
 // syncDisabledFromCPA inspects CPA auth files that are currently disabled.
 //
 // Default (reopen_foreign_disabled=true) — self-heal model:
@@ -461,15 +488,23 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 	if err != nil {
 		return 0, err
 	}
-	// index sentry accounts by file/email
+	// index sentry accounts by file basename / email (CPA list name may be path or bare)
 	byFile := map[string]*state.Account{}
 	byEmail := map[string]*state.Account{}
 	for _, acc := range g.State.AccountsSnapshot() {
 		if acc.FileName != "" {
+			byFile[authFileBase(acc.FileName)] = acc
+			// also raw lower for safety
 			byFile[strings.ToLower(strings.TrimSpace(acc.FileName))] = acc
 		}
 		if acc.Email != "" {
 			byEmail[strings.ToLower(strings.TrimSpace(acc.Email))] = acc
+		}
+		// filename-derived email when meta.email empty
+		if em := emailFromXAIFile(acc.FileName); em != "" {
+			if _, ok := byEmail[em]; !ok {
+				byEmail[em] = acc
+			}
 		}
 	}
 	// protect=true: sentry intentionally owns this disable — do not reopen.
@@ -550,11 +585,17 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 		if name == "" || !cpaapi.IsXAIName(name, prov) {
 			continue
 		}
-		low := strings.ToLower(name)
+		base := authFileBase(name)
 		em := strings.ToLower(strings.TrimSpace(f.Email))
-		// gather all candidates (map last-write is lossy; also scan snapshot keys)
+		if em == "" {
+			em = emailFromXAIFile(name)
+		}
+		// gather all candidates (map last-write is lossy; also scan snapshot)
 		var cands []*state.Account
-		if a := byFile[low]; a != nil {
+		if a := byFile[base]; a != nil {
+			cands = append(cands, a)
+		}
+		if a := byFile[strings.ToLower(strings.TrimSpace(name))]; a != nil {
 			cands = append(cands, a)
 		}
 		if em != "" {
@@ -565,11 +606,17 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 				cands = append(cands, a)
 			}
 		}
-		// also match by auth_index==name for rows keyed by filename
 		for _, acc := range g.State.AccountsSnapshot() {
-			if strings.EqualFold(strings.TrimSpace(acc.FileName), name) ||
-				strings.EqualFold(strings.TrimSpace(acc.AuthIndex), name) ||
-				(em != "" && strings.EqualFold(strings.TrimSpace(acc.Email), em)) {
+			af := authFileBase(acc.FileName)
+			if af != "" && (af == base || strings.EqualFold(strings.TrimSpace(acc.FileName), name)) {
+				cands = append(cands, acc)
+				continue
+			}
+			if strings.EqualFold(strings.TrimSpace(acc.AuthIndex), name) || strings.EqualFold(authFileBase(acc.AuthIndex), base) {
+				cands = append(cands, acc)
+				continue
+			}
+			if em != "" && (strings.EqualFold(strings.TrimSpace(acc.Email), em) || emailFromXAIFile(acc.FileName) == em) {
 				cands = append(cands, acc)
 			}
 		}
@@ -634,7 +681,7 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 		if !f.Disabled {
 			continue
 		}
-		nm := strings.ToLower(strings.TrimSpace(f.Name))
+		nm := authFileBase(f.Name)
 		if nm != "" {
 			disabledSet[nm] = true
 		}
@@ -647,8 +694,11 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 		if acc.DisableSource != "cpa_file_disabled" && acc.DisableSource != "cpa_disabled" {
 			continue
 		}
-		fn := strings.ToLower(strings.TrimSpace(acc.FileName))
+		fn := authFileBase(acc.FileName)
 		em := strings.ToLower(strings.TrimSpace(acc.Email))
+		if em == "" {
+			em = emailFromXAIFile(acc.FileName)
+		}
 		still := (fn != "" && disabledSet[fn]) || (em != "" && disabledSet["email:"+em])
 		if still {
 			// file still disabled: if self-heal on, reopen path above should have handled;

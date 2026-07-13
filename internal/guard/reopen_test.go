@@ -260,3 +260,102 @@ func TestConservativeModeMarksCPADisabled(t *testing.T) {
 		t.Fatalf("want cpa_file_disabled, got %s/%s", acc.State, acc.DisableSource)
 	}
 }
+
+func TestTickDoesNotReopenMatchedCooldownByFileName(t *testing.T) {
+	// CPA list may omit email; must still match state by xai-<email>.json basename
+	// and protect plugin_auto cool-down (the 5w4ggr8txx bug).
+	dir := t.TempDir()
+	setToFalse := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v0/management/auth-files" && r.Method == http.MethodGet:
+			// no email field — only name (as some CPA list responses)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"files": []map[string]any{{
+					"name": "xai-5w4ggr8txx@lovc.eu.cc.json",
+					"provider": "xai", "type": "xai", "disabled": true,
+				}},
+			})
+		case r.URL.Path == "/v0/management/auth-files/status":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if d, ok := body["disabled"].(bool); ok && !d {
+				setToFalse++
+			}
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		default:
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	defer srv.Close()
+	cfg := sentrycfg.Default()
+	cfg.SentryEnabled = true
+	cfg.ManagementURL = srv.URL
+	cfg.ManagementKey = "k"
+	cfg.ReopenForeignDisabled = true
+	st := state.New(filepath.Join(dir, "s.json"))
+	// hash auth_index like production; email may be empty briefly but file_name set
+	st.Touch("e7a69b89ef4084e7")
+	st.UpdateMeta("e7a69b89ef4084e7", "xai-5w4ggr8txx@lovc.eu.cc.json", "5w4ggr8txx@lovc.eu.cc", "")
+	st.SetAccountState("e7a69b89ef4084e7", state.CooldownQuota, "plugin_auto")
+	st.SetRecoverAt("e7a69b89ef4084e7", time.Now().Add(24*time.Hour))
+	st.SetLastSignal("e7a69b89ef4084e7", "free_usage_429")
+	_ = st.Save()
+	ts := trash.New(filepath.Join(dir, "trash"), 7, true, st)
+	cpa := cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, dir)
+	g := guard.New(cfg, st, ts, cpa)
+	if err := g.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if setToFalse != 0 {
+		t.Fatalf("must not reopen owned 429 cool-down (matched by filename), opens=%d", setToFalse)
+	}
+	acc := st.Get("e7a69b89ef4084e7")
+	if acc.State != state.CooldownQuota || acc.DisableSource != "plugin_auto" {
+		t.Fatalf("cool-down lost: state=%s src=%s", acc.State, acc.DisableSource)
+	}
+}
+
+func TestTickMatchesEmailFromFilenameWhenListEmailEmpty(t *testing.T) {
+	dir := t.TempDir()
+	setToFalse := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v0/management/auth-files" && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode([]map[string]any{{
+				"name": "/root/.cli-proxy-api/xai-pathuser@lovc.eu.cc.json",
+				"type": "xai", "disabled": true,
+			}})
+		case r.URL.Path == "/v0/management/auth-files/status":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if d, ok := body["disabled"].(bool); ok && !d {
+				setToFalse++
+			}
+			w.WriteHeader(200)
+		default:
+			w.WriteHeader(200)
+		}
+	}))
+	defer srv.Close()
+	cfg := sentrycfg.Default()
+	cfg.SentryEnabled = true
+	cfg.ManagementURL = srv.URL
+	cfg.ManagementKey = "k"
+	st := state.New(filepath.Join(dir, "s.json"))
+	st.Touch("hashpath")
+	st.UpdateMeta("hashpath", "xai-pathuser@lovc.eu.cc.json", "pathuser@lovc.eu.cc", "")
+	st.SetAccountState("hashpath", state.CooldownPermission, "plugin_auto")
+	st.SetRecoverAt("hashpath", time.Now().Add(time.Hour))
+	_ = st.Save()
+	ts := trash.New(filepath.Join(dir, "trash"), 7, true, st)
+	g := guard.New(cfg, st, ts, cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, dir))
+	if err := g.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if setToFalse != 0 {
+		t.Fatalf("path+empty-email list must still protect cool-down, opens=%d", setToFalse)
+	}
+}

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.6
+
+### Fixed: false "unowned" reopen on owned cool-downs
+- Match CPA list entries to sentry accounts by **filename basename**, path suffix, and email derived from `xai-<email>.json` when list omits email.
+- Prevents 429/`plugin_auto` cool-downs from being treated as untracked and reopened (e.g. `xai-5w4ggr8txx@...json`).
+
+
 ## 1.0.4
 
 ### Self-heal unowned disables (operator preference)
@@ -37,6 +44,13 @@
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.0.6
+
+### Fixed: false "unowned" reopen on owned cool-downs
+- Match CPA list entries to sentry accounts by **filename basename**, path suffix, and email derived from `xai-<email>.json` when list omits email.
+- Prevents 429/`plugin_auto` cool-downs from being treated as untracked and reopened (e.g. `xai-5w4ggr8txx@...json`).
+
 
 ## 1.0.4
 
