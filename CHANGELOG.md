@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.5
+
+### Fix: permission_403 streak stuck at 3
+- Cool-down **recover** (`ResetToActive`) no longer clears `streaks`.
+- Streak ladders (e.g. ≥3 cooldown, ≥15 disable) now accumulate across cool-down cycles.
+- Streaks still clear on **successful request** (streak mode) and **panel 启用**.
+- Day fail count is not the same as continuous N (hits vs streak).
+
+
 ## 1.1.4
 
 ### Action log readability
@@ -133,6 +142,15 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.5
+
+### Fix: permission_403 streak stuck at 3
+- Cool-down **recover** (`ResetToActive`) no longer clears `streaks`.
+- Streak ladders (e.g. ≥3 cooldown, ≥15 disable) now accumulate across cool-down cycles.
+- Streaks still clear on **successful request** (streak mode) and **panel 启用**.
+- Day fail count is not the same as continuous N (hits vs streak).
+
 
 ## 1.1.4
 

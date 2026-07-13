@@ -16,10 +16,15 @@ func TestResetToActiveClosedLoop(t *testing.T) {
 	if acc.State != Active {
 		t.Fatalf("state=%s", acc.State)
 	}
-	if acc.DisableSource != "" || acc.LastSignal != "" || !acc.RecoverAt.IsZero() {
-		t.Fatalf("not clean: src=%q sig=%q recover=%v", acc.DisableSource, acc.LastSignal, acc.RecoverAt)
+	// cool-down locks cleared
+	if acc.DisableSource != "" || !acc.RecoverAt.IsZero() {
+		t.Fatalf("cool-down lock not cleared: src=%q recover=%v", acc.DisableSource, acc.RecoverAt)
 	}
-	if len(acc.Streaks) != 0 {
-		t.Fatalf("streaks=%v", acc.Streaks)
+	// streaks/signal retained for policy ladders across cool-down cycles
+	if acc.Streaks["free_usage_429"] != 1 {
+		t.Fatalf("streak should persist for ladder, got %v", acc.Streaks)
+	}
+	if acc.LastSignal != "free_usage_429" {
+		t.Fatalf("last_signal should persist, got %q", acc.LastSignal)
 	}
 }

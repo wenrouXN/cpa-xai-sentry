@@ -372,8 +372,11 @@ func (s *Store) ClearCoolDownResidue(authIndex string) {
 	acc.UpdatedAt = time.Now()
 }
 
-// ResetToActive is the closed-loop recovery: back to clean normal state.
-// Clears cool-down locks, recover timer, last error signal and streaks.
+// ResetToActive recovers from cool-down to Active for traffic.
+// Clears cool-down locks and recover timer.
+// IMPORTANT: does NOT clear Streaks — policy ladders (e.g. 403 ≥3 cooldown, ≥15 disable)
+// must survive cool-down cycles. Streaks clear only on successful requests (streak mode)
+// or via ClearAuthStreaks / panel permanent re-enable paths that call ClearManualLock.
 func (s *Store) ResetToActive(authIndex string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -386,9 +389,7 @@ func (s *Store) ResetToActive(authIndex string) {
 	acc.DisableSource = ""
 	acc.PreDisabled = false
 	acc.RecoverAt = time.Time{}
-	acc.LastSignal = ""
-	acc.Streaks = map[string]int{}
-	// keep Owner for audit; empty is fine too
+	// keep LastSignal + Streaks for escalation ladder continuity
 	if acc.Owner == "" {
 		acc.Owner = Owner
 	}
@@ -426,8 +427,14 @@ func (s *Store) CanAutoReenable(authIndex string) bool {
 
 // ClearManualLock clears user_manual / pre_disabled after an explicit panel enable.
 func (s *Store) ClearManualLock(authIndex string) {
-	// full closed-loop reset (same as recover)
+	// panel 启用: full reset including streaks (operator override)
 	s.ResetToActive(authIndex)
+	s.ClearAuthStreaks(authIndex)
+	s.mu.Lock()
+	if acc := s.Accounts[authIndex]; acc != nil {
+		acc.LastSignal = ""
+	}
+	s.mu.Unlock()
 }
 
 func (s *Store) Log(entry ActionLog) {
