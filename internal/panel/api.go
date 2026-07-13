@@ -946,7 +946,7 @@ func humanizeReason(reason, sigL, action string) string {
 		}
 		return ""
 	case "recover_at":
-		return "冷却/额度重置到期，状态闭环恢复为正常"
+		return "冷却/额度重置到期"
 	case "panel bulk/manual":
 		return "面板批量操作"
 	case "cpa_disabled_sync":
@@ -1017,13 +1017,10 @@ func composeLogText(actL, action, sigL, signal, who, reason, srcL, source string
 		}
 		return "冷却失败", level
 	case "reenable":
-		if who != "" && why != "" {
-			return why + "，已恢复启用 " + who, level
-		}
 		if who != "" {
-			return "已恢复启用 " + who, level
+			return "冷却/额度重置到期，已恢复启用 " + who + "（状态已重置为正常）", "ok"
 		}
-		return "已恢复启用账号", level
+		return "冷却/额度重置到期，已恢复启用（状态已重置为正常）", "ok"
 	case "reenable_failed":
 		if who != "" && why != "" {
 			return "恢复启用 " + who + " 失败：" + why, level
