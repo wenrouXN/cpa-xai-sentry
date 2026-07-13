@@ -311,6 +311,12 @@ func (g *Guard) applyCooldown(ctx context.Context, ev UsageEvent, res match.Resu
 	// even if CPA SetDisabled is slow/racy with the next tick.
 	g.State.SetAccountState(ev.AuthIndex, st, "plugin_auto")
 	g.State.SetRecoverAt(ev.AuthIndex, recoverAt)
+	// stamp last action early (before Log) so grace window covers SetDisabled latency
+	g.State.Log(state.ActionLog{
+		Auth: ev.AuthIndex, Source: ev.Source, Signal: string(res.Signal),
+		Action: "cooldown", Reason: res.Reason,
+	})
+	_ = g.State.Save() // persist ownership before file I/O so concurrent ticks see it
 	if name != "" && !cpaapi.LooksLikeOpaqueID(name) {
 		g.State.UpdateMeta(ev.AuthIndex, name, ev.Email, "")
 	}
@@ -469,6 +475,49 @@ func emailFromXAIFile(name string) string {
 		}
 	}
 	return ""
+}
+
+
+// shouldProtectDisable reports whether this account's CPA disable must not be auto-opened.
+// Includes cool-down grace: recent cooldown/candidate actions stay protected even if
+// state was briefly wiped (race with concurrent tick).
+func (g *Guard) shouldProtectDisable(acc *state.Account, now time.Time) bool {
+	if acc == nil {
+		return false
+	}
+	// primary protect rules (same as protect closure intent)
+	switch acc.State {
+	case state.Trashed, state.Purged:
+		return true
+	case state.CooldownQuota, state.CooldownSpending, state.CooldownPermission, state.CandidateDead:
+		return true
+	}
+	if acc.PreDisabled {
+		return true
+	}
+	if acc.DisableSource == "user_manual" {
+		return true
+	}
+	if acc.State == state.UserManual && acc.DisableSource != "cpa_file_disabled" && acc.DisableSource != "cpa_disabled" {
+		return true
+	}
+	if acc.DisableSource == "plugin_auto" {
+		return true
+	}
+	if !acc.RecoverAt.IsZero() && acc.RecoverAt.After(now) {
+		return true
+	}
+	// grace: just cooled/disabled — concurrent tick must not reopen
+	if !acc.LastActionAt.IsZero() {
+		age := now.Sub(acc.LastActionAt)
+		if age >= 0 && age < 2*time.Minute {
+			switch acc.LastAction {
+			case "cooldown", "candidate", "manual_disable", "cooldown_failed", "candidate_disable_failed":
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // syncDisabledFromCPA inspects CPA auth files that are currently disabled.
@@ -650,13 +699,44 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 			}
 		}
 		acc := pickAcc(cands...)
-		// sentry-owned disable: leave file alone
-		if protect(acc) {
+		// CRITICAL: if ANY identity-matched row is owned (cool-down/plugin_auto/manual),
+		// never reopen — pickAcc might prefer a weak Active shell over the cool-down row.
+		owned := acc
+		if !protect(owned) {
+			for _, c := range cands {
+				if protect(c) {
+					owned = c
+					break
+				}
+			}
+		}
+		if !protect(owned) {
+			// identity scan including recent cool-down grace
+			for _, a := range g.State.AccountsSnapshot() {
+				if !g.shouldProtectDisable(a, now) {
+					continue
+				}
+				af := authFileBase(a.FileName)
+				if (ai != "" && strings.EqualFold(strings.TrimSpace(a.AuthIndex), ai)) ||
+					(base != "" && af == base) ||
+					(em != "" && (strings.EqualFold(strings.TrimSpace(a.Email), em) || emailFromXAIFile(a.FileName) == em)) {
+					owned = a
+					break
+				}
+			}
+		}
+		if g.shouldProtectDisable(owned, now) {
+			// keep disabled; refresh meta onto the owned row
+			if owned != nil && name != "" {
+				g.State.UpdateMeta(owned.AuthIndex, authFileBase(name), em, "")
+			}
 			continue
 		}
 
 		auth := name
-		if acc != nil {
+		if owned != nil {
+			auth = owned.AuthIndex
+		} else if acc != nil {
 			auth = acc.AuthIndex
 		}
 
@@ -666,37 +746,23 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 				g.State.Log(state.ActionLog{Auth: auth, Source: "tick", Action: "reopen_foreign_failed", Reason: err.Error()})
 				continue
 			}
-			if acc != nil {
-				// clear cpa_file_disabled / empty locks → clean active
-				g.State.ResetToActive(acc.AuthIndex)
-				if name != "" {
-					g.State.UpdateMeta(acc.AuthIndex, name, em, "")
+			if owned != nil || acc != nil {
+				target := owned
+				if target == nil {
+					target = acc
 				}
-				g.State.Log(state.ActionLog{
-					Auth: acc.AuthIndex, Source: "tick", Action: "reopen_foreign",
-					Reason: "unowned_disabled_self_heal",
-				})
-			} else {
-				// last chance: any owned cool-down with same email/file must NOT reopen
-				var owned *state.Account
-				for _, a := range g.State.AccountsSnapshot() {
-					if !protect(a) {
-						continue
-					}
-					af := authFileBase(a.FileName)
-					if (base != "" && af == base) || (em != "" && (strings.EqualFold(a.Email, em) || emailFromXAIFile(a.FileName) == em)) || (ai != "" && strings.EqualFold(a.AuthIndex, ai)) {
-						owned = a
-						break
-					}
-				}
-				if owned != nil {
-					// matched late — leave disabled, fix meta if needed
+				// only clear non-owned tags (cpa_file_disabled / empty active)
+				if !g.shouldProtectDisable(target, now) {
+					g.State.ResetToActive(target.AuthIndex)
 					if name != "" {
-						g.State.UpdateMeta(owned.AuthIndex, authFileBase(name), em, "")
+						g.State.UpdateMeta(target.AuthIndex, authFileBase(name), em, "")
 					}
-					continue
+					g.State.Log(state.ActionLog{
+						Auth: target.AuthIndex, Source: "tick", Action: "reopen_foreign",
+						Reason: "unowned_disabled_self_heal",
+					})
 				}
-				// truly untracked: open; first usage creates state
+			} else {
 				g.State.Log(state.ActionLog{
 					Auth: name, Source: "tick", Action: "reopen_foreign",
 					Reason: "unowned_disabled_untracked_self_heal",

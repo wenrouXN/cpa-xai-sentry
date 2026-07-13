@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.10
+
+### Fixed: cooldown then immediate "打开非自有禁用"
+- Protect if **any** matched identity row is owned (not only pickAcc winner).
+- 2-minute grace after `cooldown`/`candidate`/`manual_disable` action even if state briefly Active.
+- Persist ownership (Log+Save) before CPA SetDisabled to shrink tick race.
+- Do not ResetToActive owned cool-downs during self-heal.
+
+
 ## 1.0.9
 
 ### Panel sync: dual time columns + parallel refresh
@@ -69,6 +78,15 @@
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.0.10
+
+### Fixed: cooldown then immediate "打开非自有禁用"
+- Protect if **any** matched identity row is owned (not only pickAcc winner).
+- 2-minute grace after `cooldown`/`candidate`/`manual_disable` action even if state briefly Active.
+- Persist ownership (Log+Save) before CPA SetDisabled to shrink tick race.
+- Do not ResetToActive owned cool-downs during self-heal.
+
 
 ## 1.0.9
 
