@@ -112,9 +112,10 @@ func TestClosedLoopCooldownRecover(t *testing.T) {
 		t.Fatal(err)
 	}
 	acc = st.Get("hash1")
-	if acc.State != state.Active || acc.DisableSource != "" || acc.LastSignal != "" {
-		t.Fatalf("after recover want clean active, got state=%s src=%s sig=%s", acc.State, acc.DisableSource, acc.LastSignal)
+	if acc.State != state.Active || acc.DisableSource != "" {
+		t.Fatalf("after recover want active unlocked, got state=%s src=%s", acc.State, acc.DisableSource)
 	}
+	// LastSignal/streaks intentionally retained for policy ladders (v1.1.5+)
 	if fake.disabled["xai-a@x.com.json"] {
 		t.Fatal("CPA file should be re-enabled after recover")
 	}
