@@ -34,6 +34,8 @@ type Status struct {
 	Message    string    `json:"message,omitempty"`
 	LastError  string    `json:"last_error,omitempty"`
 	Logs       []LogLine `json:"logs,omitempty"`
+	// ID is assigned when job finishes (history) or "current" while running.
+	ID string `json:"id,omitempty"`
 }
 
 type LogLine struct {
@@ -47,10 +49,14 @@ type LogLine struct {
 }
 
 var (
-	jobMu     sync.Mutex
-	jobStatus = Status{Message: "空闲"}
-	jobLogs   []LogLine
+	jobMu      sync.Mutex
+	jobStatus  = Status{Message: "空闲"}
+	jobLogs    []LogLine
+	jobHistory []Status // newest first
+	jobSeq     int
 )
+
+const maxJobHistory = 30
 
 func (r *Runner) Status() Status {
 	jobMu.Lock()
@@ -60,6 +66,15 @@ func (r *Runner) Status() Status {
 		st.Logs = append([]LogLine(nil), jobLogs...)
 	}
 	return st
+}
+
+// History returns recent finished jobs (newest first), each with embedded logs.
+func (r *Runner) History() []Status {
+	jobMu.Lock()
+	defer jobMu.Unlock()
+	out := make([]Status, len(jobHistory))
+	copy(out, jobHistory)
+	return out
 }
 
 func (r *Runner) Start(ctx context.Context, mode Mode) (Status, error) {
@@ -72,9 +87,12 @@ func (r *Runner) Start(ctx context.Context, mode Mode) (Status, error) {
 	if mode == "" {
 		mode = ModeFull
 	}
+	jobSeq++
+	id := "job-" + itoa(jobSeq)
 	jobStatus = Status{
 		Running:   true,
 		Mode:      string(mode),
+		ID:        id,
 		StartedAt: time.Now().In(time.FixedZone("CST", 8*3600)).Format("01-02 15:04:05"),
 		Message:   "巡查进行中",
 	}
@@ -92,6 +110,15 @@ func (r *Runner) runJob(ctx context.Context, mode Mode) {
 		jobStatus.FinishedAt = time.Now().In(time.FixedZone("CST", 8*3600)).Format("01-02 15:04:05")
 		if jobStatus.Message == "巡查进行中" {
 			jobStatus.Message = "巡查完成"
+		}
+		// snapshot into history
+		h := jobStatus
+		if len(jobLogs) > 0 {
+			h.Logs = append([]LogLine(nil), jobLogs...)
+		}
+		jobHistory = append([]Status{h}, jobHistory...)
+		if len(jobHistory) > maxJobHistory {
+			jobHistory = jobHistory[:maxJobHistory]
 		}
 		jobMu.Unlock()
 	}()
@@ -152,8 +179,6 @@ func (r *Runner) runJob(ctx context.Context, mode Mode) {
 			r.appendLog(res.AuthIndex, label, res.StatusCode, "ok", "探测存活", "alive")
 			continue
 		}
-		// feed already done in Run via HandleUsage; also ensure error catalog has source=patrol
-		// classify rough outcome for UI
 		body := strings.ToLower(res.Body)
 		if res.StatusCode == 429 || strings.Contains(body, "free-usage") {
 			cool++
@@ -170,12 +195,10 @@ func (r *Runner) runJob(ctx context.Context, mode Mode) {
 			continue
 		}
 		if res.StatusCode >= 400 {
-			// include short body hint for 404/426 misconfig diagnosis
 			hint := strings.TrimSpace(res.Body)
 			if len(hint) > 120 {
 				hint = hint[:120]
 			}
-			// strip html noise
 			if strings.Contains(strings.ToLower(hint), "<html") {
 				hint = "路径/网关 404（请检查 base_url 是否已含 /v1 被重复拼接）"
 			}
@@ -185,8 +208,6 @@ func (r *Runner) runJob(ctx context.Context, mode Mode) {
 			}
 			errs++
 			r.appendLog(res.AuthIndex, label, res.StatusCode, "err", msg, "http_error")
-			// Ensure unmatched/http_xxx catalog has account hit even if signal none.
-			// HandleUsage already observed; this is a safety net for status-only cases.
 			continue
 		}
 		r.appendLog(res.AuthIndex, label, res.StatusCode, "info", "探测完成 HTTP "+itoa(res.StatusCode), "done")

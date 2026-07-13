@@ -12,11 +12,24 @@
 }
 *{box-sizing:border-box}
 body{margin:0;font-family:var(--font);color:var(--text);background:linear-gradient(120deg,#f0f7ff,#e7f2ff 50%,#edf7ff);font-size:12.5px}
-.wrap{max-width:1680px;margin:0 auto;padding:12px 14px 24px}
-.main-grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:10px;align-items:start}
-@media(max-width:1100px){.main-grid{grid-template-columns:1fr}}
-.side-log{position:sticky;top:10px;max-height:calc(100vh - 20px);display:flex;flex-direction:column;margin:0}
-.side-log .logbox{flex:1;min-height:280px;max-height:calc(100vh - 110px)}
+.wrap{max-width:1680px;margin:0 auto;padding:10px 12px 20px}
+.main-grid{display:block}
+.bottom-log{margin-top:10px}
+.bottom-log .logbox{max-height:min(42vh,420px)}
+.job-list{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.job-card{border:1px solid var(--border);border-radius:10px;background:#fff;overflow:hidden}
+.job-head{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;padding:10px 12px;cursor:pointer;user-select:none}
+.job-head:hover{background:#f8fbff}
+.job-head .jh-title{font-weight:700;font-size:12.5px}
+.job-head .jh-meta{color:var(--muted);font-size:11px}
+.job-body{display:none;border-top:1px solid var(--border);padding:0}
+.job-card.open .job-body{display:block}
+.job-card.open .job-chev{transform:rotate(90deg)}
+.job-chev{display:inline-block;transition:transform .15s;color:var(--muted);margin-right:6px}
+.top-actions{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.top .sw{padding:4px 8px 4px 6px}
+.top .sw .lbl{font-size:11px}
+.overview-row{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin-top:8px}
 .top{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start;margin-bottom:10px}
 h1{font-size:16px;margin:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .eyebrow{font-size:11px;color:var(--accent);font-weight:700;letter-spacing:.04em}
@@ -193,9 +206,9 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.16</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.17</span> <span id="modeBadge" class="badge">模式</span></h1>
     </div>
-    <div class="row" style="align-items:center;flex-wrap:wrap">
+    <div class="top-actions">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
         <span class="lbl">总开关</span>
         <span class="switch"><input id="swSentry" type="checkbox" onchange="toggle('sentry_enabled',this.checked)"/><span class="slider"></span></span>
@@ -209,78 +222,38 @@ select.act{min-width:100px}input.num{width:70px}
       <label class="sw" title="确认后自动进垃圾箱"><span class="lbl">自动垃圾箱</span>
         <span class="switch danger"><input id="swDel" type="checkbox" onchange="toggle('auto_delete',this.checked)"/><span class="slider"></span></span>
       </label>
-      <input id="cfgKey" type="password" placeholder="管理密钥" style="width:130px"/>
+      <label class="sw" title="开启后按周期自动巡查（会消耗额度）">
+        <span class="lbl">定时巡查</span>
+        <span class="switch"><input id="swPatrol" type="checkbox" onchange="toggle('patrol_enabled',this.checked)"/><span class="slider"></span></span>
+      </label>
+      <input id="cfgKey" type="password" placeholder="管理密钥" style="width:120px"/>
       <button class="xs" onclick="saveKey()">保存</button>
       <button class="xs mask-btn" id="maskBtn" onclick="toggleMask()" title="切换账号脱敏/完整显示">脱敏</button>
       <button class="xs" onclick="refresh()">刷新</button>
+      <button class="xs" onclick="applyPreset('observe')" title="关闭自动冷却/候选/垃圾箱，只记录观察">仅观察</button>
+      <button class="xs warn" onclick="applyPreset('safe-guard')" title="打开自动冷却+自动候选；不会自动进垃圾箱">安全防护</button>
+      <button class="xs" onclick="runTick()" title="被动维护：恢复到期冷却 + 清理过期垃圾箱（不消耗额度）">立即维护</button>
     </div>
   </div>
 
   <div class="card">
     <h2><span>总览</span><span class="meta" id="updatedAt">-</span></h2>
     <div class="kpis" id="kpis"></div>
-    <div class="swbar">
+    <div class="overview-row">
       <span class="meta" id="cfgLine"></span>
-      <button class="xs" onclick="applyPreset('observe')" title="关闭自动冷却/候选/垃圾箱，只记录观察">仅观察</button>
-      <button class="xs warn" onclick="applyPreset('safe-guard')" title="打开自动冷却+自动候选；不会自动进垃圾箱">安全防护</button>
-      <button class="xs" onclick="runTick()" title="被动维护：恢复到期冷却 + 同步 CPA 已禁用账号到哨兵冷却状态 + 清理过期垃圾箱（不主动探测，不消耗额度）">立即维护</button>
-    </div>
-    <div class="patrol-box">
-      <div class="patrol-head">
-        <div>
-          <b>巡查中心</b>
-          <span class="meta">定时巡查 + 手动巡查合在一起 · 会真实请求 xAI，消耗免费额度</span>
-          <div class="meta" id="patrolSchedule" style="margin-top:3px">上次：- · 下次：-</div>
-        </div>
-        <div class="row">
-          <label class="sw" title="开启后按周期自动巡查（会消耗额度）" style="margin:0">
-            <span class="lbl">定时巡查</span>
-            <span class="switch"><input id="swPatrol" type="checkbox" onchange="toggle('patrol_enabled',this.checked)"/><span class="slider"></span></span>
-          </label>
-          <button class="xs primary" onclick="patrolStart('full')" title="只探测当前已启用的 xAI 账号">手动全量</button>
-          <button class="xs warn" onclick="patrolStart('cooldown')" title="只探测当前冷却中的账号">手动查冷却</button>
-          <button type="button" class="patrol-toggle" id="btnPatrolCfg" onclick="togglePatrolCfg()" title="展开/收起巡查参数">配置 ▾</button>
-          <button type="button" class="patrol-toggle" id="btnPatrolLog" onclick="togglePatrolLog()" title="显示/隐藏巡查日志">日志 ▾</button>
-        </div>
-      </div>
-      <div class="patrol-cfg" id="patrolCfgPanel">
-        <div class="patrol-grid">
-          <label>周期(秒)<input id="pInterval" type="number" min="60" step="60" value="3600"/></label>
-          <label>超时(秒)<input id="pTimeout" type="number" min="3" step="1" value="15"/></label>
-          <label>并发<input id="pConc" type="number" min="1" max="64" step="1" value="8"/></label>
-          <label>每轮上限<input id="pBatch" type="number" min="0" step="1" value="50"/></label>
-          <label>模型<input id="pModel" type="text" value="grok-4.5"/></label>
-          <label>代理URL<input id="pProxy" type="text" placeholder="可选 http://..."/></label>
-        </div>
-        <div class="row" style="margin-top:4px">
-          <button class="xs" onclick="savePatrolCfg()" title="保存巡查参数">保存巡查配置</button>
-          <span class="meta">默认收起，改完记得保存</span>
-        </div>
-      </div>
-      <div class="meta" id="patrolStatus">空闲</div>
-      <div class="patrol-progress" id="patrolProgress">
-        <div class="patrol-bar-wrap"><div class="patrol-bar" id="patrolBar"></div></div>
-        <div class="patrol-bar-meta">
-          <span id="patrolProgText">0 / 0</span>
-          <span id="patrolProgPct">0%</span>
-        </div>
-      </div>
-      <div class="patrol-log-wrap" id="patrolLogWrap">
-        <div id="patrolLog" class="patrol-log">暂无巡查日志</div>
-      </div>
+      <span class="meta" id="patrolSchedule">巡检：上次 - · 下次 -</span>
     </div>
   </div>
 
-  <div class="main-grid">
-  <div class="main-left">
   <div class="tabs" role="tablist">
-    <button type="button" class="active" data-tab="accounts" onclick="switchTab('accounts')">账号结果</button>
+    <button type="button" class="active" data-tab="accounts" onclick="switchTab('accounts')">账号实况</button>
+    <button type="button" data-tab="patrol" onclick="switchTab('patrol')">巡检</button>
     <button type="button" data-tab="errors" onclick="switchTab('errors')">错误策略</button>
     <button type="button" data-tab="trash" onclick="switchTab('trash')">垃圾箱</button>
   </div>
 
   <div id="tab-accounts" class="tabpanel card" style="margin:0">
-    <h2><span>账号</span><span class="meta" id="accMeta">0</span></h2>
+    <h2><span>账号实况</span><span class="meta" id="accMeta">0</span></h2>
     <div class="toolbar">
       <input id="q" placeholder="搜账号/邮箱/文件/状态/信号" style="flex:1;min-width:180px" oninput="debouncedRefresh()"/>
       <select id="view" onchange="refresh()"><option value="focus">问题账号</option><option value="all">全部观测</option></select>
@@ -326,6 +299,46 @@ select.act{min-width:100px}input.num{width:70px}
     </div>
   </div>
 
+  <div id="tab-patrol" class="tabpanel card" hidden>
+    <h2><span>巡检任务</span><span class="meta" id="patrolMeta">—</span></h2>
+    <div class="patrol-box" style="margin-top:0">
+      <div class="patrol-head">
+        <div>
+          <b>巡检中心</b>
+          <span class="meta">会真实请求 xAI，消耗免费额度 · 全量只扫已启用 · 仅冷却只扫冷却号</span>
+        </div>
+        <div class="row">
+          <button class="xs primary" onclick="patrolStart('full')" title="只探测当前已启用的 xAI 账号">手动全量</button>
+          <button class="xs warn" onclick="patrolStart('cooldown')" title="只探测当前冷却中的账号">手动查冷却</button>
+          <button type="button" class="patrol-toggle" id="btnPatrolCfg" onclick="togglePatrolCfg()" title="展开/收起巡查参数">配置 ▾</button>
+        </div>
+      </div>
+      <div class="patrol-cfg" id="patrolCfgPanel">
+        <div class="patrol-grid">
+          <label>周期(秒)<input id="pInterval" type="number" min="60" step="60" value="3600"/></label>
+          <label>超时(秒)<input id="pTimeout" type="number" min="3" step="1" value="15"/></label>
+          <label>并发<input id="pConc" type="number" min="1" max="64" step="1" value="8"/></label>
+          <label>每轮上限<input id="pBatch" type="number" min="0" step="1" value="50"/></label>
+          <label>模型<input id="pModel" type="text" value="grok-4.5"/></label>
+          <label>代理URL<input id="pProxy" type="text" placeholder="可选 http://..."/></label>
+        </div>
+        <div class="row" style="margin-top:4px">
+          <button class="xs" onclick="savePatrolCfg()" title="保存巡查参数">保存巡查配置</button>
+          <span class="meta">改完记得保存</span>
+        </div>
+      </div>
+      <div class="meta" id="patrolStatus">空闲</div>
+      <div class="patrol-progress" id="patrolProgress">
+        <div class="patrol-bar-wrap"><div class="patrol-bar" id="patrolBar"></div></div>
+        <div class="patrol-bar-meta">
+          <span id="patrolProgText">0 / 0</span>
+          <span id="patrolProgPct">0%</span>
+        </div>
+      </div>
+    </div>
+    <div class="job-list" id="patrolJobs"><div class="meta" style="padding:8px">暂无巡检任务记录</div></div>
+  </div>
+
   <div id="tab-errors" class="tabpanel card" hidden>
     <h2><span>错误策略</span><span class="meta" id="errMeta">0</span></h2>
     <div id="errBody"></div>
@@ -341,13 +354,10 @@ select.act{min-width:100px}input.num{width:70px}
     </div>
   </div>
 
-  </div><!-- main-left -->
-
-  <div class="card side-log" id="sideLogCard">
+  <div class="card bottom-log" id="sideLogCard">
     <h2><span>动作日志</span><span class="meta" id="logMeta">实时</span></h2>
     <div id="logbox" class="logbox">-</div>
   </div>
-  </div><!-- main-grid -->
 </div>
 <div class="toast" id="toast"></div>
 <div class="err-pop" id="errPop" role="dialog" aria-modal="true"></div>
@@ -463,13 +473,13 @@ function actionTag(a){const cls=({cooldown:'cooldown',candidate:'candidate',tras
 function switchTab(name){
   CURRENT_TAB=name;
   document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
-  ['accounts','errors','trash'].forEach(n=>{
+  ['accounts','patrol','errors','trash'].forEach(n=>{
     const el=document.getElementById('tab-'+n);
     if(el) el.hidden=(n!==name);
   });
   if(name==='errors') loadErrors(!ERR_RENDERED);
   if(name==='trash') refreshTrashOnly();
-  // logs always visible on the right
+  if(name==='patrol') patrolPoll();
   renderLogs(LAST_LOGS);
 }
 function debouncedRefresh(){clearTimeout(timer); timer=setTimeout(refresh,220)}
@@ -826,7 +836,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.5.16');
+    document.getElementById('ver').textContent='v'+(st.version||'0.5.17');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -838,6 +848,8 @@ async function refresh(){
     setSwitch('swCand',!!CFG.auto_candidate);
     setSwitch('swDel',!!CFG.auto_delete);
     setSwitch('swPatrol',!!CFG.patrol_enabled);
+    // light schedule for top overview
+    j('/patrol/status').then(r=>paintPatrol(r.patrol||{}, r.history||[])).catch(()=>{});
     fillPatrolForm(CFG);
     const patrolMin=CFG.patrol_interval? Math.round((CFG.patrol_interval||0)/60)+'分' : '-';
     document.getElementById('cfgLine').textContent=
@@ -1217,7 +1229,7 @@ async function patrolStart(mode){
     if(PATROL_CFG_OPEN) await savePatrolCfg();
     const r=await j('/patrol/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:mode||'full'})});
     // when running, auto show progress; keep log closed unless user opened it
-    paintPatrol(r.patrol||{});
+    paintPatrol(r.patrol||{}, []);
     toast(mode==='cooldown'?'已启动：仅查冷却号':'已启动：全量巡查（会耗额度）');
     if(PATROL_TIMER) clearInterval(PATROL_TIMER);
     PATROL_TIMER=setInterval(patrolPoll, 1200);
@@ -1227,22 +1239,26 @@ async function patrolStart(mode){
 async function patrolPoll(){
   try{
     const r=await j('/patrol/status');
-    paintPatrol(r.patrol||{});
+    paintPatrol(r.patrol||{}, r.history||[]);
     if(!(r.patrol&&r.patrol.running)){
       if(PATROL_TIMER){ clearInterval(PATROL_TIMER); PATROL_TIMER=null; }
-      // refresh accounts/logs after finish
-      await refresh();
+      // refresh accounts/logs after finish (avoid loop if already on patrol tab)
+      if(CURRENT_TAB!=='patrol') await refresh();
+      else {
+        // still refresh logs lightly
+        try{ const st=await j('/state?view=focus'); renderLogs(st.logs||LAST_LOGS); }catch(e){}
+      }
     }
   }catch(e){}
 }
-function paintPatrol(p){
+function paintPatrol(p, history){
   p=p||{};
   const sch=document.getElementById('patrolSchedule');
   if(sch){
     const last=p.last_patrol_at||p.finished_at||p.started_at||'-';
     const next=p.next_patrol_at||'-';
     const hint=p.next_patrol_hint?(' · '+p.next_patrol_hint):'';
-    sch.textContent='上次巡查：'+last+' · 下次：'+next+hint;
+    sch.textContent='巡检：上次 '+last+' · 下次 '+next+hint;
   }
   const total=Number(p.total||0);
   const probed=Number(p.probed||0);
@@ -1255,36 +1271,83 @@ function paintPatrol(p){
       st.textContent=(p.message||'空闲')+(p.finished_at?(' · 结束 '+p.finished_at):'');
     }
   }
+  const meta=document.getElementById('patrolMeta');
+  if(meta){
+    meta.textContent=(p.running?'运行中':'空闲')+' · 历史 '+(Array.isArray(history)?history.length:0)+' 次';
+  }
   const prog=document.getElementById('patrolProgress');
   const bar=document.getElementById('patrolBar');
   const pt=document.getElementById('patrolProgText');
   const pp=document.getElementById('patrolProgPct');
   if(prog){
-    // show while running, or briefly after finish when there was work
     const show=!!p.running || (total>0 && !!p.finished_at);
     prog.classList.toggle('show', show);
   }
   if(bar) bar.style.width=pct+'%';
   if(pt) pt.textContent=probed+' / '+total+(p.running?' · 进行中':'');
   if(pp) pp.textContent=pct+'%';
-  const box=document.getElementById('patrolLog');
+  // job list: current running + history
+  const box=document.getElementById('patrolJobs');
   if(!box) return;
-  // only refresh log content when log panel is open, to keep UI light
-  if(!PATROL_LOG_OPEN) return;
-  const logs=p.logs||[];
-  if(!logs.length){ box.textContent='暂无巡查日志'; return; }
-  box.innerHTML=logs.slice().reverse().slice(0,120).map(l=>{
-    const lv=l.level||'info';
-    const who=l.label||l.auth||'';
-    let msg=l.text||'';
-    // avoid double HTTP code if text already contains it
-    if(l.code && !String(msg).includes(String(l.code))) msg += ' · HTTP '+l.code;
-    return '<div class="pl"><div class="pt">'+esc(l.at||'')+'</div><div class="pm '+lv+'">'+esc((who?who+' · ':'')+msg)+'</div></div>';
+  const jobs=[];
+  if(p.running || (p.logs&&p.logs.length) || p.finished_at || p.started_at){
+    jobs.push(Object.assign({}, p, {id: p.id||'current', _current: !!p.running}));
+  }
+  (history||[]).forEach(h=>{
+    if(!h) return;
+    // skip duplicate of current finished snapshot
+    if(p.id && h.id===p.id && !p.running) return;
+    if(!p.running && p.started_at && h.started_at===p.started_at && h.finished_at===p.finished_at) return;
+    jobs.push(h);
+  });
+  // dedupe by id/started
+  const seen=new Set();
+  const uniq=[];
+  jobs.forEach(j=>{
+    const k=j.id||(j.started_at+'|'+j.finished_at+'|'+j.mode);
+    if(seen.has(k)) return;
+    seen.add(k); uniq.push(j);
+  });
+  if(!uniq.length){
+    box.innerHTML='<div class="meta" style="padding:8px">暂无巡检任务记录 · 点「手动全量/查冷却」开始</div>';
+    return;
+  }
+  if(!window.PATROL_OPEN_JOBS) window.PATROL_OPEN_JOBS=new Set();
+  // auto-open current running
+  uniq.forEach(j=>{ if(j.running||j._current) PATROL_OPEN_JOBS.add(j.id||'current'); });
+  box.innerHTML=uniq.slice(0,30).map(j=>{
+    const id=esc(j.id||'job');
+    const open=PATROL_OPEN_JOBS.has(j.id||'current') || PATROL_OPEN_JOBS.has(j.id);
+    const mode=j.mode==='cooldown'?'仅冷却号':'全量';
+    const state=j.running?'进行中':(j.message||'完成');
+    const title=(j.started_at||'-')+' · '+mode+' · '+state;
+    const sub='目标 '+(j.total||0)+' · 探测 '+(j.probed||0)+' · 存活 '+(j.alive||0)+' · 冷却信号 '+(j.cooldown||0)+' · 异常 '+(j.errors||0)+(j.finished_at?(' · 结束 '+j.finished_at):'');
+    const logs=j.logs||[];
+    const logHtml=logs.length? logs.slice().reverse().slice(0,200).map(l=>{
+      const lv=l.level||'info';
+      const who=l.label||l.auth||'';
+      let msg=l.text||'';
+      if(l.code && !String(msg).includes(String(l.code))) msg += ' · HTTP '+l.code;
+      return '<div class="pl"><div class="pt">'+esc(l.at||'')+'</div><div class="pm '+lv+'">'+esc((who?who+' · ':'')+msg)+'</div></div>';
+    }).join('') : '<div class="meta" style="padding:8px;color:#93a4c3">无明细日志</div>';
+    return '<div class="job-card '+(open?'open':'')+'" data-job="'+id+'">'+
+      '<div class="job-head" onclick="toggleJob(this)">'+
+        '<div><span class="job-chev">▸</span><span class="jh-title">'+esc(title)+'</span></div>'+
+        '<div class="jh-meta">'+esc(sub)+'</div>'+
+      '</div>'+
+      '<div class="job-body"><div class="patrol-log" style="max-height:220px;border-radius:0">'+logHtml+'</div></div>'+
+    '</div>';
   }).join('');
 }
-async function restore(id,enable){ try{ await j('/trash/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,enable})}); toast(enable?'已恢复并启用':'已恢复(禁用)'); await refresh() }catch(e){toast(e.message)} }
-async function purge(id){ if(!confirm('彻底清除后不可恢复,确认?')) return; try{ await j('/trash/purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,confirm:true})}); toast('已清除'); await refresh() }catch(e){toast(e.message)} }
-async function purgeExpired(){ if(!confirm('清理所有到期垃圾箱项?')) return; try{ await j('/trash/purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({expired:true,confirm:true})}); toast('到期项已清理'); await refresh() }catch(e){toast(e.message)} }
+function toggleJob(el){
+  const card=el.closest('.job-card');
+  if(!card) return;
+  const id=card.getAttribute('data-job')||'';
+  if(!window.PATROL_OPEN_JOBS) window.PATROL_OPEN_JOBS=new Set();
+  const open=card.classList.toggle('open');
+  if(open) PATROL_OPEN_JOBS.add(id); else PATROL_OPEN_JOBS.delete(id);
+}
+
 function selectedAuths(){return Array.from(document.querySelectorAll('.rowchk:checked')).map(el=>el.getAttribute('data-auth')).filter(Boolean)}
 function selAll(on){
   document.querySelectorAll('.rowchk').forEach(el=>{el.checked=!!on});

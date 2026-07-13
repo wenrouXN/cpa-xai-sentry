@@ -683,7 +683,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":         "cpa-xai-sentry",
-		"version":        "0.5.16",
+		"version":        "0.5.17",
 		"mode":           modeOf(*a.Cfg),
 		"mode_label":     modeLabel(modeOf(*a.Cfg)),
 		"summary":        summary,
@@ -1366,13 +1366,18 @@ func (a *API) handlePatrolStatus(w http.ResponseWriter, r *http.Request) {
 		st["next_patrol_at"] = ""
 		st["next_patrol_hint"] = "定时巡查已关闭"
 	}
-	writeJSON(w, 200, map[string]any{"ok": true, "patrol": st})
+	// recent finished jobs for expandable task list
+	var hist any = []any{}
+	if a.Patrol != nil {
+		hist = a.Patrol.History()
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "patrol": st, "history": hist})
 }
 
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.16",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.17",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 		"cooldown_stats": a.State.CooldownStats(time.Now()),
 	})
