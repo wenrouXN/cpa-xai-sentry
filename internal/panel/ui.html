@@ -189,7 +189,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.13</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.14</span> <span id="modeBadge" class="badge">模式</span></h1>
     </div>
     <div class="row" style="align-items:center;flex-wrap:wrap">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -788,7 +788,7 @@ function composeLogClient(e){
   const who=dispAuth(e.auth_label||e.auth||'');
   const why=e.reason||e.signal_label||SIG_ZH[e.signal]||e.signal||'';
   if(act==='cooldown') return why?('因'+why+'，已将 '+(who||'账号')+' 转入冷却'):('已将 '+(who||'账号')+' 转入冷却');
-  if(act==='reenable') return why?(why+'，已恢复启用 '+(who||'账号')):('已恢复启用 '+(who||'账号'));
+  if(act==='reenable') return '冷却/额度重置到期，已恢复启用 '+(who||'账号')+'（状态已重置为正常）';
   if(act==='candidate') return why?('因'+why+'，已将 '+(who||'账号')+' 移入候选'):('已将 '+(who||'账号')+' 移入候选');
   if(act==='trash'||act==='delete') return why?('因'+why+'，已将 '+(who||'账号')+' 移入垃圾箱'):('已将 '+(who||'账号')+' 移入垃圾箱');
   if(act==='reopen_foreign') return '维护发现非本哨兵冷却禁用，已重新打开 '+(who||'账号')+'，等待下次真实报错';
@@ -822,7 +822,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.5.13');
+    document.getElementById('ver').textContent='v'+(st.version||'0.5.14');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};

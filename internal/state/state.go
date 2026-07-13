@@ -249,11 +249,34 @@ func (s *Store) ClearAuthStreaks(authIndex string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	acc := s.Accounts[authIndex]
-	if acc == nil || acc.Streaks == nil {
+	if acc == nil {
 		return
 	}
-	delete(acc.Streaks, "auth_401")
-	delete(acc.Streaks, "permission_403")
+	// full streak reset so consecutive-N can restart cleanly after success/recovery
+	acc.Streaks = map[string]int{}
+	acc.UpdatedAt = time.Now()
+}
+
+// ResetToActive is the closed-loop recovery: back to clean normal state.
+// Clears cool-down locks, recover timer, last error signal and streaks.
+func (s *Store) ResetToActive(authIndex string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	acc := s.Accounts[authIndex]
+	if acc == nil {
+		acc = &Account{AuthIndex: authIndex}
+		s.Accounts[authIndex] = acc
+	}
+	acc.State = Active
+	acc.DisableSource = ""
+	acc.PreDisabled = false
+	acc.RecoverAt = time.Time{}
+	acc.LastSignal = ""
+	acc.Streaks = map[string]int{}
+	// keep Owner for audit; empty is fine too
+	if acc.Owner == "" {
+		acc.Owner = Owner
+	}
 	acc.UpdatedAt = time.Now()
 }
 
@@ -275,17 +298,8 @@ func (s *Store) CanAutoReenable(authIndex string) bool {
 
 // ClearManualLock clears user_manual / pre_disabled after an explicit panel enable.
 func (s *Store) ClearManualLock(authIndex string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	acc := s.Accounts[authIndex]
-	if acc == nil {
-		return
-	}
-	acc.State = Active
-	acc.DisableSource = ""
-	acc.PreDisabled = false
-	acc.RecoverAt = time.Time{}
-	acc.UpdatedAt = time.Now()
+	// full closed-loop reset (same as recover)
+	s.ResetToActive(authIndex)
 }
 
 func (s *Store) Log(entry ActionLog) {
@@ -387,10 +401,9 @@ func (s *Store) SetLastSignal(authIndex, signal string) {
 		acc = &Account{AuthIndex: authIndex, State: Active, Streaks: map[string]int{}}
 		s.Accounts[authIndex] = acc
 	}
-	if signal != "" {
-		acc.LastSignal = signal
-	}
-	// do not bump UpdatedAt — maintenance sync is not a request event
+	// empty string clears residual signal (closed-loop recovery / success)
+	acc.LastSignal = signal
+	// do not bump UpdatedAt — maintenance sync / success cleanup is not a request event
 }
 
 func (s *Store) AccountsSnapshot() []*Account {

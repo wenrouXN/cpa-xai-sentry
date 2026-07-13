@@ -129,6 +129,10 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 
 	if ev.Success || (ev.StatusCode >= 200 && ev.StatusCode < 300) {
 		g.State.ClearAuthStreaks(ev.AuthIndex)
+		// closed-loop: successful request while active clears residual error signal
+		if acc := g.State.Get(ev.AuthIndex); acc != nil && acc.State == state.Active && acc.LastSignal != "" {
+			g.State.SetLastSignal(ev.AuthIndex, "")
+		}
 		// still try parse remaining from success body if any
 		if q := quota.Parse(ev.Body); q.Limit > 0 || q.Remaining > 0 || q.Used > 0 {
 			g.State.UpdateQuota(ev.AuthIndex, q.Limit, q.Used, q.Remaining, q.Source, q.ResetAt)
@@ -378,10 +382,12 @@ func (g *Guard) Tick(ctx context.Context) error {
 				continue
 			}
 		}
-		g.State.SetAccountState(acc.AuthIndex, state.Active, "plugin_auto")
-		g.State.SetRecoverAt(acc.AuthIndex, time.Time{})
+		// closed-loop: cool-down due → clean Active (not Active+plugin_auto leftovers)
+		prevSig := acc.LastSignal
+		g.State.ResetToActive(acc.AuthIndex)
 		g.State.Log(state.ActionLog{
-			Auth: acc.AuthIndex, Source: "tick", Action: "reenable", Reason: "recover_at",
+			Auth: acc.AuthIndex, Source: "tick", Signal: prevSig,
+			Action: "reenable", Reason: "recover_at",
 		})
 	}
 	if g.Trash != nil && g.Cfg.TrashAutoPurge {

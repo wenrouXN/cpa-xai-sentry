@@ -99,7 +99,7 @@ func (s *Store) Restore(id string, enable bool, writeLive func(fileName string, 
 	}
 	_ = os.Remove(path)
 	if enable {
-		s.State.SetAccountState(meta.AuthIndex, state.Active, "")
+		s.State.ResetToActive(meta.AuthIndex)
 	} else {
 		s.State.SetAccountState(meta.AuthIndex, state.UserManual, "user_manual")
 	}
