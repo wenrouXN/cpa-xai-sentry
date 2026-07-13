@@ -128,7 +128,7 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 	g.State.IncDayUsage(ev.AuthIndex, day, 1, failN, 0)
 
 	if ev.Success || (ev.StatusCode >= 200 && ev.StatusCode < 300) {
-		g.State.ClearAuthStreaks(ev.AuthIndex)
+		g.clearStreaksByCountMode(ev.AuthIndex)
 		// closed-loop: successful request while active clears residual error signal
 		if acc := g.State.Get(ev.AuthIndex); acc != nil && acc.State == state.Active && acc.LastSignal != "" {
 			g.State.SetLastSignal(ev.AuthIndex, "")
@@ -204,26 +204,31 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 		Tier: tier.Tier(acc.Tier), Policy: polPtr,
 	})
 
-	if act.Cooldown {
-		if err := g.applyCooldown(ctx, ev, res, acc, polPtr); err != nil {
+	// permanent disable is strongest; skip lighter cool if both somehow set
+	if act.Disable {
+		if err := g.applyPermanentDisable(ctx, ev, act.Reason); err != nil {
+			return err
+		}
+	} else if act.Cooldown {
+		if err := g.applyCooldown(ctx, ev, res, acc, polPtr, act.CooldownSec); err != nil {
 			return err
 		}
 	}
-	if act.Candidate {
+	if act.Candidate && !act.Disable {
 		g.State.SetAccountState(ev.AuthIndex, state.CandidateDead, "plugin_auto")
 		g.State.Log(state.ActionLog{
 			Auth: ev.AuthIndex, Source: ev.Source, Signal: string(res.Signal),
 			Action: "candidate", Reason: act.Reason,
 		})
 	}
-	if act.Trash {
+	if act.Trash && !act.Disable {
 		return g.applyTrash(ctx, ev, res, acc)
 	}
 	_ = g.State.Save()
 	return nil
 }
 
-func (g *Guard) applyCooldown(ctx context.Context, ev UsageEvent, res match.Result, acc *state.Account, pol *state.ErrorPolicy) error {
+func (g *Guard) applyCooldown(ctx context.Context, ev UsageEvent, res match.Result, acc *state.Account, pol *state.ErrorPolicy, cooldownSecOverride ...int) error {
 	st := state.CooldownQuota
 	switch res.Signal {
 	case match.SignalSpendingLimit402:
@@ -234,8 +239,14 @@ func (g *Guard) applyCooldown(ctx context.Context, ev UsageEvent, res match.Resu
 		st = state.CandidateDead
 	}
 	recoverAt := res.RecoverAt
+	cdOverride := 0
+	if len(cooldownSecOverride) > 0 {
+		cdOverride = cooldownSecOverride[0]
+	}
 	if recoverAt.IsZero() {
-		if pol != nil && pol.CooldownSec > 0 {
+		if cdOverride > 0 {
+			recoverAt = g.Now().Add(time.Duration(cdOverride) * time.Second)
+		} else if pol != nil && pol.CooldownSec > 0 {
 			recoverAt = g.Now().Add(time.Duration(pol.CooldownSec) * time.Second)
 		} else {
 			switch res.Signal {
@@ -617,6 +628,48 @@ func (g *Guard) resolveFileName(ctx context.Context, authIndex, fileName, email 
 		}
 	}
 	return name
+}
+
+// clearStreaksByCountMode clears streaks for keys using streak mode; keeps total-mode counters.
+func (g *Guard) clearStreaksByCountMode(authIndex string) {
+	if g.State == nil {
+		return
+	}
+	totalKeys := map[string]bool{}
+	for _, p := range g.State.ListErrorPolicies() {
+		if strings.EqualFold(p.CountMode, "total") || strings.EqualFold(p.CountMode, "accumulate") {
+			totalKeys[p.Key] = true
+		}
+	}
+	if len(totalKeys) == 0 {
+		g.State.ClearAuthStreaks(authIndex)
+		return
+	}
+	g.State.ClearAuthStreaksExcept(authIndex, totalKeys)
+}
+
+func (g *Guard) applyPermanentDisable(ctx context.Context, ev UsageEvent, reason string) error {
+	name := ev.FileName
+	if name == "" || cpaapi.LooksLikeOpaqueID(name) {
+		if acc := g.State.Get(ev.AuthIndex); acc != nil {
+			name = g.resolveFileName(ctx, ev.AuthIndex, acc.FileName, acc.Email)
+		} else {
+			name = g.resolveFileName(ctx, ev.AuthIndex, ev.FileName, ev.Email)
+		}
+	}
+	if g.CPA != nil && name != "" && !cpaapi.LooksLikeOpaqueID(name) {
+		if err := g.CPA.SetDisabled(ctx, name, true); err != nil {
+			g.State.Log(state.ActionLog{Auth: ev.AuthIndex, Source: ev.Source, Action: "manual_disable", Reason: "disable_failed:" + err.Error()})
+			return err
+		}
+	}
+	g.State.SetAccountState(ev.AuthIndex, state.UserManual, "user_manual")
+	g.State.SetRecoverAt(ev.AuthIndex, time.Time{})
+	if reason == "" {
+		reason = "policy_permanent_disable"
+	}
+	g.State.Log(state.ActionLog{Auth: ev.AuthIndex, Source: ev.Source, Action: "manual_disable", Reason: reason})
+	return nil
 }
 
 // ManualDisable disables one account via CPA and marks user_manual.

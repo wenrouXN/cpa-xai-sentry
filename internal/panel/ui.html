@@ -188,6 +188,10 @@ tr:hover td{background:#f5f9ff}
 .err-title .err-http{color:#64748b;font-weight:600;font-size:12px;margin-left:6px}
 .err-controls label{display:inline-flex;align-items:center;gap:6px}
 .err-controls .sw-mini{transform:scale(.85);transform-origin:left center}
+.esc-box{margin-top:8px;padding:8px;border:1px solid var(--border);border-radius:8px;background:#fafcff}
+.esc-row{display:grid;grid-template-columns:70px 1fr 90px 28px;gap:6px;align-items:center;margin-bottom:6px}
+.esc-row label{font-size:10.5px;color:var(--muted);font-weight:700}
+.esc-tools{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px}
 .err-actions-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .tag.danger{background:#fef3f2;color:#b42318;border-color:#fecdca}
 .err-card{border:1px solid var(--border);border-radius:12px;background:#fff;padding:10px 12px;margin-bottom:8px}
@@ -207,7 +211,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.19</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.20</span></h1>
     </div>
     <div class="top-actions">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -375,7 +379,7 @@ const SIG_ZH={free_usage_429:'免费额度用尽',spending_limit_402:'消费限�
 const API="/v0/management/cpa-xai-sentry";
 const KEY_LS="cpa-xai-sentry-management-key";
 const STATE_ZH={active:'正常',cooldown_quota:'429·额度冷却',cooldown_spending:'402·消费冷却',cooldown_permission:'403·权限冷却',candidate_dead:'401·候删',user_manual:'永久禁用',trashed:'垃圾箱',purged:'已清除'};
-const ACT_ZH={observe:'仅观察',cooldown:'冷却',candidate:'候删',trash:'进垃圾箱',wait:'等待恢复',review:'复查',manual:'禁用',none:'无',restore_or_purge:'恢复/清除'};
+const ACT_ZH={observe:'仅观察',cooldown:'冷却',candidate:'候删',disable:'永久禁用',trash:'进垃圾箱',wait:'等待恢复',review:'复查',manual:'永久禁用',none:'无',restore_or_purge:'恢复/清除'};
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2400)}
 function esc(s){return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 // CPAMP-style mask: local part >8 => abc***wxyz@domain
@@ -835,7 +839,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.5.19');
+    document.getElementById('ver').textContent='v'+(st.version||'0.5.20');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -1020,8 +1024,58 @@ function policyLogsHTML(key){
 }
 function logsForPolicy(key){ return policyErrorRows(key); }
 function errorStructureKey(list){
-  return (list||[]).map(e=>e.key+'|'+(e.enabled?1:0)+'|'+(e.action||'')+'|'+(e.threshold||0)+'|'+(e.cooldown_seconds||0)+'|'+(e.never_trash?1:0)+'|'+policyErrorRows(e.key).length).sort().join(';');
+  return (list||[]).map(e=>e.key+'|'+(e.enabled?1:0)+'|'+(e.count_mode||'')+'|'+JSON.stringify(e.escalations||[])+'|'+(e.action||'')+'|'+(e.threshold||0)+'|'+policyErrorRows(e.key).length).sort().join(';');
 }
+
+function escSummary(e){
+  const tiers=normalizeEsc(e);
+  if(!tiers.length) return ACT_ZH[e.action]||e.action||'-';
+  return tiers.map(t=>'≥'+t.streak+(ACT_ZH[t.action]||t.action)).join(' · ');
+}
+function normalizeEsc(e){
+  let tiers=Array.isArray(e.escalations)?e.escalations.slice():[];
+  if(!tiers.length){
+    tiers=[{streak:e.threshold||1, action:e.action||'observe', cooldown_seconds:e.cooldown_seconds||0}];
+  }
+  return tiers.map(t=>({
+    streak: Math.max(1, Number(t.streak||t.threshold||1)),
+    action: t.action||'observe',
+    cooldown_seconds: Number(t.cooldown_seconds||0)
+  })).sort((a,b)=>a.streak-b.streak);
+}
+function escRowsHTML(e){
+  const tiers=normalizeEsc(e);
+  const acts=['observe','cooldown','candidate','disable','trash'];
+  return tiers.map((t,i)=>'<div class="esc-row">'+
+    '<label>连续≥<input class="num esc-n" type="number" min="1" value="'+t.streak+'"/></label>'+
+    '<label>动作<select class="esc-act">'+acts.map(a=>'<option value="'+a+'"'+(t.action===a?' selected':'')+'>'+(ACT_ZH[a]||a)+'</option>').join('')+'</select></label>'+
+    '<label>冷却秒<input class="num esc-cd" type="number" min="0" value="'+(t.cooldown_seconds||0)+'" title="仅冷却动作有用"/></label>'+
+    '<button type="button" class="xs" title="删除此档" onclick="this.closest(\'.esc-row\').remove()">×</button>'+
+  '</div>').join('');
+}
+function addEscRow(btn){
+  const box=btn.closest('.esc-box');
+  if(!box) return;
+  const list=box.querySelector('.esc-list');
+  const acts=['observe','cooldown','candidate','disable','trash'];
+  const div=document.createElement('div');
+  div.className='esc-row';
+  div.innerHTML='<label>连续≥<input class="num esc-n" type="number" min="1" value="1"/></label>'+
+    '<label>动作<select class="esc-act">'+acts.map(a=>'<option value="'+a+'">'+(ACT_ZH[a]||a)+'</option>').join('')+'</select></label>'+
+    '<label>冷却秒<input class="num esc-cd" type="number" min="0" value="0"/></label>'+
+    '<button type="button" class="xs" onclick="this.closest(\'.esc-row\').remove()">×</button>';
+  list.appendChild(div);
+}
+function readEscalations(card){
+  const rows=[...card.querySelectorAll('.esc-row')];
+  if(!rows.length) return [];
+  return rows.map(r=>({
+    streak: Math.max(1, parseInt(r.querySelector('.esc-n')?.value||'1',10)),
+    action: r.querySelector('.esc-act')?.value||'observe',
+    cooldown_seconds: Math.max(0, parseInt(r.querySelector('.esc-cd')?.value||'0',10))
+  })).sort((a,b)=>a.streak-b.streak);
+}
+
 function renderErrorCards(list, force){
   const snap=errorStructureKey(list);
   if(!force && ERR_RENDERED && snap===ERR_SNAPSHOT){
@@ -1039,7 +1093,7 @@ function renderErrorCards(list, force){
   if(!(list||[]).length){ box.innerHTML='<div class="err-empty">还没有采集到错误。</div>'; return; }
   box.innerHTML=list.slice().sort((a,b)=>(b.count||0)-(a.count||0)).map((e)=>{
     const last=(e.last_at||'').replace('T',' ').replace('Z','')||'—';
-    const act=ACT_ZH[e.action]||e.action||'-';
+    const act=escSummary(e);
     const http=httpCodeOf(e.key);
     const builtin=['free_usage_429','spending_limit_402','auth_401','permission_403','http_404','code:invalid-argument'];
     const canUnclass = e.key!=='unmatched' && builtin.indexOf(e.key)<0 && e.source!=='builtin';
@@ -1053,12 +1107,18 @@ function renderErrorCards(list, force){
           '<span class="tag muted">最近 <span data-f="last">'+esc(last)+'</span></span>'+
           '<span class="tag">动作: '+esc(act)+'</span>'+
         '</div></div></div>'+
-      '<div class="err-controls">'+
-        '<label class="sw" title="是否启用该错误策略"><span class="lbl">启用</span><span class="switch"><input class="en-sw" type="checkbox" '+(e.enabled?'checked':'')+' onchange="quickSaveError(\''+esc(e.key)+'\')"/><span class="slider"></span></span></label>'+
-        '<label>动作<select class="act" onchange="quickSaveError(\''+esc(e.key)+'\')">'+['observe','cooldown','candidate','trash'].map(a=>'<option value="'+a+'"'+(e.action===a?' selected':'')+'>'+(ACT_ZH[a]||a)+'</option>').join('')+'</select></label>'+
-        '<label>连续N<input class="num th" type="number" min="1" value="'+(e.threshold||1)+'" onchange="quickSaveError(\''+esc(e.key)+'\')"/></label>'+
-        '<label>冷却秒<input class="num cd" type="number" min="0" value="'+(e.cooldown_seconds||0)+'" onchange="quickSaveError(\''+esc(e.key)+'\')"/></label>'+
+      '<div class="err-controls" style="grid-template-columns:auto 1fr auto;align-items:center">'+
+        '<label class="sw" title="是否启用该错误策略"><span class="lbl">启用</span><span class="switch"><input class="en-sw" type="checkbox" '+(e.enabled?'checked':'')+'/><span class="slider"></span></span></label>'+
+        '<label>计数方式<select class="cm">'+
+          '<option value="streak"'+( (!e.count_mode||e.count_mode==='streak')?' selected':'')+'>连续(成功清零)</option>'+
+          '<option value="total"'+(e.count_mode==='total'||e.count_mode==='accumulate'?' selected':'')+'>累计(成功不清)</option>'+
+        '</select></label>'+
         '<button class="xs primary" data-key="'+esc(e.key)+'" onclick="saveErrorKey(this.getAttribute(\'data-key\'))">保存</button>'+
+      '</div>'+
+      '<div class="esc-box" data-esc="1">'+
+        '<div class="meta" style="font-weight:700;margin-bottom:6px">阶梯动作（可多档：如 3→冷却，15→永久禁用）</div>'+
+        '<div class="esc-list">'+escRowsHTML(e)+'</div>'+
+        '<div class="esc-tools"><button type="button" class="xs" onclick="addEscRow(this)">+ 加一档</button><span class="meta">保存后生效 · 命中最高档</span></div>'+
       '</div>'+
       '<div class="err-actions-row">'+
         (e.key==='unmatched'?'<span class="meta">在下方「可拆分错误形态」里点拆成此类</span>':'')+
@@ -1083,17 +1143,26 @@ async function saveErrorKey(key, silent){
   if(!card){ toast('找不到错误卡片'); return; }
   const enSw=card.querySelector('.en-sw');
   const enabled=enSw?!!enSw.checked:!!e.enabled;
-  const action=card.querySelector('.act').value;
-  const threshold=parseInt(card.querySelector('.th').value||'1',10);
-  const cooldown=parseInt(card.querySelector('.cd').value||'0',10);
+  const count_mode=(card.querySelector('.cm')?.value)||'streak';
+  let escalations=readEscalations(card);
+  if(!escalations.length){
+    escalations=[{streak:e.threshold||1, action:e.action||'observe', cooldown_seconds:e.cooldown_seconds||0}];
+  }
+  // sync legacy single fields from lowest tier
+  const low=escalations[0];
+  const action=low.action||'observe';
+  const threshold=low.streak||1;
+  const cooldown=low.cooldown_seconds||0;
   const note=e.note||'';
   const never=!!e.never_trash;
   try{
     await j('/errors/policy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-      key:e.key,label:e.label,enabled,action,threshold,cooldown_seconds:cooldown,never_trash:never,note,source:e.source||'user'
+      key:e.key,label:e.label,enabled,action,threshold,cooldown_seconds:cooldown,
+      count_mode, escalations, never_trash:never, note, source:e.source||'user'
     })});
-    if(!silent) toast('已保存: '+(e.label||e.key));
+    if(!silent) toast('已保存: '+(e.label||e.key)+' · '+escalations.map(x=>'≥'+x.streak+(ACT_ZH[x.action]||x.action)).join(' / '));
     e.enabled=enabled; e.action=action; e.threshold=threshold; e.cooldown_seconds=cooldown;
+    e.count_mode=count_mode; e.escalations=escalations;
     ERR_RENDERED=false;
     await loadErrors(true);
   }catch(err){ toast(err.message) }

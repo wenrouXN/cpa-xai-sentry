@@ -9,12 +9,14 @@ import (
 )
 
 type Action struct {
-	Cooldown  bool
-	Candidate bool
-	Trash     bool
-	Reason    string
-	ErrorKey  string
-	PolicyAct string
+	Cooldown   bool
+	Candidate  bool
+	Disable    bool // permanent disable
+	Trash      bool
+	Reason     string
+	ErrorKey   string
+	PolicyAct  string
+	CooldownSec int // from matched tier, 0 = use defaults
 }
 
 type Input struct {
@@ -91,31 +93,32 @@ func decidePolicy(cfg sentrycfg.Config, in Input, p state.ErrorPolicy) Action {
 		a.Reason = "该错误策略已关闭"
 		return a
 	}
-	// master sentry still gates in guard; here only policy
-	th := p.Threshold
-	if th <= 0 {
-		th = 1
+	tiers := p.NormalizedEscalations()
+	// pick highest tier whose streak threshold is met
+	var matched *state.EscalationRule
+	for i := range tiers {
+		if in.Streak >= tiers[i].Streak {
+			matched = &tiers[i]
+		}
 	}
-	if in.Streak < th {
+	if matched == nil {
 		a.Reason = "未达该错误连续阈值"
 		return a
 	}
+	a.PolicyAct = matched.Action
+	a.CooldownSec = matched.CooldownSec
 	neverTrash := p.NeverTrash || errorsig.HardNeverTrash(p.Key) || in.Signal == match.SignalSpendingLimit402
-	switch errorsig.Action(p.Action) {
+	return applyActionTier(cfg, a, errorsig.Action(matched.Action), neverTrash, in, matched.Streak)
+}
+
+func applyActionTier(cfg sentrycfg.Config, a Action, act errorsig.Action, neverTrash bool, in Input, th int) Action {
+	switch act {
 	case errorsig.ActionObserve:
-		a.Reason = "策略=仅观察"
+		a.Reason = "策略=仅观察(≥" + itoa(th) + ")"
 	case errorsig.ActionCooldown:
-		if !cfg.AutoCooldown && !cfg.SentryEnabled {
-			// still allow when policy path used under sentry; guard checks master switches
-		}
-		// require global auto_cooldown OR treat policy as intent when auto_cooldown true
-		if cfg.AutoCooldown || cfg.AutoCandidate || cfg.AutoDelete {
-			a.Cooldown = cfg.AutoCooldown || cfg.AutoCandidate || cfg.AutoDelete
-		}
-		// If only policy-driven and global auto_cooldown on:
 		if cfg.AutoCooldown {
 			a.Cooldown = true
-			a.Reason = "策略=冷却"
+			a.Reason = "策略阶梯=冷却(≥" + itoa(th) + ")"
 		} else {
 			a.Reason = "策略=冷却但全局自动冷却关闭"
 		}
@@ -123,12 +126,20 @@ func decidePolicy(cfg sentrycfg.Config, in Input, p state.ErrorPolicy) Action {
 		if cfg.AutoCandidate {
 			a.Candidate = true
 			a.Cooldown = true
-			a.Reason = "策略=候选"
+			a.Reason = "策略阶梯=候删(≥" + itoa(th) + ")"
 		} else if cfg.AutoCooldown {
 			a.Cooldown = true
-			a.Reason = "策略=候选但全局仅冷却开启"
+			a.Reason = "策略=候删但全局仅冷却开启"
 		} else {
-			a.Reason = "策略=候选但全局自动候选关闭"
+			a.Reason = "策略=候删但全局自动候选关闭"
+		}
+	case errorsig.ActionDisable:
+		// permanent disable: gated by master sentry via guard; not requiring auto_delete
+		if cfg.SentryEnabled || cfg.AutoCooldown || cfg.AutoCandidate || cfg.AutoDelete {
+			a.Disable = true
+			a.Reason = "策略阶梯=永久禁用(≥" + itoa(th) + ")"
+		} else {
+			a.Reason = "策略=永久禁用但总开关类动作均关闭"
 		}
 	case errorsig.ActionTrash:
 		if neverTrash {
@@ -152,7 +163,7 @@ func decidePolicy(cfg sentrycfg.Config, in Input, p state.ErrorPolicy) Action {
 			a.Trash = true
 			a.Candidate = true
 			a.Cooldown = true
-			a.Reason = "策略=进垃圾箱"
+			a.Reason = "策略阶梯=进垃圾箱(≥" + itoa(th) + ")"
 		} else if cfg.AutoCandidate {
 			a.Candidate = true
 			a.Cooldown = true
@@ -166,18 +177,23 @@ func decidePolicy(cfg sentrycfg.Config, in Input, p state.ErrorPolicy) Action {
 	default:
 		a.Reason = "未知策略动作"
 	}
-	// Global delete scope can upgrade any non-protected error after threshold.
-	if cfg.AutoDelete && !neverTrash && !tier.ProtectFromAutoTrash(in.Tier) {
-		if contains(cfg.DeleteSignals, p.Key) || contains(cfg.DeleteSignals, string(in.Signal)) {
-			a.Trash = true
-			a.Candidate = true
-			a.Cooldown = true
-			a.Reason = "全局删除范围覆盖该错误"
-			a.PolicyAct = string(errorsig.ActionTrash)
-		}
-	}
 	return a
 }
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var b [16]byte
+	i := len(b)
+	for n > 0 {
+		i--
+		b[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(b[i:])
+}
+
 
 func contains(ss []string, x string) bool {
 	for _, s := range ss {

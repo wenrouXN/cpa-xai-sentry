@@ -78,8 +78,8 @@ func Test402NeverTrashEvenAutoDelete(t *testing.T) {
 
 func TestAuth401AutoTrashFree(t *testing.T) {
 	cfg := sentrycfg.Default()
-	cfg.AutoDelete = true
-	cfg.DeleteSignals = []string{"auth_401"}
+	cfg.AutoCandidate = true
+	cfg.AutoCooldown = true
 	g, st, authDir, _ := setup(t, cfg)
 	// force free tier via note
 	ev := guard.UsageEvent{
@@ -88,17 +88,22 @@ func TestAuth401AutoTrashFree(t *testing.T) {
 		Body: `{"error":"Invalid or expired credentials (no auth context)"}`,
 	}
 	_ = g.HandleUsage(context.Background(), ev)
-	_ = g.HandleUsage(context.Background(), ev) // streak 2
-	if len(st.ListTrash()) != 1 {
-		t.Fatalf("trash=%d", len(st.ListTrash()))
+	_ = g.HandleUsage(context.Background(), ev) // streak 2 → builtin auth_401 = candidate
+	acc := st.Get("a")
+	if acc == nil || acc.State != state.CandidateDead {
+		got := ""
+		if acc != nil {
+			got = string(acc.State)
+		}
+		t.Fatalf("want candidate_dead, got state=%s trash=%d", got, len(st.ListTrash()))
 	}
-	// live file deleted via API only — auth dir file still exists unless we also remove; ok
 	_ = authDir
 }
 
 func TestSuperNoAutoTrash(t *testing.T) {
 	cfg := sentrycfg.Default()
 	cfg.AutoDelete = true
+	cfg.AutoCandidate = true
 	cfg.DeleteSignals = []string{"auth_401"}
 	g, st, _, _ := setup(t, cfg)
 	ev := guard.UsageEvent{

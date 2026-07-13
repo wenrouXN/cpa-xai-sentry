@@ -15,6 +15,7 @@ const (
 	ActionObserve   Action = "observe"   // 仅记录
 	ActionCooldown  Action = "cooldown"  // 冷却禁用
 	ActionCandidate Action = "candidate" // 候选（人工确认）
+	ActionDisable   Action = "disable"   // 永久禁用（不自动恢复）
 	ActionTrash     Action = "trash"     // 进垃圾箱
 )
 
@@ -67,7 +68,7 @@ func BuiltinDefaults() map[string]Policy {
 		"permission_403": {
 			Key: "permission_403", Label: "403·权限拒绝", Enabled: true,
 			Action: ActionCooldown, Threshold: 3, CooldownSec: 1800, Source: "builtin",
-			Note: "默认可恢复，不建议自动删除",
+			Note: "默认阶梯：连续≥3冷却；≥15永久禁用（可在面板改）",
 		},
 		"code:invalid-argument": {
 			Key: "code:invalid-argument", Label: "参数无效/上下文过长", Enabled: true,

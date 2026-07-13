@@ -84,18 +84,62 @@ type Store struct {
 	path          string
 }
 
+// EscalationRule is one tier: when streak/count >= Streak, apply Action.
+type EscalationRule struct {
+	Streak     int    `json:"streak"`               // threshold N
+	Action     string `json:"action"`               // observe|cooldown|candidate|disable|trash
+	CooldownSec int    `json:"cooldown_seconds,omitempty"`
+}
+
 // ErrorPolicy is persisted per-error control (dynamic catalog).
 type ErrorPolicy struct {
-	Key         string `json:"key"`
-	Label       string `json:"label"`
-	Enabled     bool   `json:"enabled"`
-	Action      string `json:"action"` // observe|cooldown|candidate|trash
-	Threshold   int    `json:"threshold"`
-	CooldownSec int    `json:"cooldown_seconds"`
-	NeverTrash  bool   `json:"never_trash"`
-	Note        string `json:"note"`
-	Source      string `json:"source"`
-	UpdatedAt   string `json:"updated_at,omitempty"`
+	Key         string           `json:"key"`
+	Label       string           `json:"label"`
+	Enabled     bool             `json:"enabled"`
+	Action      string           `json:"action"` // legacy single action: observe|cooldown|candidate|trash|disable
+	Threshold   int              `json:"threshold"`
+	CooldownSec int              `json:"cooldown_seconds"`
+	// CountMode: "streak" (default, success clears) | "total" (accumulate until reset)
+	CountMode   string           `json:"count_mode,omitempty"`
+	// Escalations optional multi-tier rules; if empty, Threshold+Action is used as one tier.
+	Escalations []EscalationRule `json:"escalations,omitempty"`
+	NeverTrash  bool             `json:"never_trash"`
+	Note        string           `json:"note"`
+	Source      string           `json:"source"`
+	UpdatedAt   string           `json:"updated_at,omitempty"`
+}
+
+// NormalizedEscalations returns tiers sorted by streak ascending; synthesizes from legacy fields if needed.
+func (p ErrorPolicy) NormalizedEscalations() []EscalationRule {
+	if len(p.Escalations) > 0 {
+		out := append([]EscalationRule(nil), p.Escalations...)
+		// sort ascending
+		for i := 0; i < len(out); i++ {
+			for j := i + 1; j < len(out); j++ {
+				if out[j].Streak < out[i].Streak {
+					out[i], out[j] = out[j], out[i]
+				}
+			}
+		}
+		for i := range out {
+			if out[i].Streak <= 0 {
+				out[i].Streak = 1
+			}
+			if out[i].Action == "" {
+				out[i].Action = "observe"
+			}
+		}
+		return out
+	}
+	th := p.Threshold
+	if th <= 0 {
+		th = 1
+	}
+	act := p.Action
+	if act == "" {
+		act = "observe"
+	}
+	return []EscalationRule{{Streak: th, Action: act, CooldownSec: p.CooldownSec}}
 }
 
 type ObservedError struct {
@@ -254,6 +298,23 @@ func (s *Store) ClearAuthStreaks(authIndex string) {
 	}
 	// full streak reset so consecutive-N can restart cleanly after success/recovery
 	acc.Streaks = map[string]int{}
+	acc.UpdatedAt = time.Now()
+}
+
+// ClearAuthStreaksExcept clears all streaks except keys in keep (total/accumulate mode).
+func (s *Store) ClearAuthStreaksExcept(authIndex string, keep map[string]bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	acc := s.Accounts[authIndex]
+	if acc == nil || acc.Streaks == nil {
+		return
+	}
+	for k := range acc.Streaks {
+		if keep[k] {
+			continue
+		}
+		delete(acc.Streaks, k)
+	}
 	acc.UpdatedAt = time.Now()
 }
 

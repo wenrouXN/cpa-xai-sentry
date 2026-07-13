@@ -683,7 +683,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":         "cpa-xai-sentry",
-		"version":        "0.5.19",
+		"version":        "0.5.20",
 		"mode":           modeOf(*a.Cfg),
 		"mode_label":     modeLabel(modeOf(*a.Cfg)),
 		"summary":        summary,
@@ -1377,7 +1377,7 @@ func (a *API) handlePatrolStatus(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.19",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.20",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 		"cooldown_stats": a.State.CooldownStats(time.Now()),
 	})
@@ -1525,11 +1525,21 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 		// Guard.New already seeds; re-seed safe
 		builtins := map[string]state.ErrorPolicy{}
 		for k, p := range errorsig.BuiltinDefaults() {
-			builtins[k] = state.ErrorPolicy{
+			pol := state.ErrorPolicy{
 				Key: p.Key, Label: p.Label, Enabled: p.Enabled, Action: string(p.Action),
 				Threshold: p.Threshold, CooldownSec: p.CooldownSec, NeverTrash: p.NeverTrash,
-				Note: p.Note, Source: p.Source,
+				Note: p.Note, Source: p.Source, CountMode: "streak",
 			}
+			if k == "permission_403" {
+				pol.Escalations = []state.EscalationRule{
+					{Streak: 3, Action: "cooldown", CooldownSec: 1800},
+					{Streak: 15, Action: "disable"},
+				}
+				pol.Threshold = 3
+				pol.Action = "cooldown"
+				pol.CooldownSec = 1800
+			}
+			builtins[k] = pol
 		}
 		a.State.EnsureBuiltinPolicies(builtins)
 	}
@@ -1553,6 +1563,8 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 		ActionLabel  string         `json:"action_label"`
 		Threshold    int            `json:"threshold"`
 		CooldownSec  int            `json:"cooldown_seconds"`
+		CountMode    string         `json:"count_mode,omitempty"`
+		Escalations  []state.EscalationRule `json:"escalations,omitempty"`
 		NeverTrash   bool           `json:"never_trash"`
 		Note         string         `json:"note"`
 		Source       string         `json:"source"`
@@ -1571,9 +1583,33 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 	}
 	byKey := map[string]row{}
 	for _, p := range pols {
+		esc := p.NormalizedEscalations()
+		// upgrade legacy 403 single-tier to default ladder if still only one cooldown@3
+		if p.Key == "permission_403" && (len(p.Escalations) == 0) {
+			esc = []state.EscalationRule{
+				{Streak: 3, Action: "cooldown", CooldownSec: 1800},
+				{Streak: 15, Action: "disable"},
+			}
+			// persist default ladder once
+			pp := p
+			pp.Escalations = esc
+			pp.Threshold = 3
+			pp.Action = "cooldown"
+			pp.CooldownSec = 1800
+			if pp.CountMode == "" {
+				pp.CountMode = "streak"
+			}
+			a.State.UpsertErrorPolicy(pp)
+			_ = a.State.Save()
+		}
+		cm := p.CountMode
+		if cm == "" {
+			cm = "streak"
+		}
 		byKey[p.Key] = row{
 			Key: p.Key, Label: p.Label, Enabled: p.Enabled, Action: p.Action,
 			ActionLabel: actionLabel(p.Action), Threshold: p.Threshold, CooldownSec: p.CooldownSec,
+			CountMode: cm, Escalations: esc,
 			NeverTrash: p.NeverTrash, Note: p.Note, Source: p.Source,
 		}
 	}
@@ -1742,7 +1778,9 @@ func actionLabel(a string) string {
 	case "cooldown":
 		return "冷却"
 	case "candidate":
-		return "进候选"
+		return "候删"
+	case "disable":
+		return "永久禁用"
 	case "trash":
 		return "进垃圾箱"
 	default:
@@ -1810,14 +1848,37 @@ func (a *API) handleErrorPolicy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "key 必填"})
 		return
 	}
-	if in.Action == "" {
-		in.Action = "observe"
+	if in.CountMode == "" {
+		in.CountMode = "streak"
 	}
-	if in.Threshold <= 0 {
-		in.Threshold = 1
+	// normalize escalations; if empty, synthesize from legacy fields
+	if len(in.Escalations) == 0 {
+		if in.Action == "" {
+			in.Action = "observe"
+		}
+		if in.Threshold <= 0 {
+			in.Threshold = 1
+		}
+		in.Escalations = []state.EscalationRule{{
+			Streak: in.Threshold, Action: in.Action, CooldownSec: in.CooldownSec,
+		}}
+	} else {
+		// sort + fill; sync legacy fields from lowest tier for back-compat
+		in.Escalations = state.ErrorPolicy{Escalations: in.Escalations}.NormalizedEscalations()
+		low := in.Escalations[0]
+		in.Threshold = low.Streak
+		in.Action = low.Action
+		if low.CooldownSec > 0 {
+			in.CooldownSec = low.CooldownSec
+		}
 	}
 	if errorsig.HardNeverTrash(in.Key) {
 		in.NeverTrash = true
+		for i := range in.Escalations {
+			if in.Escalations[i].Action == "trash" {
+				in.Escalations[i].Action = "cooldown"
+			}
+		}
 		if in.Action == "trash" {
 			in.Action = "cooldown"
 		}
