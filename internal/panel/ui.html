@@ -95,11 +95,22 @@ tr:hover td{background:#f5f9ff}
 .patrol-box{margin-top:10px;padding:10px;border:1px solid var(--border);border-radius:10px;background:#f8fbff}
 .patrol-head{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start;margin-bottom:8px}
 .patrol-head b{font-size:12.5px;margin-right:6px}
+.patrol-toggle{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border);background:#fff;border-radius:999px;padding:2px 8px;font-size:11px;color:var(--reg);cursor:pointer}
+.patrol-toggle:hover{border-color:#91caff;color:var(--accent)}
+.patrol-cfg{display:none;margin-bottom:8px}
+.patrol-cfg.open{display:block}
 .patrol-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin-bottom:8px}
 @media(max-width:1100px){.patrol-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:700px){.patrol-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .patrol-grid label{display:flex;flex-direction:column;gap:4px;font-size:10.5px;color:var(--muted);font-weight:700}
 .patrol-grid input{width:100%}
+.patrol-progress{display:none;margin:6px 0 8px}
+.patrol-progress.show{display:block}
+.patrol-bar-wrap{height:8px;background:#e8eef7;border-radius:999px;overflow:hidden;border:1px solid #d9e4f5}
+.patrol-bar{height:100%;width:0%;background:linear-gradient(90deg,#409eff,#66b1ff);transition:width .25s ease}
+.patrol-bar-meta{display:flex;justify-content:space-between;gap:8px;margin-top:4px;font-size:11px;color:var(--muted)}
+.patrol-log-wrap{display:none}
+.patrol-log-wrap.open{display:block}
 .patrol-log{max-height:160px;overflow:auto;background:#0b1220;color:#e8eefc;border-radius:8px;padding:8px;font-size:11.5px;line-height:1.45}
 .patrol-log .pl{display:grid;grid-template-columns:54px 1fr;gap:8px;padding:3px 0;border-bottom:1px solid #ffffff10}
 .patrol-log .pl:last-child{border-bottom:0}
@@ -172,7 +183,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.6</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.7</span> <span id="modeBadge" class="badge">模式</span></h1>
     </div>
     <div class="row" style="align-items:center">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -217,19 +228,35 @@ select.act{min-width:100px}input.num{width:70px}
         <div class="row">
           <button class="xs primary" onclick="patrolStart('full')" title="只探测当前已启用的 xAI 账号">全量巡查</button>
           <button class="xs warn" onclick="patrolStart('cooldown')" title="只探测当前冷却中的账号">仅查冷却号</button>
-          <button class="xs" onclick="savePatrolCfg()" title="保存下方巡查参数">保存巡查配置</button>
+          <button type="button" class="patrol-toggle" id="btnPatrolCfg" onclick="togglePatrolCfg()" title="展开/收起巡查参数">配置 ▾</button>
+          <button type="button" class="patrol-toggle" id="btnPatrolLog" onclick="togglePatrolLog()" title="显示/隐藏巡查日志">日志 ▾</button>
         </div>
       </div>
-      <div class="patrol-grid">
-        <label>周期(秒)<input id="pInterval" type="number" min="60" step="60" value="3600"/></label>
-        <label>超时(秒)<input id="pTimeout" type="number" min="3" step="1" value="15"/></label>
-        <label>并发<input id="pConc" type="number" min="1" max="64" step="1" value="8"/></label>
-        <label>每轮上限<input id="pBatch" type="number" min="0" step="1" value="50"/></label>
-        <label>模型<input id="pModel" type="text" value="grok-4.5"/></label>
-        <label>代理URL<input id="pProxy" type="text" placeholder="可选 http://..."/></label>
+      <div class="patrol-cfg" id="patrolCfgPanel">
+        <div class="patrol-grid">
+          <label>周期(秒)<input id="pInterval" type="number" min="60" step="60" value="3600"/></label>
+          <label>超时(秒)<input id="pTimeout" type="number" min="3" step="1" value="15"/></label>
+          <label>并发<input id="pConc" type="number" min="1" max="64" step="1" value="8"/></label>
+          <label>每轮上限<input id="pBatch" type="number" min="0" step="1" value="50"/></label>
+          <label>模型<input id="pModel" type="text" value="grok-4.5"/></label>
+          <label>代理URL<input id="pProxy" type="text" placeholder="可选 http://..."/></label>
+        </div>
+        <div class="row" style="margin-top:4px">
+          <button class="xs" onclick="savePatrolCfg()" title="保存巡查参数">保存巡查配置</button>
+          <span class="meta">默认收起，改完记得保存</span>
+        </div>
       </div>
       <div class="meta" id="patrolStatus">空闲</div>
-      <div id="patrolLog" class="patrol-log">暂无巡查日志</div>
+      <div class="patrol-progress" id="patrolProgress">
+        <div class="patrol-bar-wrap"><div class="patrol-bar" id="patrolBar"></div></div>
+        <div class="patrol-bar-meta">
+          <span id="patrolProgText">0 / 0</span>
+          <span id="patrolProgPct">0%</span>
+        </div>
+      </div>
+      <div class="patrol-log-wrap" id="patrolLogWrap">
+        <div id="patrolLog" class="patrol-log">暂无巡查日志</div>
+      </div>
     </div>
   </div>
 
@@ -775,7 +802,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.5.6');
+    document.getElementById('ver').textContent='v'+(st.version||'0.5.7');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -1011,6 +1038,28 @@ async function runTick(){
   }catch(e){toast(e.message)}
 }
 let PATROL_TIMER=null, PATROL_CFG_DIRTY=false;
+let PATROL_CFG_OPEN = localStorage.getItem('cpa-xai-sentry-patrol-cfg') === '1';
+let PATROL_LOG_OPEN = localStorage.getItem('cpa-xai-sentry-patrol-log') === '1';
+function syncPatrolPanels(){
+  const cfg=document.getElementById('patrolCfgPanel');
+  const log=document.getElementById('patrolLogWrap');
+  const bCfg=document.getElementById('btnPatrolCfg');
+  const bLog=document.getElementById('btnPatrolLog');
+  if(cfg) cfg.classList.toggle('open', !!PATROL_CFG_OPEN);
+  if(log) log.classList.toggle('open', !!PATROL_LOG_OPEN);
+  if(bCfg) bCfg.textContent = PATROL_CFG_OPEN ? '配置 ▴' : '配置 ▾';
+  if(bLog) bLog.textContent = PATROL_LOG_OPEN ? '日志 ▴' : '日志 ▾';
+}
+function togglePatrolCfg(){
+  PATROL_CFG_OPEN = !PATROL_CFG_OPEN;
+  localStorage.setItem('cpa-xai-sentry-patrol-cfg', PATROL_CFG_OPEN ? '1' : '0');
+  syncPatrolPanels();
+}
+function togglePatrolLog(){
+  PATROL_LOG_OPEN = !PATROL_LOG_OPEN;
+  localStorage.setItem('cpa-xai-sentry-patrol-log', PATROL_LOG_OPEN ? '1' : '0');
+  syncPatrolPanels();
+}
 function fillPatrolForm(cfg){
   if(PATROL_CFG_DIRTY) return;
   cfg=cfg||{};
@@ -1021,6 +1070,7 @@ function fillPatrolForm(cfg){
   set('pBatch', cfg.patrol_batch_size||50);
   set('pModel', cfg.patrol_model||'grok-4.5');
   set('pProxy', cfg.patrol_proxy_url||'');
+  syncPatrolPanels();
 }
 function markPatrolDirty(){ PATROL_CFG_DIRTY=true; }
 ['pInterval','pTimeout','pConc','pBatch','pModel','pProxy'].forEach(id=>{
@@ -1048,12 +1098,13 @@ async function savePatrolCfg(){
 async function patrolStart(mode){
   try{
     // save current form first so run uses latest knobs
-    await savePatrolCfg();
+    if(PATROL_CFG_OPEN) await savePatrolCfg();
     const r=await j('/patrol/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:mode||'full'})});
+    // when running, auto show progress; keep log closed unless user opened it
     paintPatrol(r.patrol||{});
     toast(mode==='cooldown'?'已启动：仅查冷却号':'已启动：全量巡查（会耗额度）');
     if(PATROL_TIMER) clearInterval(PATROL_TIMER);
-    PATROL_TIMER=setInterval(patrolPoll, 1500);
+    PATROL_TIMER=setInterval(patrolPoll, 1200);
     patrolPoll();
   }catch(e){ toast('巡查启动失败:'+e.message) }
 }
@@ -1070,16 +1121,33 @@ async function patrolPoll(){
 }
 function paintPatrol(p){
   p=p||{};
+  const total=Number(p.total||0);
+  const probed=Number(p.probed||0);
+  const pct=total>0?Math.min(100, Math.round(probed*100/total)):(p.running?0:100);
   const st=document.getElementById('patrolStatus');
   if(st){
     if(p.running){
-      st.textContent='进行中 · 模式 '+(p.mode||'-')+' · 目标 '+(p.total||0)+' · 已探测 '+(p.probed||0)+' · 存活 '+(p.alive||0)+' · 冷却信号 '+(p.cooldown||0)+' · 异常 '+(p.errors||0);
+      st.textContent='进行中 · 模式 '+(p.mode||'-')+' · 目标 '+total+' · 已探测 '+probed+' · 存活 '+(p.alive||0)+' · 冷却信号 '+(p.cooldown||0)+' · 异常 '+(p.errors||0);
     }else{
       st.textContent=(p.message||'空闲')+(p.finished_at?(' · 结束 '+p.finished_at):'');
     }
   }
+  const prog=document.getElementById('patrolProgress');
+  const bar=document.getElementById('patrolBar');
+  const pt=document.getElementById('patrolProgText');
+  const pp=document.getElementById('patrolProgPct');
+  if(prog){
+    // show while running, or briefly after finish when there was work
+    const show=!!p.running || (total>0 && !!p.finished_at);
+    prog.classList.toggle('show', show);
+  }
+  if(bar) bar.style.width=pct+'%';
+  if(pt) pt.textContent=probed+' / '+total+(p.running?' · 进行中':'');
+  if(pp) pp.textContent=pct+'%';
   const box=document.getElementById('patrolLog');
   if(!box) return;
+  // only refresh log content when log panel is open, to keep UI light
+  if(!PATROL_LOG_OPEN) return;
   const logs=p.logs||[];
   if(!logs.length){ box.textContent='暂无巡查日志'; return; }
   box.innerHTML=logs.slice().reverse().slice(0,120).map(l=>{
@@ -1138,6 +1206,7 @@ document.addEventListener('click',function(ev){
 });
 const saved=localStorage.getItem(KEY_LS)||''; if(saved) document.getElementById('cfgKey').value=saved;
 syncMaskBtn();
+syncPatrolPanels();
 refresh(); setInterval(refresh,15000);
 </script>
 </body>

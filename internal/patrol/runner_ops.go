@@ -315,6 +315,32 @@ func (r *Runner) appendLog(auth, label string, code int, level, text, action str
 	}
 }
 
+// bumpPatrolProgress updates live counters for the panel progress bar.
+func bumpPatrolProgress(res Result) {
+	jobMu.Lock()
+	defer jobMu.Unlock()
+	if !jobStatus.Running {
+		return
+	}
+	jobStatus.Probed++
+	if res.Err != "" {
+		jobStatus.Errors++
+		return
+	}
+	if res.StatusCode >= 200 && res.StatusCode < 300 {
+		jobStatus.Alive++
+		return
+	}
+	body := strings.ToLower(res.Body)
+	if res.StatusCode == 429 || res.StatusCode == 402 || strings.Contains(body, "free-usage") || strings.Contains(body, "spending-limit") {
+		jobStatus.Cooldown++
+		return
+	}
+	if res.StatusCode >= 400 {
+		jobStatus.Errors++
+	}
+}
+
 func itoa(n int) string {
 	if n == 0 {
 		return "0"

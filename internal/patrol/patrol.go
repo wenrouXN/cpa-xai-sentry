@@ -55,7 +55,7 @@ type Result struct {
 
 // Run probes targets with limited concurrency. Network errors never trash.
 func (r *Runner) Run(ctx context.Context, targets []Target) []Result {
-	if !r.Cfg.PatrolEnabled && len(targets) == 0 {
+	if len(targets) == 0 {
 		return nil
 	}
 	n := r.Cfg.PatrolConcurrency
@@ -82,22 +82,26 @@ func (r *Runner) Run(ctx context.Context, targets []Target) []Result {
 			mu.Lock()
 			out = append(out, res)
 			mu.Unlock()
+			// live progress for panel progress bar
+			bumpPatrolProgress(res)
 			if res.Err != "" {
 				return
 			}
 			// feed into guard (same policy path)
-			_ = r.Guard.HandleUsage(ctx, guard.UsageEvent{
-				Provider:   t.Provider,
-				AuthIndex:  t.AuthIndex,
-				FileName:   t.FileName,
-				Email:      t.Email,
-				StatusCode: res.StatusCode,
-				Body:       res.Body,
-				Success:    res.StatusCode >= 200 && res.StatusCode < 300,
-				Source:     "patrol",
-				Note:       t.Note,
-				Label:      t.Label,
-			})
+			if r.Guard != nil {
+				_ = r.Guard.HandleUsage(ctx, guard.UsageEvent{
+					Provider:   t.Provider,
+					AuthIndex:  t.AuthIndex,
+					FileName:   t.FileName,
+					Email:      t.Email,
+					StatusCode: res.StatusCode,
+					Body:       res.Body,
+					Success:    res.StatusCode >= 200 && res.StatusCode < 300,
+					Source:     "patrol",
+					Note:       t.Note,
+					Label:      t.Label,
+				})
+			}
 		}()
 	}
 	wg.Wait()
