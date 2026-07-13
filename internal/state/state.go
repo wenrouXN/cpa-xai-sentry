@@ -582,6 +582,43 @@ func (s *Store) SnapshotLogs() []ActionLog {
 	return out
 }
 
+// SnapshotLogsPage returns logs newest-first with offset/limit.
+// offset=0 is the newest page. total is the full log count before paging.
+func (s *Store) SnapshotLogsPage(offset, limit int) (page []ActionLog, total int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	total = len(s.Logs)
+	if total == 0 {
+		return nil, 0
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	// Logs stored oldest→newest; serve newest first
+	// newest index = total-1-offset
+	startNewest := total - 1 - offset
+	if startNewest < 0 {
+		return nil, total
+	}
+	endNewest := startNewest - limit + 1
+	if endNewest < 0 {
+		endNewest = 0
+	}
+	// collect from startNewest down to endNewest inclusive
+	n := startNewest - endNewest + 1
+	page = make([]ActionLog, 0, n)
+	for i := startNewest; i >= endNewest; i-- {
+		page = append(page, s.Logs[i])
+	}
+	return page, total
+}
+
 func (s *Store) ObserveError(key, label, signal, code, sample, auth, file, source string, status int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -5,6 +5,7 @@ import (
 	"html"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1035,8 +1036,64 @@ func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) {
 		Text        string `json:"text"`
 		Level       string `json:"level"` // ok|warn|err|info
 	}
-	out := make([]L, 0)
-	for _, e := range a.State.SnapshotLogs() {
+	// pagination: newest-first. limit default 100, max 500; offset skips newest N.
+	limit := 100
+	offset := 0
+	if v := strings.TrimSpace(r.URL.Query().Get("limit")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			limit = n
+		}
+	}
+	if v := strings.TrimSpace(r.URL.Query().Get("offset")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			offset = n
+		}
+	}
+	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	// when searching, scan a larger newest window then page in-memory
+	scanLimit := limit
+	if q != "" {
+		scanLimit = 2000 // search within retained maxLogs window
+		if offset == 0 {
+			// first page of search still returns `limit` matches
+		}
+	}
+	raw, totalAll := a.State.SnapshotLogsPage(0, scanLimit)
+	if q == "" {
+		raw, totalAll = a.State.SnapshotLogsPage(offset, limit)
+	}
+	// optional text filter
+	filtered := raw
+	if q != "" {
+		filtered = filtered[:0]
+		for _, e := range raw {
+			blob := strings.ToLower(strings.Join([]string{e.Auth, e.Source, e.Signal, e.Action, e.Reason}, " "))
+			if strings.Contains(blob, q) {
+				filtered = append(filtered, e)
+			} else if acc := a.State.Get(e.Auth); acc != nil {
+				lab := strings.ToLower(cpaapi.DisplayName(acc.Email, acc.FileName, acc.AuthIndex))
+				if strings.Contains(lab, q) || strings.Contains(strings.ToLower(acc.Email), q) || strings.Contains(strings.ToLower(acc.FileName), q) {
+					filtered = append(filtered, e)
+				}
+			}
+		}
+		// page filtered results
+		totalAll = len(filtered)
+		if offset > totalAll {
+			offset = totalAll
+		}
+		end := offset + limit
+		if end > totalAll {
+			end = totalAll
+		}
+		if offset < totalAll {
+			filtered = filtered[offset:end]
+		} else {
+			filtered = nil
+		}
+	}
+	out := make([]L, 0, len(filtered))
+	for _, e := range filtered {
 		label := e.Auth
 		if acc := a.State.Get(e.Auth); acc != nil {
 			label = cpaapi.DisplayName(acc.Email, acc.FileName, acc.AuthIndex)
@@ -1053,7 +1110,16 @@ func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) {
 			Action: e.Action, ActionLabel: actL, Reason: reason, Text: text, Level: level,
 		})
 	}
-	writeJSON(w, 200, map[string]any{"logs": out})
+	next := offset + len(out)
+	hasMore := next < totalAll
+	writeJSON(w, 200, map[string]any{
+		"logs": out,
+		"page": map[string]any{
+			"offset": offset, "limit": limit, "returned": len(out),
+			"total": totalAll, "next_offset": next, "has_more": hasMore,
+			"retention": "7d", "cap": 2000,
+		},
+	})
 }
 
 func humanizeReason(reason, sigL, action string) string {

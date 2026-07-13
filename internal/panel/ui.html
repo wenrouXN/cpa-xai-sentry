@@ -214,7 +214,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v1.0.6</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v1.0.7</span></h1>
     </div>
     <div class="top-actions">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -362,6 +362,13 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="card side-log" id="sideLogCard">
     <h2><span>动作日志</span><span class="meta" id="logMeta">实时</span></h2>
     <div id="logbox" class="logbox">-</div>
+    <div class="actions" style="margin-top:8px;justify-content:space-between;align-items:center">
+      <span class="meta" id="logPageMeta"></span>
+      <span class="actions">
+        <button type="button" class="xs" id="btnLogNewer" onclick="loadLogs({reset:true})" title="刷新最新">刷新</button>
+        <button type="button" class="xs" id="btnLogMore" onclick="loadLogs({more:true})" title="加载更早的日志">更早</button>
+      </span>
+    </div>
   </div>
   </div><!-- main-grid -->
 </div>
@@ -369,6 +376,7 @@ select.act{min-width:100px}input.num{width:70px}
 <div class="err-pop" id="errPop" role="dialog" aria-modal="true"></div>
 <script>
 let CFG={}, timer=null, LAST_LOGS=[], LAST_ACCOUNTS=[], ERRORS=[], CURRENT_TAB='accounts';
+let LOG_OFFSET=0, LOG_TOTAL=0, LOG_HAS_MORE=false, LOG_LIMIT=80, LOG_LOADING=false;
 let ERR_RENDERED=false, ERR_SNAPSHOT='';
 let MASKED = localStorage.getItem('cpa-xai-sentry-mask') !== '0'; // default masked like CPAMP
 const SIG_ZH={free_usage_429:'免费额度用尽',spending_limit_402:'消费限额',auth_401:'凭证失效',permission_403:'权限拒绝',http_404:'HTTP 404', 'code:invalid-argument':'参数无效/上下文过长'};
@@ -804,59 +812,94 @@ function formatErrorSample(raw){
   if(s.length>400) s=s.slice(0,400)+'...';
   return {msg:s.split(/[\n\r]/)[0].slice(0,160), pretty:s};
 }
-function renderLogs(logs){
-  LAST_LOGS=logs||[];
+function logLineHTML(e){
+  const level=e.level || (String(e.action||'').includes('fail')||String(e.action||'').includes('error')?'err'
+    :(e.action==='cooldown'||e.action==='candidate'||e.action==='trash'||e.action==='delete'||e.action==='manual_disable'?'warn'
+    :(e.action==='reenable'||e.action==='manual_enable'||e.action==='backfill'||e.action==='auto_backfill'||e.action==='patrol_done'||e.action==='reopen_foreign'?'ok':'info')));
+  const badge=e.action_label||ACT_ZH[e.action]||e.action||'事件';
+  let text=e.text || '';
+  if(!text || (text.indexOf(' · ')>=0 && text.split(' · ').length>=3 && !/因|已将|已恢复|失败|巡查|维护|打开|标记/.test(text))){
+    text=composeLogClient(e);
+  }
+  const htmlText=esc(text).replace(/([a-z0-9._%+\-*]+@[a-z0-9.\-*]+\.[a-z*]{2,})/ig,'<span class="who">$1</span>');
+  return '<div class="ll">'+
+    '<div class="lt">'+esc(e.at||'')+'</div>'+
+    '<div><span class="lb '+level+'">'+esc(badge)+'</span></div>'+
+    '<div class="lm">'+htmlText+'</div>'+
+  '</div>';
+}
+function renderLogs(logs, opt){
+  opt=opt||{};
+  // API returns newest-first already
+  if(!opt.append){
+    LAST_LOGS=logs||[];
+  }
   const box=document.getElementById('logbox');
   if(!box) return;
-  // filter logs by current account search/state selection when possible
   const q=(document.getElementById('q')?.value||'').trim().toLowerCase();
   const stf=(document.getElementById('stateFilter')?.value||'').trim();
-  const accKeys=new Set();
-  (LAST_ACCOUNTS||[]).forEach(a=>{
-    if(a.auth_index) accKeys.add(String(a.auth_index).toLowerCase());
-    if(a.email) accKeys.add(String(a.email).toLowerCase());
-    if(a.file_name) accKeys.add(String(a.file_name).toLowerCase());
-    if(a.display_name) accKeys.add(String(a.display_name).toLowerCase());
-  });
-  let src=LAST_LOGS.slice().reverse();
-  if(q || stf){
-    src=src.filter(e=>{
-      const who=String(e.auth_label||e.auth||'').toLowerCase();
-      const auth=String(e.auth||'').toLowerCase();
-      const text=String(e.text||'').toLowerCase();
-      // if we have filtered accounts, keep logs that match those accounts OR global patrol/tick
-      if(accKeys.size){
-        const hit=[...accKeys].some(k=>k && (who.includes(k)||auth.includes(k)||text.includes(k)));
-        if(hit) return true;
-        // keep global maintenance/patrol lines when searching those keywords
-        if(q && (text.includes(q) || String(e.source||'').includes(q) || String(e.action||'').includes(q))) return true;
-        // if account filter active, drop unrelated account logs
-        if(e.auth || e.auth_label) return false;
-        return !q; // keep generic when only state filter
-      }
-      if(!q) return true;
-      return who.includes(q) || auth.includes(q) || text.includes(q) || String(e.action||'').includes(q) || String(e.source||'').includes(q);
+  // client filter only when account list is filtered (state filter); server handles q via loadLogs
+  let src=LAST_LOGS.slice();
+  if(stf && !q){
+    const accKeys=new Set();
+    (LAST_ACCOUNTS||[]).forEach(a=>{
+      if(a.auth_index) accKeys.add(String(a.auth_index).toLowerCase());
+      if(a.email) accKeys.add(String(a.email).toLowerCase());
+      if(a.file_name) accKeys.add(String(a.file_name).toLowerCase());
     });
-  }
-  const lines=src.slice(0,300).map(e=>{
-    const level=e.level || (String(e.action||'').includes('fail')||String(e.action||'').includes('error')?'err'
-      :(e.action==='cooldown'||e.action==='candidate'||e.action==='trash'||e.action==='delete'||e.action==='manual_disable'?'warn'
-      :(e.action==='reenable'||e.action==='manual_enable'||e.action==='backfill'||e.action==='auto_backfill'||e.action==='patrol_done'?'ok':'info')));
-    const badge=e.action_label||ACT_ZH[e.action]||e.action||'事件';
-    let text=e.text || '';
-    if(!text || (text.indexOf(' · ')>=0 && text.split(' · ').length>=3 && !/因|已将|已恢复|失败|巡查|维护/.test(text))){
-      text=composeLogClient(e);
+    if(accKeys.size){
+      src=src.filter(e=>{
+        const who=String(e.auth_label||e.auth||'').toLowerCase();
+        const auth=String(e.auth||'').toLowerCase();
+        const text=String(e.text||'').toLowerCase();
+        if([...accKeys].some(k=>k && (who.includes(k)||auth.includes(k)||text.includes(k)))) return true;
+        if(!e.auth && !e.auth_label) return true; // global tick lines
+        return false;
+      });
     }
-    const htmlText=esc(text).replace(/([a-z0-9._%+\-*]+@[a-z0-9.\-*]+\.[a-z*]{2,})/ig,'<span class="who">$1</span>');
-    return '<div class="ll">'+
-      '<div class="lt">'+esc(e.at||'')+'</div>'+
-      '<div><span class="lb '+level+'">'+esc(badge)+'</span></div>'+
-      '<div class="lm">'+htmlText+'</div>'+
-    '</div>';
-  });
+  }
+  const lines=src.map(logLineHTML);
   box.innerHTML=lines.join('')||'<div class="empty">暂无匹配日志</div>';
   const meta=document.getElementById('logMeta');
-  if(meta) meta.textContent=(lines.length||0)+'/'+(LAST_LOGS.length||0)+' 条'+(MASKED?' · 脱敏':'')+(q||stf?' · 已筛选':'');
+  if(meta) meta.textContent=(src.length||0)+' 条已加载'+(MASKED?' · 脱敏':'')+(q||stf?' · 筛选':'');
+  const pm=document.getElementById('logPageMeta');
+  if(pm){
+    pm.textContent='共 '+(LOG_TOTAL||0)+' · 上限 2000/7天'+(LOG_HAS_MORE?' · 可加载更早':' · 已到头');
+  }
+  const more=document.getElementById('btnLogMore');
+  if(more) more.disabled=!LOG_HAS_MORE || LOG_LOADING;
+}
+async function loadLogs(opt){
+  opt=opt||{};
+  if(LOG_LOADING) return;
+  LOG_LOADING=true;
+  try{
+    if(opt.reset){ LOG_OFFSET=0; LAST_LOGS=[]; }
+    const q=(document.getElementById('q')?.value||'').trim();
+    const qs=new URLSearchParams({limit:String(LOG_LIMIT), offset:String(opt.more?LOG_OFFSET:0)});
+    if(q) qs.set('q', q);
+    const lg=await j('/logs?'+qs.toString());
+    const page=lg.page||{};
+    const batch=lg.logs||[];
+    LOG_TOTAL=page.total||0;
+    LOG_HAS_MORE=!!page.has_more;
+    if(opt.more){
+      // append older page (already older than current)
+      LAST_LOGS=(LAST_LOGS||[]).concat(batch);
+      LOG_OFFSET=page.next_offset!=null?page.next_offset:(LOG_OFFSET+batch.length);
+    }else{
+      LAST_LOGS=batch;
+      LOG_OFFSET=page.next_offset!=null?page.next_offset:batch.length;
+    }
+    renderLogs(LAST_LOGS);
+  }catch(e){
+    const box=document.getElementById('logbox');
+    if(box) box.innerHTML='<div class="empty">日志加载失败：'+esc(e.message||String(e))+'</div>';
+  }finally{
+    LOG_LOADING=false;
+    const more=document.getElementById('btnLogMore');
+    if(more) more.disabled=!LOG_HAS_MORE;
+  }
 }
 function composeLogClient(e){
   const act=e.action||'';
@@ -897,7 +940,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'1.0.6');
+    document.getElementById('ver').textContent='v'+(st.version||'1.0.7');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -926,10 +969,7 @@ async function refresh(){
     }
     document.getElementById('accMeta').textContent=(st.account_count||0)+' 行';
     LAST_ACCOUNTS=st.accounts||[];
-    try{
-      const lg=await j('/logs'); LAST_LOGS=lg.logs||[];
-      renderLogs(LAST_LOGS);
-    }catch(e){}
+    try{ await loadLogs({reset:true}); }catch(e){}
     try{
       if(!ERRORS || !ERRORS.length || CURRENT_TAB==='errors'){
         const er=await j('/errors'); ERRORS=er.errors||[];

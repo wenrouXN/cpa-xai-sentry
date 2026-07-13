@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.7
+
+### Action log pagination
+- `/logs?limit=&offset=&q=` returns newest-first pages (`page.total/has_more/next_offset`).
+- Panel loads 80 lines first; **更早** loads older pages; search uses server `q`.
+- Log expiry still independent of counters (see below).
+
+
 ## 1.0.6
 
 ### Fixed: false "unowned" reopen on owned cool-downs
@@ -44,6 +52,14 @@
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.0.7
+
+### Action log pagination
+- `/logs?limit=&offset=&q=` returns newest-first pages (`page.total/has_more/next_offset`).
+- Panel loads 80 lines first; **更早** loads older pages; search uses server `q`.
+- Log expiry still independent of counters (see below).
+
 
 ## 1.0.6
 
