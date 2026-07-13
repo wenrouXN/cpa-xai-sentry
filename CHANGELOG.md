@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.11
+
+### Fix: same-tick 「到期恢复」vs「冷却补关」fight
+- Tick order: **recover due cool-downs first**, then CPA file reassert/sync.
+- Do not reassert-close when `recover_at` is already due (account should open).
+- Stops duplicate opposite logs in the same second for one account.
+
+
 ## 1.1.10
 
 ### Patrol summary: count 401/403 as 权限信号
@@ -181,6 +189,14 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.11
+
+### Fix: same-tick 「到期恢复」vs「冷却补关」fight
+- Tick order: **recover due cool-downs first**, then CPA file reassert/sync.
+- Do not reassert-close when `recover_at` is already due (account should open).
+- Stops duplicate opposite logs in the same second for one account.
+
 
 ## 1.1.10
 

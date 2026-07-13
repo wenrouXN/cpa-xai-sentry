@@ -421,13 +421,10 @@ func (g *Guard) tick(ctx context.Context, manual bool) error {
 			}
 		}
 	}
-	// Owned cool-down reassert always; unowned foreign scan only on manual maintenance.
-	if _, err := g.syncDisabledFromCPA(ctx, now, manual); err != nil {
-		g.State.Log(state.ActionLog{Source: "tick", Action: "sync_disabled_failed", Reason: err.Error()})
-	}
-	g.pruneDuplicateAccounts()
-	// closed-loop hygiene: Active must be clean (no residual signal/plugin_auto lock)
-	g.scrubDirtyActiveAccounts()
+	// IMPORTANT order: recover due cool-downs FIRST, then file sync/reassert.
+	// Old order (sync then recover) caused same-tick fights:
+	//   cooldown_reassert (close owned cool-down file) + reenable (open because recover_at due)
+	// which showed as 「到期恢复」and「冷却补关」in the same second.
 	for _, acc := range g.State.AccountsSnapshot() {
 		if acc.RecoverAt.IsZero() || acc.RecoverAt.After(now) {
 			continue
@@ -450,7 +447,7 @@ func (g *Guard) tick(ctx context.Context, manual bool) error {
 				continue
 			}
 		}
-		// closed-loop: cool-down due → clean Active (not Active+plugin_auto leftovers)
+		// closed-loop: cool-down due → Active (streaks retained for ladders)
 		prevSig := acc.LastSignal
 		g.State.ResetToActive(acc.AuthIndex)
 		g.State.Log(state.ActionLog{
@@ -458,6 +455,13 @@ func (g *Guard) tick(ctx context.Context, manual bool) error {
 			Action: "reenable", Reason: "recover_at",
 		})
 	}
+	// Owned cool-down reassert; unowned foreign scan only on manual maintenance.
+	if _, err := g.syncDisabledFromCPA(ctx, now, manual); err != nil {
+		g.State.Log(state.ActionLog{Source: "tick", Action: "sync_disabled_failed", Reason: err.Error()})
+	}
+	g.pruneDuplicateAccounts()
+	// closed-loop hygiene: Active must be clean (no residual signal/plugin_auto lock)
+	g.scrubDirtyActiveAccounts()
 	if g.Trash != nil && g.Cfg.TrashAutoPurge {
 		if _, err := g.Trash.PurgeExpired(now); err != nil {
 			return err
@@ -715,8 +719,17 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time, scanFore
 			forced = ownedFile[authFileBase(f.ID)]
 		}
 		if forced != nil {
-			// Owned cool-down/manual: never open. If CPA file is enabled, re-disable.
+			// Owned cool-down/manual: never open. If CPA file is enabled, re-disable —
+			// BUT not when recover_at is already due (that account should reenable, not re-close).
 			if !f.Disabled {
+				due := !forced.RecoverAt.IsZero() && !forced.RecoverAt.After(now)
+				if due && g.State.CanAutoReenable(forced.AuthIndex) {
+					// leave enabled; reenable path owns this account
+					if name != "" {
+						g.State.UpdateMeta(forced.AuthIndex, authFileBase(name), em, "")
+					}
+					continue
+				}
 				if err := g.CPA.SetDisabled(ctx, name, true); err != nil {
 					g.State.Log(state.ActionLog{Auth: forced.AuthIndex, Source: "tick", Action: "cooldown_reassert_failed", Reason: err.Error()})
 				} else {
