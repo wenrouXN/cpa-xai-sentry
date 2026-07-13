@@ -117,6 +117,8 @@ func (r *Runner) probeOne(ctx context.Context, t Target) Result {
 	// If base already ends with /v1 (common for grok cli-chat-proxy), do NOT prefix paths with /v1 again.
 	// Wrong: https://cli-chat-proxy.grok.com/v1 + /v1/responses => /v1/v1/responses => nginx 404
 	// Right: .../v1 + /responses
+	// Prefer CPA/xAI executor path POST /responses first (Grok CLI chat-proxy + api.x.ai),
+	// then chat/completions fallback.
 	var paths []string
 	if strings.HasSuffix(strings.ToLower(base), "/v1") {
 		paths = []string{"/responses", "/chat/completions"}
@@ -194,10 +196,12 @@ func (r *Runner) postProbe(ctx context.Context, url, model, token string) (int, 
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	// Grok CLI proxy rejects missing/outdated CLI version with 426.
-	req.Header.Set("User-Agent", "GrokCLI/0.1.250")
-	req.Header.Set("X-Grok-CLI-Version", "0.1.250")
-	req.Header.Set("x-grok-cli-version", "0.1.250")
+	// Grok CLI identity required by cli-chat-proxy; missing => HTTP 426 "CLI version (none)".
+	// Values aligned with cpa-xai-quota-guard DefaultProbeCLIVersion / defaultProbeHeaders.
+	const cliVer = "0.2.93"
+	req.Header.Set("User-Agent", "grok-pager/"+cliVer+" grok-shell/"+cliVer+" (linux; x86_64)")
+	req.Header.Set("x-grok-client-version", cliVer)
+	req.Header.Set("x-xai-token-auth", "xai-grok-cli")
 	resp, err := r.HC.Do(req)
 	if err != nil {
 		return 0, "", err
