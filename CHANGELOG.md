@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.15
+
+### Panel layout copy
+- Runtime line `维护每30s · 巡查… · 密钥` next to version badge.
+- Schedule `巡查：上次… · 下次…` under 巡查中心 actions.
+- Unified wording: 巡检 → 巡查.
+
+
 ## 1.1.14
 
 ### Patrol probe
@@ -216,6 +224,14 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.15
+
+### Panel layout copy
+- Runtime line `维护每30s · 巡查… · 密钥` next to version badge.
+- Schedule `巡查：上次… · 下次…` under 巡查中心 actions.
+- Unified wording: 巡检 → 巡查.
+
 
 ## 1.1.14
 

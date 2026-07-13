@@ -207,6 +207,9 @@ tr:hover td{background:#f5f9ff}
 .tabpanel[hidden]{display:none!important}
 select.act{min-width:100px}input.num{width:70px}
 .muted{color:var(--muted)}
+.ver-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px}
+.ver-meta{font-size:11.5px;color:var(--muted);font-weight:600;letter-spacing:.01em}
+.patrol-schedule{margin:8px 0 0;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:#f8fafc;font-size:12px;color:var(--muted)}
 </style>
 </head>
 <body>
@@ -214,7 +217,8 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.14</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.15</span></h1>
+      <div class="ver-line"><span class="ver-meta" id="cfgLine">维护每30s · 巡查关 · 密钥—</span></div>
     </div>
     <div class="top-actions">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -247,17 +251,13 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="card">
     <h2><span>总览</span><span class="meta" id="updatedAt">-</span></h2>
     <div class="kpis" id="kpis"></div>
-    <div class="overview-row">
-      <span class="meta" id="cfgLine"></span>
-      <span class="meta" id="patrolSchedule">巡检：上次 - · 下次 -</span>
-    </div>
   </div>
 
   <div class="main-grid">
   <div class="main-left">
   <div class="tabs" role="tablist">
     <button type="button" class="active" data-tab="accounts" onclick="switchTab('accounts')">账号实况</button>
-    <button type="button" data-tab="patrol" onclick="switchTab('patrol')">巡检</button>
+    <button type="button" data-tab="patrol" onclick="switchTab('patrol')">巡查</button>
     <button type="button" data-tab="errors" onclick="switchTab('errors')">错误策略</button>
     <button type="button" data-tab="trash" onclick="switchTab('trash')">垃圾箱</button>
   </div>
@@ -304,11 +304,11 @@ select.act{min-width:100px}input.num{width:70px}
   </div>
 
   <div id="tab-patrol" class="tabpanel card" hidden>
-    <h2><span>巡检任务</span><span class="meta" id="patrolMeta">—</span></h2>
+    <h2><span>巡查任务</span><span class="meta" id="patrolMeta">—</span></h2>
     <div class="patrol-box" style="margin-top:0">
       <div class="patrol-head">
         <div>
-          <b>巡检中心</b>
+          <b>巡查中心</b>
           <span class="meta">会真实请求 xAI，按返回处置 · 全量=哨兵未禁用（可接流）· 仅冷却=哨兵冷却中</span>
         </div>
         <div class="row">
@@ -317,6 +317,7 @@ select.act{min-width:100px}input.num{width:70px}
           <button type="button" class="patrol-toggle" id="btnPatrolCfg" onclick="togglePatrolCfg()" title="展开/收起巡查参数">配置 ▾</button>
         </div>
       </div>
+      <div class="patrol-schedule" id="patrolSchedule">巡查：上次 - · 下次 - · 定时巡查已关闭</div>
       <div class="patrol-cfg" id="patrolCfgPanel">
         <div class="patrol-grid">
           <label>周期(秒)<input id="pInterval" type="number" min="60" step="60" value="3600"/></label>
@@ -340,7 +341,7 @@ select.act{min-width:100px}input.num{width:70px}
         </div>
       </div>
     </div>
-    <div class="job-list" id="patrolJobs"><div class="meta" style="padding:8px">暂无巡检任务记录</div></div>
+    <div class="job-list" id="patrolJobs"><div class="meta" style="padding:8px">暂无巡查任务记录</div></div>
   </div>
 
   <div id="tab-errors" class="tabpanel card" hidden>
@@ -972,7 +973,7 @@ async function refresh(){
     ]);
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'1.1.14');
+    document.getElementById('ver').textContent='v'+(st.version||'1.1.15');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -1470,7 +1471,7 @@ function paintPatrol(p, history){
     const last=p.last_patrol_at||p.finished_at||p.started_at||'-';
     const next=p.next_patrol_at||'-';
     const hint=p.next_patrol_hint?(' · '+p.next_patrol_hint):'';
-    sch.textContent='巡检：上次 '+last+' · 下次 '+next+hint;
+    sch.textContent='巡查：上次 '+last+' · 下次 '+next+hint;
   }
   const total=Number(p.total||0);
   const probed=Number(p.probed||0);
@@ -1521,7 +1522,7 @@ function paintPatrol(p, history){
     seen.add(k); uniq.push(j);
   });
   if(!uniq.length){
-    box.innerHTML='<div class="meta" style="padding:8px">暂无巡检任务 · 每次任务可点开看该次巡检日志（与右侧动作日志分开）</div>';
+    box.innerHTML='<div class="meta" style="padding:8px">暂无巡查任务 · 每次任务可点开看该次巡查日志（与右侧动作日志分开）</div>';
     return;
   }
   if(!window.PATROL_OPEN_JOBS) window.PATROL_OPEN_JOBS=new Set();
