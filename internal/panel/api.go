@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openclaw-local/cpa-xai-sentry/internal/cpaapi"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/cpamp"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/errorsig"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/guard"
@@ -95,11 +96,21 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	stateFilter := strings.TrimSpace(r.URL.Query().Get("state"))
 	signalFilter := strings.TrimSpace(r.URL.Query().Get("signal"))
 	actionFilter := strings.TrimSpace(r.URL.Query().Get("action"))
+	// Best-effort resolve identities for display.
+	if a.Guard != nil && a.Guard.Resolver != nil {
+		_ = a.Guard.Resolver.Ensure(r.Context())
+		for _, acc := range a.State.AccountsSnapshot() {
+			if id, ok := a.Guard.Resolver.Resolve(acc.AuthIndex, acc.FileName, acc.Email); ok {
+				a.State.UpdateMeta(acc.AuthIndex, id.FileName, id.Email, "")
+			}
+		}
+	}
 	accs := a.State.AccountsSnapshot()
 	type row struct {
 		AuthIndex       string         `json:"auth_index"`
 		FileName        string         `json:"file_name"`
 		Email           string         `json:"email"`
+		DisplayName     string         `json:"display_name"`
 		Tier            string         `json:"tier"`
 		State           string         `json:"state"`
 		Signal          string         `json:"last_signal"`
@@ -164,18 +175,19 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		if actionFilter != "" && act != actionFilter {
 			continue
 		}
+		display := cpaapi.DisplayName(acc.Email, acc.FileName, acc.AuthIndex)
 		if q != "" {
-			blob := strings.ToLower(acc.Email + " " + acc.FileName + " " + acc.AuthIndex + " " + acc.Tier + " " + acc.LastSignal + " " + act + " " + reason)
+			blob := strings.ToLower(display + " " + acc.Email + " " + acc.FileName + " " + acc.AuthIndex + " " + acc.Tier + " " + acc.LastSignal + " " + act + " " + reason)
 			if !strings.Contains(blob, q) {
 				continue
 			}
 		}
 		var ra, ua any
 		if !acc.RecoverAt.IsZero() {
-			ra = acc.RecoverAt.UTC().Format(time.RFC3339)
+			ra = acc.RecoverAt.In(time.FixedZone("CST", 8*3600)).Format("01-02 15:04")
 		}
 		if !acc.UpdatedAt.IsZero() {
-			ua = acc.UpdatedAt.UTC().Format(time.RFC3339)
+			ua = acc.UpdatedAt.In(time.FixedZone("CST", 8*3600)).Format("01-02 15:04:05")
 		}
 		streakSum := ""
 		if len(acc.Streaks) > 0 {
@@ -188,7 +200,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			streakSum = strings.Join(parts, " ")
 		}
 		rows = append(rows, row{
-			AuthIndex: acc.AuthIndex, FileName: acc.FileName, Email: acc.Email,
+			AuthIndex: acc.AuthIndex, FileName: acc.FileName, Email: acc.Email, DisplayName: display,
 			Tier: acc.Tier, State: string(acc.State), Signal: acc.LastSignal,
 			DisableSource: acc.DisableSource, Streaks: acc.Streaks, StreakSummary: streakSum,
 			SuggestedAction: act, Reason: reason, RecoverAt: ra, UpdatedAt: ua,
@@ -197,7 +209,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	m := a.State.MetricsSnapshot()
 	writeJSON(w, 200, map[string]any{
 		"plugin":          "cpa-xai-sentry",
-		"version":         "0.2.0",
+		"version":         "0.2.1",
 		"mode":            modeOf(*a.Cfg),
 		"mode_label":      modeLabel(modeOf(*a.Cfg)),
 		"summary":         summary,
@@ -252,7 +264,7 @@ func modeLabel(mode string) string {
 	case "observe":
 		return "仅观察"
 	case "safe-guard":
-		return "安全防护"
+		return "安全防护（自动冷却+候选，不自动进垃圾箱）"
 	case "cooldown":
 		return "自动冷却"
 	case "auto_trash":
@@ -408,7 +420,7 @@ func (a *API) handleRunTick(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.2.0",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.2.1",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 	})
 }

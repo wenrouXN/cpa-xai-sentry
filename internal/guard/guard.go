@@ -16,16 +16,20 @@ import (
 )
 
 type Guard struct {
-	Cfg   sentrycfg.Config
-	State *state.Store
-	Trash *trash.Store
-	CPA   *cpaapi.Client
+	Cfg      sentrycfg.Config
+	State    *state.Store
+	Trash    *trash.Store
+	CPA      *cpaapi.Client
+	Resolver *cpaapi.Resolver
 	// hooks for tests
 	Now func() time.Time
 }
 
 func New(cfg sentrycfg.Config, st *state.Store, tr *trash.Store, cpa *cpaapi.Client) *Guard {
 	g := &Guard{Cfg: cfg.Validate(), State: st, Trash: tr, CPA: cpa, Now: time.Now}
+	if cpa != nil {
+		g.Resolver = cpaapi.NewResolver(cpa)
+	}
 	if st != nil {
 		builtins := map[string]state.ErrorPolicy{}
 		for k, p := range errorsig.BuiltinDefaults() {
@@ -38,6 +42,39 @@ func New(cfg sentrycfg.Config, st *state.Store, tr *trash.Store, cpa *cpaapi.Cli
 		st.EnsureBuiltinPolicies(builtins)
 	}
 	return g
+}
+
+func (g *Guard) enrichIdentity(ctx context.Context, ev *UsageEvent) {
+	if ev == nil {
+		return
+	}
+	// Prefer readable file name over opaque hash.
+	if cpaapi.LooksLikeOpaqueID(ev.FileName) && !cpaapi.LooksLikeOpaqueID(ev.AuthIndex) && strings.Contains(ev.AuthIndex, "@") {
+		ev.FileName = ev.AuthIndex
+	}
+	if g.Resolver != nil {
+		_ = g.Resolver.Ensure(ctx)
+		if id, ok := g.Resolver.Resolve(ev.AuthIndex, ev.FileName, ev.Email); ok {
+			if id.FileName != "" {
+				ev.FileName = id.FileName
+			}
+			if id.Email != "" {
+				ev.Email = id.Email
+			}
+			if ev.Note == "" && id.Note != "" {
+				ev.Note = id.Note
+			}
+			if ev.Label == "" && id.Label != "" {
+				ev.Label = id.Label
+			}
+		}
+	}
+	if ev.Email == "" {
+		ev.Email = cpaapi.EmailFromFileName(ev.FileName)
+	}
+	if ev.Email == "" {
+		ev.Email = cpaapi.EmailFromFileName(ev.AuthIndex)
+	}
 }
 
 func IsXAI(provider, fileName string) bool {
@@ -64,7 +101,8 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 	if !g.Cfg.Enabled || !g.Cfg.SentryEnabled {
 		return nil
 	}
-	if !IsXAI(ev.Provider, ev.FileName) {
+	g.enrichIdentity(ctx, &ev)
+	if !IsXAI(ev.Provider, ev.FileName) && !IsXAI(ev.Provider, ev.AuthIndex) && !IsXAI(ev.Provider, ev.Email) {
 		return nil
 	}
 	if ev.Source == "" {
@@ -190,10 +228,19 @@ func (g *Guard) applyCooldown(ctx context.Context, ev UsageEvent, res match.Resu
 	g.State.SetAccountState(ev.AuthIndex, st, "plugin_auto")
 	g.State.SetRecoverAt(ev.AuthIndex, recoverAt)
 	name := ev.FileName
-	if name == "" {
-		name = acc.FileName
+	if name == "" || cpaapi.LooksLikeOpaqueID(name) {
+		if acc != nil && acc.FileName != "" && !cpaapi.LooksLikeOpaqueID(acc.FileName) {
+			name = acc.FileName
+		}
 	}
-	if g.CPA != nil && name != "" {
+	if (name == "" || cpaapi.LooksLikeOpaqueID(name)) && g.Resolver != nil {
+		_ = g.Resolver.Ensure(ctx)
+		if id, ok := g.Resolver.Resolve(ev.AuthIndex, ev.FileName, ev.Email); ok && id.FileName != "" {
+			name = id.FileName
+			g.State.UpdateMeta(ev.AuthIndex, id.FileName, id.Email, "")
+		}
+	}
+	if g.CPA != nil && name != "" && !cpaapi.LooksLikeOpaqueID(name) {
 		if err := g.CPA.SetDisabled(ctx, name, true); err != nil {
 			g.State.Log(state.ActionLog{
 				Auth: ev.AuthIndex, Source: ev.Source, Signal: string(res.Signal),
@@ -214,12 +261,24 @@ func (g *Guard) applyTrash(ctx context.Context, ev UsageEvent, res match.Result,
 		return nil
 	}
 	name := ev.FileName
-	if name == "" {
-		name = acc.FileName
+	if name == "" || cpaapi.LooksLikeOpaqueID(name) {
+		if acc != nil && acc.FileName != "" && !cpaapi.LooksLikeOpaqueID(acc.FileName) {
+			name = acc.FileName
+		}
+	}
+	if (name == "" || cpaapi.LooksLikeOpaqueID(name)) && g.Resolver != nil {
+		_ = g.Resolver.Ensure(ctx)
+		if id, ok := g.Resolver.Resolve(ev.AuthIndex, ev.FileName, ev.Email); ok && id.FileName != "" {
+			name = id.FileName
+			if ev.Email == "" {
+				ev.Email = id.Email
+			}
+			g.State.UpdateMeta(ev.AuthIndex, id.FileName, id.Email, "")
+		}
 	}
 	var raw []byte
 	var err error
-	if g.CPA != nil && name != "" {
+	if g.CPA != nil && name != "" && !cpaapi.LooksLikeOpaqueID(name) {
 		raw, err = g.CPA.ReadAuthFileFromDir(name)
 		if err != nil {
 			g.State.Log(state.ActionLog{
@@ -249,12 +308,21 @@ func (g *Guard) applyTrash(ctx context.Context, ev UsageEvent, res match.Result,
 	})
 }
 
-// Tick recovers cooldowns and auto-purges trash.
+// Tick recovers cooldowns, refreshes identity metadata, and auto-purges trash.
 func (g *Guard) Tick(ctx context.Context) error {
 	if !g.Cfg.Enabled || !g.Cfg.SentryEnabled {
 		return nil
 	}
 	now := g.Now()
+	// Best-effort identity refresh so panel can show email/file even for opaque auth_index.
+	if g.Resolver != nil {
+		_ = g.Resolver.Ensure(ctx)
+		for _, acc := range g.State.AccountsSnapshot() {
+			if id, ok := g.Resolver.Resolve(acc.AuthIndex, acc.FileName, acc.Email); ok {
+				g.State.UpdateMeta(acc.AuthIndex, id.FileName, id.Email, "")
+			}
+		}
+	}
 	for _, acc := range g.State.AccountsSnapshot() {
 		if acc.RecoverAt.IsZero() || acc.RecoverAt.After(now) {
 			continue
@@ -263,7 +331,13 @@ func (g *Guard) Tick(ctx context.Context) error {
 			continue
 		}
 		name := acc.FileName
-		if g.CPA != nil && name != "" {
+		if (name == "" || cpaapi.LooksLikeOpaqueID(name)) && g.Resolver != nil {
+			if id, ok := g.Resolver.Resolve(acc.AuthIndex, acc.FileName, acc.Email); ok && id.FileName != "" {
+				name = id.FileName
+				g.State.UpdateMeta(acc.AuthIndex, id.FileName, id.Email, "")
+			}
+		}
+		if g.CPA != nil && name != "" && !cpaapi.LooksLikeOpaqueID(name) {
 			if err := g.CPA.SetDisabled(ctx, name, false); err != nil {
 				g.State.Log(state.ActionLog{
 					Auth: acc.AuthIndex, Source: "tick", Action: "reenable_failed", Reason: err.Error(),

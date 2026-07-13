@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -341,16 +342,34 @@ func (s *Store) UpdateMeta(authIndex, fileName, email, tierName string) {
 		acc = &Account{AuthIndex: authIndex, State: Active, Streaks: map[string]int{}}
 		s.Accounts[authIndex] = acc
 	}
-	if fileName != "" && acc.FileName == "" {
-		acc.FileName = fileName
+	// Prefer human-readable filename/email over opaque hash placeholders.
+	if fileName != "" {
+		if acc.FileName == "" || isOpaqueMeta(acc.FileName) || (!isOpaqueMeta(fileName) && acc.FileName != fileName && strings.Contains(fileName, "@")) {
+			acc.FileName = fileName
+		} else if acc.FileName == authIndex && fileName != authIndex {
+			acc.FileName = fileName
+		}
 	}
-	if email != "" && acc.Email == "" {
+	if email != "" {
 		acc.Email = email
 	}
-	if tierName != "" && acc.Tier == "" {
+	if tierName != "" && (acc.Tier == "" || acc.Tier == "unknown") {
 		acc.Tier = tierName
 	}
 	acc.UpdatedAt = time.Now()
+}
+
+func isOpaqueMeta(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.Contains(s, "@") || strings.HasSuffix(strings.ToLower(s), ".json") || strings.HasPrefix(strings.ToLower(s), "xai-") {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') || c == '-') {
+			return false
+		}
+	}
+	return len(s) >= 12
 }
 
 func (s *Store) SnapshotLogs() []ActionLog {

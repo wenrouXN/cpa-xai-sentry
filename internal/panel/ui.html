@@ -3,51 +3,86 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>XAI 哨兵 · 账号巡检</title>
+<title>XAI 哨兵</title>
 <style>
-:root{--bg:#eff2f7;--accent:#409eff;--text:#2c3e50;--muted:#8b95a6;--reg:#5f6c7b;--card:#fffffff2;--border:#0f172a14;--ok:#67c23a;--warn:#e6a23c;--danger:#f56c6c;--font:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
-*{box-sizing:border-box}body{margin:0;font-family:var(--font);color:var(--text);background:linear-gradient(120deg,#f0f7ff,#e7f2ff 50%,#edf7ff);font-size:12.5px}
-.wrap{max-width:1440px;margin:0 auto;padding:12px 14px 28px}
-.top{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start;margin-bottom:8px}
+:root{
+  --bg:#eff2f7;--accent:#409eff;--text:#2c3e50;--muted:#8b95a6;--reg:#5f6c7b;
+  --card:#fffffff2;--border:#0f172a14;--ok:#67c23a;--warn:#e6a23c;--danger:#f56c6c;
+  --font:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:var(--font);color:var(--text);background:linear-gradient(120deg,#f0f7ff,#e7f2ff 50%,#edf7ff);font-size:12.5px}
+.wrap{max-width:1480px;margin:0 auto;padding:12px 14px 24px}
+.top{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start;margin-bottom:10px}
 h1{font-size:16px;margin:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .eyebrow{font-size:11px;color:var(--accent);font-weight:700;letter-spacing:.04em}
-.sub{color:var(--muted);font-size:11.5px;margin-top:2px;max-width:860px;line-height:1.45}
+.sub{color:var(--muted);font-size:11.5px;margin-top:3px;max-width:920px;line-height:1.45}
 .row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .badge{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;border:1px solid #409eff33;background:#409eff14;color:#337ecc}
-.badge.ok{background:#f0f9eb;color:#529b2e;border-color:#c2e7b0}.badge.warn{background:#fdf6ec;color:#b88230;border-color:#f5dab1}.badge.danger{background:#fef0f0;color:#c45656;border-color:#fbc4c4}.badge.off{background:#f4f4f5;color:#909399;border-color:#dcdfe6}
+.badge.ok{background:#f0f9eb;color:#529b2e;border-color:#c2e7b0}
+.badge.warn{background:#fdf6ec;color:#b88230;border-color:#f5dab1}
+.badge.danger{background:#fef0f0;color:#c45656;border-color:#fbc4c4}
+.badge.off{background:#f4f4f5;color:#909399;border-color:#dcdfe6}
 .dot{width:7px;height:7px;border-radius:50%;background:currentColor}
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:8px;backdrop-filter:blur(10px)}
 .card h2{font-size:12.5px;margin:0 0 8px;display:flex;justify-content:space-between;gap:8px;align-items:center}
-.kpis{display:grid;grid-template-columns:repeat(10,minmax(0,1fr));gap:6px}
-@media(max-width:1200px){.kpis{grid-template-columns:repeat(5,1fr)}}
-@media(max-width:700px){.kpis{grid-template-columns:repeat(3,1fr)}}
-.kpi{border:1px solid var(--border);border-radius:10px;padding:7px 8px;background:#fff;min-height:58px}
+.kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px}
+@media(max-width:900px){.kpis{grid-template-columns:repeat(3,1fr)}}
+.kpi{border:1px solid var(--border);border-radius:10px;padding:7px 8px;background:#fff;min-height:56px}
 .kpi b{display:block;font-size:18px;line-height:1.1;margin:2px 0;font-variant-numeric:tabular-nums}
 .kpi span{color:var(--muted);font-size:10.5px;font-weight:700}
-.kpi.accent{border-color:#409eff55;background:linear-gradient(160deg,#ecf5ff,#fff)}.kpi.warn{border-color:#e6a23c55;background:linear-gradient(160deg,#fdf6ec,#fff)}.kpi.danger{border-color:#f56c6c55;background:linear-gradient(160deg,#fef0f0,#fff)}.kpi.ok{border-color:#67c23a55;background:linear-gradient(160deg,#f0f9eb,#fff)}
-button,input,select{font:inherit}button{appearance:none;border:1px solid var(--border);background:#fff;color:var(--text);border-radius:8px;padding:5px 9px;cursor:pointer;line-height:1.2}
-button.primary{background:var(--accent);border-color:#337ecc;color:#fff}button.warn{background:#fdf6ec;border-color:#f5dab1;color:#b88230}button.danger{background:var(--danger);border-color:#c45656;color:#fff}
-button.on{background:#67c23a;border-color:#529b2e;color:#fff}button.off{background:#fff;border-color:#fbc4c4;color:#c45656}button.xs{padding:3px 7px;font-size:11px;border-radius:7px}
+.kpi.accent{border-color:#409eff55;background:linear-gradient(160deg,#ecf5ff,#fff)}
+.kpi.warn{border-color:#e6a23c55;background:linear-gradient(160deg,#fdf6ec,#fff)}
+.kpi.danger{border-color:#f56c6c55;background:linear-gradient(160deg,#fef0f0,#fff)}
+.kpi.ok{border-color:#67c23a55;background:linear-gradient(160deg,#f0f9eb,#fff)}
+button,input,select{font:inherit}
+button{appearance:none;border:1px solid var(--border);background:#fff;color:var(--text);border-radius:8px;padding:5px 9px;cursor:pointer;line-height:1.2}
+button.primary{background:var(--accent);border-color:#337ecc;color:#fff}
+button.warn{background:#fdf6ec;border-color:#f5dab1;color:#b88230}
+button.danger{background:var(--danger);border-color:#c45656;color:#fff}
+button.xs{padding:3px 7px;font-size:11px;border-radius:7px}
 input,select{border:1px solid var(--border);border-radius:8px;padding:5px 8px;background:#fff;min-width:0}
 .toolbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 6px;padding:7px 8px;background:linear-gradient(180deg,#f6faff,#fff);border:1px solid var(--border);border-radius:10px}
-.table-wrap{max-height:min(56vh,560px);overflow:auto;border:1px solid var(--border);border-radius:10px;background:#fff}
-table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--border);vertical-align:top}
-th{position:sticky;top:0;background:#f8fbff;color:var(--muted);font-weight:700;font-size:11px;z-index:1}tr:hover td{background:#409eff0c}
-.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px}.muted{color:var(--muted)}
+.table-wrap{max-height:min(58vh,600px);overflow:auto;border:1px solid var(--border);border-radius:10px;background:#fff}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:6px 7px;border-bottom:1px solid var(--border);vertical-align:top}
+th{position:sticky;top:0;background:#f8fbff;color:var(--muted);font-weight:700;font-size:11px;z-index:1}
+tr:hover td{background:#409eff0c}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px}
+.muted{color:var(--muted)}
 .tag{display:inline-block;padding:1px 6px;border-radius:999px;font-size:10.5px;border:1px solid var(--border);background:#f8fafc;white-space:nowrap}
-.tag.active,.tag.ok{background:#f0f9eb;color:#529b2e;border-color:#c2e7b0}.tag.cooldown,.tag.wait{background:#fdf6ec;color:#b88230;border-color:#f5dab1}
-.tag.candidate,.tag.trash{background:#fef0f0;color:#c45656;border-color:#fbc4c4}.tag.manual,.tag.review{background:#f4f4f5;color:#606266}
+.tag.active,.tag.ok{background:#f0f9eb;color:#529b2e;border-color:#c2e7b0}
+.tag.cooldown,.tag.wait{background:#fdf6ec;color:#b88230;border-color:#f5dab1}
+.tag.candidate,.tag.trash{background:#fef0f0;color:#c45656;border-color:#fbc4c4}
+.tag.manual,.tag.review{background:#f4f4f5;color:#606266}
 .tag.observe,.tag.none{background:#ecf5ff;color:#337ecc;border-color:#b3d8ff}
-.chips{display:flex;gap:5px;flex-wrap:wrap}.chip{border:1px solid var(--border);background:#fff;border-radius:999px;padding:2px 8px;font-size:11px}.chip b{color:var(--accent)}
-.grid2{display:grid;grid-template-columns:1.45fr .9fr;gap:8px}@media(max-width:980px){.grid2{grid-template-columns:1fr}}
-.swbar{display:flex;gap:6px;flex-wrap:wrap}.sw{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:999px;padding:3px 8px;background:#fff}.sw label{font-size:11px;color:var(--reg)}
+.chips{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}
+.chip{border:1px solid var(--border);background:#fff;border-radius:999px;padding:2px 8px;font-size:11px}
+.chip b{color:var(--accent)}
+.reason{color:var(--reg);font-size:11px;line-height:1.35;max-width:260px}
+.meta{color:var(--muted);font-size:11px}
+.actions{display:flex;gap:4px;flex-wrap:wrap}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 8px}
+.tabs button.active{background:var(--accent);border-color:#337ecc;color:#fff}
+.help{background:#f5f9ff;border:1px solid #b3d8ff;border-radius:10px;padding:8px 10px;color:#337ecc;font-size:11.5px;line-height:1.5;margin-bottom:8px}
 .toast{position:fixed;right:12px;top:12px;background:#fff;border:1px solid var(--border);padding:8px 12px;border-radius:10px;display:none;box-shadow:0 8px 24px #0f172a1a;z-index:20;max-width:420px}
-.logbox{max-height:200px;overflow:auto;background:#0b1220;color:#dbe7ff;border-radius:10px;padding:8px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.45}
+.logbox{max-height:min(65vh,640px);overflow:auto;background:#0b1220;color:#dbe7ff;border-radius:10px;padding:8px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.45}
 .logbox .l-act{color:#79bbff}.logbox .l-sig{color:#fbbf24}.logbox .l-err{color:#f87171}
-.pending{display:flex;gap:8px;flex-wrap:wrap}.pending .box{flex:1;min-width:110px;border:1px dashed #409eff55;border-radius:10px;padding:7px 8px;background:#f5f9ff}.pending b{display:block;font-size:16px}
-.reason{color:var(--reg);font-size:11px;line-height:1.3;max-width:240px}.meta{color:var(--muted);font-size:11px}.actions{display:flex;gap:4px;flex-wrap:wrap}
-.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 8px}.tabs button.active{background:var(--accent);border-color:#337ecc;color:#fff}
-.help{background:#f5f9ff;border:1px solid #b3d8ff;border-radius:10px;padding:8px 10px;color:#337ecc;font-size:11.5px;line-height:1.45;margin-bottom:8px}
+/* real sliding switches */
+.swbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:8px}
+.sw{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:999px;padding:5px 10px 5px 8px;background:#fff;user-select:none}
+.sw .lbl{font-size:11.5px;color:var(--reg);font-weight:600}
+.switch{position:relative;width:40px;height:22px;flex:0 0 auto}
+.switch input{opacity:0;width:0;height:0;position:absolute}
+.slider{position:absolute;cursor:pointer;inset:0;background:#dcdfe6;border-radius:999px;transition:.18s}
+.slider:before{position:absolute;content:"";height:16px;width:16px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.18s;box-shadow:0 1px 3px #0003}
+.switch input:checked+.slider{background:var(--ok)}
+.switch input:checked+.slider:before{transform:translateX(18px)}
+.switch.danger input:checked+.slider{background:var(--danger)}
+.preset-hint{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.4}
+.acc-name{font-weight:700;font-size:12.5px;color:var(--text)}
+.acc-sub{color:var(--muted);font-size:11px;margin-top:2px;word-break:break-all}
+.tabpanel[hidden]{display:none!important}
 select.act{min-width:100px}input.num{width:70px}
 </style>
 </head>
@@ -56,86 +91,118 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">XAI 账号巡检 / 动态错误管控</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.2.0</span> <span id="modeBadge" class="badge">模式</span></h1>
-      <div class="sub">对齐 CPAMP Codex 巡检 + quota-guard 运维密度：动态采集错误 → 每错误独立策略；支持 CPAMP 今日用量回补。破坏性操作需确认。</div>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.2.1</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <div class="sub">观察用量错误 → 按策略冷却/候选/垃圾箱。默认仅观察；「安全防护」= 自动冷却 + 自动候选，<b>不会</b>自动进垃圾箱。</div>
     </div>
     <div class="row">
       <input id="cfgKey" type="password" placeholder="管理密钥 X-Management-Key" style="width:170px"/>
       <button class="xs" onclick="saveKey()">保存密钥</button>
       <button class="xs" onclick="refresh()">刷新</button>
-      <button class="xs primary" onclick="runTick()" title="周期任务：恢复到期冷却 + 清理过期垃圾箱">执行周期任务</button>
-      <button class="xs warn" onclick="backfill()" title="从 CPAMP 拉今日 xAI 汇总写入用量地板">CPAMP 回补</button>
-      <button class="xs" onclick="applyPreset('safe-guard')">安全防护</button>
+      <button class="xs primary" onclick="runTick()" title="恢复到期冷却 + 清理过期垃圾箱；不是主动巡检">执行周期任务</button>
       <button class="xs" onclick="applyPreset('observe')">仅观察</button>
+      <button class="xs warn" onclick="applyPreset('safe-guard')" title="打开自动冷却+自动候选；仍不自动进垃圾箱">安全防护</button>
     </div>
   </div>
 
   <div class="help" id="helpBox">
-    <b>周期任务</b>＝到期自动恢复冷却账号 + 清理过期垃圾箱，<b>不是</b>主动巡检。<b>CPAMP 回补</b>＝从 Manager Plus 拉今日 xAI 调用/Token 汇总做对照地板。<b>错误策略</b>＝运行中动态收集错误，可对每个错误单独设：仅观察 / 冷却 / 候选 / 进垃圾箱、连续次数、冷却秒数。
+    <b>周期任务</b>：到期自动恢复冷却账号 + 清理过期垃圾箱（不是主动巡检）。
+    <b>CPAMP</b>：若已配置地址和密钥，启动后会自动回补今日 xAI 用量；未配置则跳过。
+    <b>安全防护</b>：自动冷却 + 自动候选，仍禁止自动进垃圾箱；进垃圾箱需人工确认或单独打开「自动垃圾箱」。
   </div>
 
   <div class="card">
-    <h2><span>巡检集合 / 建议动作 / 回补</span><span class="meta" id="updatedAt">—</span></h2>
+    <h2><span>总览</span><span class="meta" id="updatedAt">—</span></h2>
     <div class="kpis" id="kpis"></div>
-    <div class="pending" id="pending" style="margin-top:8px"></div>
-    <div class="chips" id="signalChips" style="margin-top:8px"></div>
-    <div class="swbar" style="margin-top:8px">
-      <div class="sw"><label>哨兵总开关</label><button id="swSentry" class="xs" onclick="toggle('sentry_enabled')">—</button></div>
-      <div class="sw"><label>自动冷却</label><button id="swCool" class="xs" onclick="toggle('auto_cooldown')">—</button></div>
-      <div class="sw"><label>自动候选</label><button id="swCand" class="xs" onclick="toggle('auto_candidate')">—</button></div>
-      <div class="sw"><label>自动垃圾箱</label><button id="swDel" class="xs" onclick="toggle('auto_delete')">—</button></div>
-      <div class="sw"><label>定时巡查</label><button id="swPatrol" class="xs" onclick="toggle('patrol_enabled')">—</button></div>
+    <div class="chips" id="signalChips"></div>
+    <div class="swbar">
+      <label class="sw"><span class="lbl">哨兵总开关</span>
+        <span class="switch"><input id="swSentry" type="checkbox" onchange="toggle('sentry_enabled',this.checked)"/><span class="slider"></span></span>
+      </label>
+      <label class="sw"><span class="lbl">自动冷却</span>
+        <span class="switch"><input id="swCool" type="checkbox" onchange="toggle('auto_cooldown',this.checked)"/><span class="slider"></span></span>
+      </label>
+      <label class="sw"><span class="lbl">自动候选</span>
+        <span class="switch"><input id="swCand" type="checkbox" onchange="toggle('auto_candidate',this.checked)"/><span class="slider"></span></span>
+      </label>
+      <label class="sw"><span class="lbl">自动垃圾箱</span>
+        <span class="switch danger"><input id="swDel" type="checkbox" onchange="toggle('auto_delete',this.checked)"/><span class="slider"></span></span>
+      </label>
+      <label class="sw"><span class="lbl">定时巡查</span>
+        <span class="switch"><input id="swPatrol" type="checkbox" onchange="toggle('patrol_enabled',this.checked)"/><span class="slider"></span></span>
+      </label>
       <span class="meta" id="cfgLine"></span>
     </div>
-    <div class="meta" id="metricsLine" style="margin-top:6px">CPAMP 用量：—</div>
+    <div class="preset-hint" id="metricsLine">CPAMP：—</div>
   </div>
 
-  <div class="tabs">
-    <button class="active" data-tab="accounts" onclick="switchTab('accounts')">账号结果</button>
-    <button data-tab="errors" onclick="switchTab('errors')">错误目录与策略</button>
-    <button data-tab="trash" onclick="switchTab('trash')">垃圾箱</button>
-    <button data-tab="logs" onclick="switchTab('logs')">动作日志</button>
+  <div class="tabs" role="tablist">
+    <button type="button" class="active" data-tab="accounts" onclick="switchTab('accounts')">账号结果</button>
+    <button type="button" data-tab="errors" onclick="switchTab('errors')">错误策略</button>
+    <button type="button" data-tab="trash" onclick="switchTab('trash')">垃圾箱</button>
+    <button type="button" data-tab="logs" onclick="switchTab('logs')">动作日志</button>
   </div>
 
-  <div id="tab-accounts" class="grid2">
-    <div class="card" style="margin:0">
-      <h2><span>账号巡检结果</span><span class="meta" id="accMeta">0</span></h2>
-      <div class="toolbar">
-        <input id="q" placeholder="搜索邮箱 / 文件 / 信号 / 建议" style="flex:1;min-width:160px" oninput="debouncedRefresh()"/>
-        <select id="view" onchange="refresh()"><option value="focus">焦点视图</option><option value="all">全部已观测</option></select>
-        <select id="stateFilter" onchange="refresh()">
-          <option value="">状态</option><option value="active">正常</option><option value="cooldown_quota">额度冷却</option><option value="cooldown_spending">消费冷却</option><option value="cooldown_permission">权限冷却</option><option value="candidate_dead">候选</option><option value="user_manual">手动禁用</option><option value="trashed">垃圾箱</option>
-        </select>
-        <select id="signalFilter" onchange="refresh()">
-          <option value="">信号</option><option>free_usage_429</option><option>spending_limit_402</option><option>auth_401</option><option>permission_403</option>
-        </select>
-        <select id="actionFilter" onchange="refresh()">
-          <option value="">建议动作</option><option value="cooldown">冷却</option><option value="candidate">候选</option><option value="trash">垃圾箱</option><option value="wait">等待恢复</option><option value="review">复查</option><option value="manual">手动</option><option value="observe">观察</option><option value="none">无</option>
-        </select>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>账号 / 认证</th><th>文件名</th><th>状态</th><th>信号</th><th>连续</th><th>建议动作</th><th>判定原因</th><th>恢复时间</th><th>更新时间</th></tr></thead>
-          <tbody id="accBody"></tbody>
-        </table>
-      </div>
+  <div id="tab-accounts" class="tabpanel card" style="margin:0">
+    <h2><span>账号巡检结果</span><span class="meta" id="accMeta">0</span></h2>
+    <div class="toolbar">
+      <input id="q" placeholder="搜索邮箱 / 文件 / 信号 / 建议" style="flex:1;min-width:180px" oninput="debouncedRefresh()"/>
+      <select id="view" onchange="refresh()"><option value="focus">焦点视图</option><option value="all">全部已观测</option></select>
+      <select id="stateFilter" onchange="refresh()">
+        <option value="">状态</option>
+        <option value="active">正常</option>
+        <option value="cooldown_quota">额度冷却</option>
+        <option value="cooldown_spending">消费冷却</option>
+        <option value="cooldown_permission">权限冷却</option>
+        <option value="candidate_dead">候选</option>
+        <option value="user_manual">手动禁用</option>
+        <option value="trashed">垃圾箱</option>
+      </select>
+      <select id="signalFilter" onchange="refresh()">
+        <option value="">信号</option>
+        <option>free_usage_429</option>
+        <option>spending_limit_402</option>
+        <option>auth_401</option>
+        <option>permission_403</option>
+      </select>
+      <select id="actionFilter" onchange="refresh()">
+        <option value="">建议动作</option>
+        <option value="cooldown">冷却</option>
+        <option value="candidate">候选</option>
+        <option value="trash">垃圾箱</option>
+        <option value="wait">等待恢复</option>
+        <option value="review">复查</option>
+        <option value="manual">手动</option>
+        <option value="observe">观察</option>
+        <option value="none">无</option>
+      </select>
     </div>
-    <div class="card" style="margin:0">
-      <h2><span>候选 / 待处理摘要</span></h2>
-      <div id="candBox" class="meta">加载中…</div>
-      <h2 style="margin-top:12px"><span>最近日志</span><button class="xs" onclick="toggleLogs()">折叠/展开</button></h2>
-      <div id="logbox" class="logbox">尚未加载</div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="min-width:180px">账号</th>
+            <th>状态</th>
+            <th>信号</th>
+            <th>连续</th>
+            <th>建议</th>
+            <th>原因</th>
+            <th>恢复</th>
+            <th>更新</th>
+          </tr>
+        </thead>
+        <tbody id="accBody"></tbody>
+      </table>
     </div>
   </div>
 
-  <div id="tab-errors" class="card" hidden>
-    <h2><span>动态错误目录（采集到的错误 + 独立管控）</span><span class="meta" id="errMeta">0</span></h2>
-    <div class="help">每个错误可单独设置：是否启用、动作（仅观察/冷却/进候选/进垃圾箱）、连续命中次数、冷却秒数。消费限额类强制永不自动进垃圾箱。改完点「保存」。</div>
+  <div id="tab-errors" class="tabpanel card" hidden>
+    <h2><span>动态错误目录与策略</span><span class="meta" id="errMeta">0</span></h2>
+    <div class="help" style="margin-top:0">每个错误可单独设：启用、动作、连续次数、冷却秒。消费限额类强制永不自动进垃圾箱。</div>
     <div class="table-wrap" style="max-height:min(68vh,680px)">
       <table>
         <thead>
           <tr>
-            <th>错误</th><th>出现次数</th><th>最近</th><th>启用</th><th>动作</th><th>连续N</th><th>冷却秒</th><th>禁删</th><th>备注</th><th>样本</th><th></th>
+            <th>错误</th><th>次数</th><th>最近</th><th>启用</th><th>动作</th><th>连续N</th><th>冷却秒</th><th>禁删</th><th>备注</th><th>样本</th><th></th>
           </tr>
         </thead>
         <tbody id="errBody"></tbody>
@@ -143,19 +210,24 @@ select.act{min-width:100px}input.num{width:70px}
     </div>
   </div>
 
-  <div id="tab-trash" class="card" hidden>
+  <div id="tab-trash" class="tabpanel card" hidden>
     <h2><span>垃圾箱（可恢复）</span><button class="xs danger" onclick="purgeExpired()">清理到期</button></h2>
-    <div class="table-wrap"><table><thead><tr><th>账号</th><th>信号</th><th>到期</th><th>操作</th></tr></thead><tbody id="trashBody"></tbody></table></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>账号</th><th>信号</th><th>到期</th><th>操作</th></tr></thead>
+        <tbody id="trashBody"></tbody>
+      </table>
+    </div>
   </div>
 
-  <div id="tab-logs" class="card" hidden>
-    <h2><span>完整动作日志</span></h2>
-    <div id="logboxFull" class="logbox" style="max-height:min(65vh,640px)">—</div>
+  <div id="tab-logs" class="tabpanel card" hidden>
+    <h2><span>动作日志</span><span class="meta">仅此一份</span></h2>
+    <div id="logbox" class="logbox">—</div>
   </div>
 </div>
 <div class="toast" id="toast"></div>
 <script>
-let CFG={}, timer=null, logsOpen=true, LAST_LOGS=[], ERRORS=[];
+let CFG={}, timer=null, LAST_LOGS=[], ERRORS=[], CURRENT_TAB='accounts';
 const API="/v0/management/cpa-xai-sentry";
 const KEY_LS="cpa-xai-sentry-management-key";
 const STATE_ZH={active:'正常',cooldown_quota:'额度冷却',cooldown_spending:'消费冷却',cooldown_permission:'权限冷却',candidate_dead:'候选死号',user_manual:'手动禁用',trashed:'垃圾箱',purged:'已清除'};
@@ -163,7 +235,7 @@ const ACT_ZH={observe:'仅观察',cooldown:'冷却',candidate:'进候选',trash:
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2400)}
 function esc(s){return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function getKey(){return (document.getElementById('cfgKey').value||localStorage.getItem(KEY_LS)||'').trim()}
-function saveKey(){const k=document.getElementById('cfgKey').value.trim(); if(k) localStorage.setItem(KEY_LS,k); else localStorage.removeItem(KEY_LS); toast(k?'密钥已保存到本机浏览器':'已清除本机密钥'); refresh()}
+function saveKey(){const k=document.getElementById('cfgKey').value.trim(); if(k) localStorage.setItem(KEY_LS,k); else localStorage.removeItem(KEY_LS); toast(k?'密钥已保存':'已清除密钥'); refresh()}
 async function j(path, opt){
   opt=opt||{}; const headers=Object.assign({},opt.headers||{});
   const k=getKey(); if(k){headers['X-Management-Key']=k; headers['Authorization']='Bearer '+k}
@@ -182,46 +254,80 @@ async function j(path, opt){
 }
 function modeBadge(mode,label){
   const el=document.getElementById('modeBadge'); el.className='badge';
-  if(mode==='observe') el.classList.add('ok'); else if(mode==='safe-guard'||mode==='cooldown') el.classList.add('warn'); else if(mode==='auto_trash') el.classList.add('danger'); else el.classList.add('off');
+  if(mode==='observe') el.classList.add('ok');
+  else if(mode==='safe-guard'||mode==='cooldown') el.classList.add('warn');
+  else if(mode==='auto_trash') el.classList.add('danger');
+  else el.classList.add('off');
   el.innerHTML='<span class="dot"></span>'+esc(label||mode||'—');
 }
-function sw(id,on){const b=document.getElementById(id); b.className='xs '+(on?'on':'off'); b.textContent=on?'开':'关'}
+function setSwitch(id,on){const el=document.getElementById(id); if(el) el.checked=!!on}
 function tag(cls,text){return '<span class="tag '+cls+'">'+esc(text)+'</span>'}
 function stateTag(st){const zh=STATE_ZH[st]||st; if(st==='active') return tag('active',zh); if(String(st).startsWith('cooldown')) return tag('cooldown',zh); if(st==='candidate_dead') return tag('candidate',zh); if(st==='user_manual') return tag('manual',zh); if(st==='trashed'||st==='purged') return tag('trash',zh); return tag('',zh)}
 function actionTag(a){const cls=({cooldown:'cooldown',candidate:'candidate',trash:'trash',wait:'wait',review:'review',manual:'manual',observe:'observe',none:'none',restore_or_purge:'trash'}[a]||''); return tag(cls, ACT_ZH[a]||a||'—')}
 function switchTab(name){
+  CURRENT_TAB=name;
   document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
-  ['accounts','errors','trash','logs'].forEach(n=>{const el=document.getElementById('tab-'+n); if(el) el.hidden=(n!==name)});
+  ['accounts','errors','trash','logs'].forEach(n=>{
+    const el=document.getElementById('tab-'+n);
+    if(el) el.hidden=(n!==name);
+  });
   if(name==='errors') loadErrors();
+  if(name==='logs') renderLogs(LAST_LOGS);
+  if(name==='trash') refreshTrashOnly();
 }
 function debouncedRefresh(){clearTimeout(timer); timer=setTimeout(refresh,220)}
 function renderKPIs(s, trashCount, errorCount){
   s=s||{};
+  // 不重复：只保留总览 KPI，建议动作数字合并进这几个
   const items=[
-    ['巡检集合',s.total||0,'accent'],['正常',s.active||0,'ok'],['冷却中',s.cooldown||0,'warn'],['候选',s.candidate||0,'danger'],
-    ['有信号',s.with_signal||0,''],['建议冷却',s.suggest_cooldown||0,'warn'],['建议候选',s.suggest_candidate||0,'danger'],
-    ['建议垃圾箱',s.suggest_trash||0,'danger'],['错误种类',errorCount||0,''],['垃圾箱',trashCount||0,''],
+    ['已观测',s.total||0,'accent'],
+    ['正常',s.active||0,'ok'],
+    ['冷却中',s.cooldown||0,'warn'],
+    ['候选',s.candidate||0,'danger'],
+    ['有信号',s.with_signal||0,''],
+    ['垃圾箱',trashCount||0,''],
   ];
   document.getElementById('kpis').innerHTML=items.map(([l,v,c])=>'<div class="kpi '+(c||'')+'"><span>'+l+'</span><b>'+v+'</b></div>').join('');
-  document.getElementById('pending').innerHTML=[
-    ['建议冷却',s.suggest_cooldown||0],['建议候选',s.suggest_candidate||0],['建议垃圾箱',s.suggest_trash||0],['等待恢复',s.suggest_wait||0],['手动禁用',s.user_manual||0],
-  ].map(([l,v])=>'<div class="box"><span class="muted">'+l+'</span><b>'+v+'</b></div>').join('');
 }
 function renderSignals(sc){
   sc=sc||{}; const keys=Object.keys(sc);
-  document.getElementById('signalChips').innerHTML=keys.length?keys.map(k=>'<span class="chip">'+esc(k)+' <b>'+sc[k]+'</b></span>').join(''):'<span class="muted">暂无信号聚合</span>';
+  document.getElementById('signalChips').innerHTML=keys.length
+    ? keys.map(k=>'<span class="chip">'+esc(k)+' <b>'+sc[k]+'</b></span>').join('')
+    : '<span class="muted">暂无信号聚合</span>';
 }
-function renderLogs(logs, full){
+function accountCell(a){
+  const name=a.display_name||a.email||a.file_name||a.auth_index||'—';
+  const file=a.file_name&&a.file_name!==a.auth_index?a.file_name:'';
+  const email=a.email&&a.email!==name?a.email:'';
+  const id=a.auth_index||'';
+  let sub=[];
+  if(email) sub.push(email);
+  if(file) sub.push(file);
+  if(id && id!==name && id!==file) sub.push(id);
+  if(a.tier) sub.push(a.tier);
+  return '<div class="acc-name">'+esc(name)+'</div><div class="acc-sub mono">'+esc(sub.join(' · ')||'—')+'</div>';
+}
+function renderLogs(logs){
   LAST_LOGS=logs||[];
-  const box=full?document.getElementById('logboxFull'):document.getElementById('logbox');
-  if(!full && !logsOpen){ box.innerHTML='<span class="muted">日志已折叠，共 '+LAST_LOGS.length+' 条</span>'; return }
-  const lines=(LAST_LOGS).slice().reverse().slice(0, full?300:80).map(e=>{
+  const box=document.getElementById('logbox');
+  if(!box) return;
+  const lines=LAST_LOGS.slice().reverse().slice(0,300).map(e=>{
     const cls=String(e.action||'').includes('fail')||String(e.action||'').includes('error')?'l-err':'l-act';
     return '<div><span class="muted">'+esc((e.at||'').replace('T',' ').replace('Z',''))+'</span> <span class="'+cls+'">'+esc(e.action)+'</span> <span class="l-sig">'+esc(e.signal||'-')+'</span> <span>'+esc(e.auth||'')+'</span> <span class="muted">'+esc(e.reason||'')+'</span></div>';
   });
   box.innerHTML=lines.join('')||'暂无日志';
 }
-function toggleLogs(){logsOpen=!logsOpen; renderLogs(LAST_LOGS,false)}
+async function refreshTrashOnly(){
+  try{
+    const tr=await j('/trash');
+    const items=tr.trash||[];
+    document.getElementById('trashBody').innerHTML=items.length?items.map(t=>'<tr>'+
+      '<td><div class="acc-name">'+esc(t.email||t.file_name||t.auth_index||'—')+'</div><div class="acc-sub mono">'+esc(t.file_name||t.auth_index||'')+'</div></td>'+
+      '<td>'+esc(t.signal||'')+'</td><td class="mono">'+esc(t.expires_at||'')+'</td>'+
+      '<td class="actions"><button class="xs btn-restore" data-id="'+esc(t.id)+'">恢复</button><button class="xs primary btn-restore-en" data-id="'+esc(t.id)+'">恢复并启用</button><button class="xs danger btn-purge" data-id="'+esc(t.id)+'">彻底清除</button></td></tr>').join('')
+      :'<tr><td colspan="4" class="muted">垃圾箱为空</td></tr>';
+  }catch(e){ toast('垃圾箱加载失败：'+e.message) }
+}
 async function refresh(){
   try{
     const qs=new URLSearchParams({view:document.getElementById('view').value});
@@ -232,36 +338,37 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.2.0');
+    document.getElementById('ver').textContent='v'+(st.version||'0.2.1');
     document.getElementById('updatedAt').textContent='更新 '+(st.updated_at||'—').replace('T',' ').replace('Z','');
     renderKPIs(st.summary, st.trash_count||0, st.error_count||0);
     renderSignals(st.signal_counts||{});
-    sw('swSentry',!!CFG.sentry_enabled); sw('swCool',!!CFG.auto_cooldown); sw('swCand',!!CFG.auto_candidate); sw('swDel',!!CFG.auto_delete); sw('swPatrol',!!CFG.patrol_enabled);
+    setSwitch('swSentry',!!CFG.sentry_enabled);
+    setSwitch('swCool',!!CFG.auto_cooldown);
+    setSwitch('swCand',!!CFG.auto_candidate);
+    setSwitch('swDel',!!CFG.auto_delete);
+    setSwitch('swPatrol',!!CFG.patrol_enabled);
     document.getElementById('cfgLine').textContent='周期 '+(CFG.tick_seconds||30)+'s · 垃圾箱保留 '+(CFG.trash_retention_days||7)+'天'+(CFG.trash_auto_purge?'（自动清）':'')+' · 密钥 '+(CFG.management_key_set?'已配置':'缺失');
     const m=st.metrics||{};
-    document.getElementById('metricsLine').textContent='CPAMP 用量地板：日='+(m.day_key||'—')+' · Token≥'+(m.tokens_floor||0)+' · 调用≥'+(m.calls_floor||0)+' · 最近回补 '+(m.backfill_at||'尚未')+(m.backfill_source?(' / '+m.backfill_source):'')+(CFG.cpamp_url?(' · '+CFG.cpamp_url):' · 未配 CPAMP');
+    const cpampCfg=!!(CFG.cpamp_url && (CFG.cpamp_admin_key_set||CFG.cpamp_url));
+    document.getElementById('metricsLine').textContent=
+      (CFG.cpamp_url
+        ? ('CPAMP 已配置 · 日='+(m.day_key||'—')+' · Token≥'+(m.tokens_floor||0)+' · 调用≥'+(m.calls_floor||0)+' · 最近回补 '+(m.backfill_at||'尚未')+(m.backfill_source?(' / '+m.backfill_source):'')+' · 自动回补开启')
+        : 'CPAMP 未配置，跳过自动回补');
     document.getElementById('accMeta').textContent=(st.account_count||0)+' 行 / 已观测 '+((st.summary&&st.summary.total)||0);
     document.getElementById('accBody').innerHTML=(st.accounts||[]).map(a=>'<tr>'+
-      '<td><div>'+esc(a.email||'—')+'</div><div class="mono muted">'+esc(a.auth_index)+'</div><div class="muted">'+esc(a.tier||'')+(a.disable_source?(' · '+a.disable_source):'')+'</div></td>'+
-      '<td class="mono">'+esc(a.file_name||'')+'</td><td>'+stateTag(a.state)+'</td><td>'+esc(a.last_signal||'')+'</td>'+
-      '<td class="mono">'+esc(a.streak_summary||'')+'</td><td>'+actionTag(a.suggested_action)+'</td><td class="reason">'+esc(a.reason||'')+'</td>'+
-      '<td class="mono">'+esc(a.recover_at||'')+'</td><td class="mono">'+esc(a.updated_at||'')+'</td></tr>').join('')||
-      '<tr><td colspan="9" class="muted">无匹配结果</td></tr>';
+      '<td>'+accountCell(a)+'</td>'+
+      '<td>'+stateTag(a.state)+'</td>'+
+      '<td>'+esc(a.last_signal||'')+'</td>'+
+      '<td class="mono">'+esc(a.streak_summary||'')+'</td>'+
+      '<td>'+actionTag(a.suggested_action)+'</td>'+
+      '<td class="reason">'+esc(a.reason||'')+'</td>'+
+      '<td class="mono">'+esc(a.recover_at||'')+'</td>'+
+      '<td class="mono">'+esc(a.updated_at||'')+'</td></tr>').join('')||
+      '<tr><td colspan="8" class="muted">无匹配结果</td></tr>';
 
-    const tr=await j('/trash');
-    const items=tr.trash||[];
-    document.getElementById('trashBody').innerHTML=items.length?items.map(t=>'<tr>'+
-      '<td><div>'+esc(t.email||'—')+'</div><div class="mono muted">'+esc(t.file_name||t.auth_index||'')+'</div></td>'+
-      '<td>'+esc(t.signal||'')+'</td><td class="mono">'+esc(t.expires_at||'')+'</td>'+
-      '<td class="actions"><button class="xs btn-restore" data-id="'+esc(t.id)+'">恢复</button><button class="xs primary btn-restore-en" data-id="'+esc(t.id)+'">恢复并启用</button><button class="xs danger btn-purge" data-id="'+esc(t.id)+'">彻底清除</button></td></tr>').join('')
-      :'<tr><td colspan="4" class="muted">垃圾箱为空</td></tr>';
-
-    const lg=await j('/logs'); renderLogs(lg.logs||[], false); renderLogs(lg.logs||[], true);
-    const cd=await j('/candidates');
-    const cands=cd.candidates||[];
-    document.getElementById('candBox').innerHTML=cands.length?('<div class="table-wrap" style="max-height:180px"><table><thead><tr><th>邮箱</th><th>文件</th><th>信号</th></tr></thead><tbody>'+
-      cands.map(c=>'<tr><td>'+esc(c.email||'')+'</td><td class="mono">'+esc(c.file_name||'')+'</td><td>'+esc(c.signal||'')+'</td></tr>').join('')+
-      '</tbody></table></div>'):'<span class="muted">当前无候选账号</span>';
+    if(CURRENT_TAB==='trash') await refreshTrashOnly();
+    const lg=await j('/logs'); renderLogs(lg.logs||[]);
+    if(CURRENT_TAB==='errors') await loadErrors();
   }catch(e){ toast('刷新失败：'+e.message); console.error(e) }
 }
 async function loadErrors(){
@@ -281,16 +388,16 @@ async function loadErrors(){
         '</select></td>'+
         '<td><input class="num th" data-i="'+i+'" type="number" min="1" value="'+(e.threshold||1)+'"/></td>'+
         '<td><input class="num cd" data-i="'+i+'" type="number" min="0" value="'+(e.cooldown_seconds||0)+'"/></td>'+
-        '<td>'+(e.never_trash?'是':(' <input type="checkbox" class="nt" data-i="'+i+'"'+(e.never_trash?' checked':'')+'/> '))+'</td>'+
+        '<td>'+(e.never_trash?'是':'<input type="checkbox" class="nt" data-i="'+i+'"/>')+'</td>'+
         '<td><input data-i="'+i+'" class="note" style="width:120px" value="'+esc(e.note||'')+'"/></td>'+
         '<td class="mono muted" style="max-width:180px;word-break:break-all">'+esc(e.sample||'')+'</td>'+
         '<td><button class="xs primary" onclick="saveError('+i+')">保存</button></td></tr>';
-    }).join('')||'<tr><td colspan="11" class="muted">还没有采集到错误。有 xAI 失败请求后会自动出现在这里。</td></tr>';
+    }).join('')||'<tr><td colspan="11" class="muted">还没有采集到错误。有 xAI 失败请求后会自动出现。</td></tr>';
   }catch(e){ toast('加载错误目录失败：'+e.message) }
 }
 async function saveError(i){
   const e=ERRORS[i]; if(!e) return;
-  const tr=document.querySelector('tr[data-key="'+CSS.escape(e.key)+'"]') || document.querySelectorAll('#errBody tr')[i];
+  const tr=document.querySelector('#errBody tr[data-key="'+CSS.escape(e.key)+'"]') || document.querySelectorAll('#errBody tr')[i];
   const enabled=tr.querySelector('.en').value==='1';
   const action=tr.querySelector('.act').value;
   const threshold=parseInt(tr.querySelector('.th').value||'1',10);
@@ -304,22 +411,26 @@ async function saveError(i){
     toast('已保存：'+(e.label||e.key)); loadErrors();
   }catch(err){ toast(err.message) }
 }
-async function toggle(field){
-  const body={}; body[field]=!CFG[field];
-  try{ const res=await j('/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); toast((field)+' => '+(res.config&&res.config[field]?'开':'关')); await refresh() }catch(e){toast(e.message)}
+async function toggle(field, checked){
+  const body={}; body[field]=!!checked;
+  try{
+    const res=await j('/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    toast((field)+' => '+(res.config&&res.config[field]?'开':'关'));
+    await refresh();
+  }catch(e){
+    toast(e.message);
+    // revert switch on failure
+    setSwitch({
+      sentry_enabled:'swSentry', auto_cooldown:'swCool', auto_candidate:'swCand',
+      auto_delete:'swDel', patrol_enabled:'swPatrol'
+    }[field], !checked);
+  }
 }
 async function applyPreset(name){
-  if(name==='safe-guard' && !confirm('启用「安全防护」？将打开自动冷却+候选，仍不会自动进垃圾箱。')) return;
-  try{ await j('/preset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}); toast('已应用预设'); await refresh() }catch(e){toast(e.message)}
+  if(name==='safe-guard' && !confirm('启用「安全防护」？\n\n将打开：自动冷却 + 自动候选\n不会：自动进垃圾箱\n\n适合日常护航，误删风险低。')) return;
+  try{ await j('/preset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}); toast(name==='safe-guard'?'已启用安全防护（冷却+候选）':'已应用仅观察'); await refresh() }catch(e){toast(e.message)}
 }
-async function runTick(){ try{ await j('/run-tick',{method:'POST'}); toast('周期任务已执行：恢复到期冷却 + 清理过期垃圾箱'); await refresh() }catch(e){toast(e.message)} }
-async function backfill(){
-  try{
-    const res=await j('/backfill',{method:'POST'});
-    toast('CPAMP 回补完成：Token='+((res.cpamp&&res.cpamp.total_tokens)||0)+' 调用='+((res.cpamp&&res.cpamp.total_calls)||0));
-    await refresh();
-  }catch(e){ toast(e.message) }
-}
+async function runTick(){ try{ await j('/run-tick',{method:'POST'}); toast('周期任务已执行'); await refresh() }catch(e){toast(e.message)} }
 async function restore(id,enable){ try{ await j('/trash/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,enable})}); toast(enable?'已恢复并启用':'已恢复（禁用）'); await refresh() }catch(e){toast(e.message)} }
 async function purge(id){ if(!confirm('彻底清除后不可恢复，确认？')) return; try{ await j('/trash/purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,confirm:true})}); toast('已清除'); await refresh() }catch(e){toast(e.message)} }
 async function purgeExpired(){ if(!confirm('清理所有到期垃圾箱项？')) return; try{ await j('/trash/purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({expired:true,confirm:true})}); toast('到期项已清理'); await refresh() }catch(e){toast(e.message)} }
@@ -330,7 +441,7 @@ document.addEventListener('click',function(ev){
   if(t.classList.contains('btn-purge')) purge(t.getAttribute('data-id'));
 });
 const saved=localStorage.getItem(KEY_LS)||''; if(saved) document.getElementById('cfgKey').value=saved;
-refresh(); setInterval(refresh,12000);
+refresh(); setInterval(refresh,15000);
 </script>
 </body>
 </html>

@@ -6,10 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/openclaw-local/cpa-xai-sentry/internal/cpaapi"
+	"github.com/openclaw-local/cpa-xai-sentry/internal/cpamp"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/guard"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/panel"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/patrol"
@@ -100,13 +102,21 @@ func (r *Runtime) startTicker() {
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
+		// first tick soon after load for identity refresh + optional CPAMP backfill
+		first := true
 		for {
 			r.mu.Lock()
 			sec := r.Cfg.TickSeconds
 			if sec <= 0 {
 				sec = 30
 			}
+			if first {
+				sec = 3
+				first = false
+			}
 			g := r.Guard
+			cfg := r.Cfg
+			st := r.State
 			r.mu.Unlock()
 			select {
 			case <-r.stopCh:
@@ -117,9 +127,40 @@ func (r *Runtime) startTicker() {
 						hostLog("error", "tick: "+err.Error())
 					}
 				}
+				r.maybeAutoBackfill(cfg, st)
 			}
 		}
 	}()
+}
+
+// maybeAutoBackfill pulls today's CPAMP xAI summary once per day when configured.
+func (r *Runtime) maybeAutoBackfill(cfg sentrycfg.Config, st *state.Store) {
+	if st == nil || !cfg.CPAMPUsageFloor {
+		return
+	}
+	if strings.TrimSpace(cfg.CPAMPURL) == "" || strings.TrimSpace(cfg.CPAMPAdminKey) == "" {
+		return
+	}
+	loc, _ := time.LoadLocation("Asia/Shanghai")
+	if loc == nil {
+		loc = time.FixedZone("CST", 8*3600)
+	}
+	day := time.Now().In(loc).Format("2006-01-02")
+	m := st.MetricsSnapshot()
+	if m.DayKey == day && m.BackfillSource != "" && m.BackfillAt != "" {
+		// already backfilled today
+		return
+	}
+	cli := cpamp.New(cfg.CPAMPURL, cfg.CPAMPAdminKey)
+	from, to := cpamp.DayRangeShanghai(time.Now())
+	sum, err := cli.FetchXAISummary(context.Background(), from, to)
+	if err != nil {
+		hostLog("warn", "cpamp auto-backfill skipped: "+err.Error())
+		return
+	}
+	st.ApplyCPAMPBackfill(day, sum.TotalTokens, sum.TotalCalls, sum.SuccessCalls, sum.FailureCalls, "cpamp_auto")
+	st.Log(state.ActionLog{Source: "cpamp", Action: "auto_backfill", Reason: "今日用量自动回补"})
+	_ = st.Save()
 }
 
 func (r *Runtime) HandleUsage(ev guard.UsageEvent) {
@@ -175,15 +216,28 @@ func usageEventFromRecord(r pluginapi.UsageRecord) guard.UsageEvent {
 		body = r.Failure.Body
 		status = r.Failure.StatusCode
 	}
+	authIndex := firstNonEmptyStr(r.AuthIndex, r.AuthID)
+	// AuthID is often the relative auth file name; AuthIndex may be opaque host id.
+	fileName := firstNonEmptyStr(r.AuthID, r.AuthIndex)
 	return guard.UsageEvent{
 		Provider:   r.Provider,
-		AuthIndex:  r.AuthIndex,
-		FileName:   r.AuthIndex, // host often uses index as file stem; panel/cpa may refine
+		AuthIndex:  authIndex,
+		FileName:   fileName,
+		Email:      "",
 		StatusCode: status,
 		Body:       body,
 		Success:    success,
 		Source:     "usage",
 	}
+}
+
+func firstNonEmptyStr(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 func usageEventFromRawOK(request []byte) (guard.UsageEvent, bool) {
@@ -258,8 +312,9 @@ func usageEventFromRaw(request []byte) guard.UsageEvent {
 			}
 		}
 	}
-	auth := getS("AuthIndex", "auth_index", "authIndex")
-	file := getS("FileName", "file_name", "name", "AuthIndex", "auth_index")
+	auth := getS("AuthIndex", "auth_index", "authIndex", "AuthID", "auth_id", "authId")
+	// Prefer AuthID / FileName (often real file) over opaque AuthIndex hash.
+	file := getS("FileName", "file_name", "AuthID", "auth_id", "authId", "name", "AuthIndex", "auth_index")
 	return guard.UsageEvent{
 		Provider:   getS("Provider", "provider"),
 		AuthIndex:  auth,
