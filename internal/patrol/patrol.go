@@ -108,28 +108,31 @@ func (r *Runner) Run(ctx context.Context, targets []Target) []Result {
 	return out
 }
 
+// DefaultProbeBaseURL matches cpa-xai-quota-guard / Grok CLI chat-proxy.
+const DefaultProbeBaseURL = "https://cli-chat-proxy.grok.com/v1"
+
+// DefaultProbeCLIVersion matches cpa-xai-quota-guard DefaultProbeCLIVersion.
+const DefaultProbeCLIVersion = "0.2.93"
+
 func (r *Runner) probeOne(ctx context.Context, t Target) Result {
 	res := Result{AuthIndex: t.AuthIndex}
 	base := strings.TrimRight(strings.TrimSpace(t.BaseURL), "/")
 	if base == "" {
-		base = "https://api.x.ai"
+		base = DefaultProbeBaseURL
 	}
 	model := r.Cfg.PatrolModel
 	if model == "" {
 		model = "grok-4.5"
 	}
-	// If base already ends with /v1 (common for grok cli-chat-proxy), do NOT prefix paths with /v1 again.
-	// Wrong: https://cli-chat-proxy.grok.com/v1 + /v1/responses => /v1/v1/responses => nginx 404
-	// Right: .../v1 + /responses
-	// Prefer CPA/xAI executor path POST /responses first (Grok CLI chat-proxy + api.x.ai),
-	// then chat/completions fallback.
+	// Align with cpa-xai-quota-guard doChatProbe:
+	//   1) POST .../responses  (input + max_output_tokens, NO max_tokens)
+	//   2) fall back to .../chat/completions only on 404/405 (or shape 400)
+	// If base already ends with /v1, do NOT prefix /v1 again.
 	var paths []string
-	// Prefer chat/completions first (stable max_tokens). /responses is fallback
-	// with max_output_tokens-only body (max_tokens is rejected there → HTTP 400).
 	if strings.HasSuffix(strings.ToLower(base), "/v1") {
-		paths = []string{"/chat/completions", "/responses"}
+		paths = []string{"/responses", "/chat/completions"}
 	} else {
-		paths = []string{"/v1/chat/completions", "/v1/responses"}
+		paths = []string{"/v1/responses", "/v1/chat/completions"}
 	}
 	var lastErr error
 	var lastCode int
@@ -139,26 +142,24 @@ func (r *Runner) probeOne(ctx context.Context, t Target) Result {
 			code, body, err := r.postProbe(ctx, base+pth, pth, model, t.Token)
 			if err != nil {
 				lastErr = err
-				// network: retry
 				continue
 			}
 			lastCode, lastBody = code, body
 			res.StatusCode = code
 			res.Body = body
-			// 5xx retry
-			if code >= 500 {
+			// 5xx retry same model/path
+			if code >= 500 || code == 408 {
 				lastErr = fmt.Errorf("upstream %d", code)
 				continue
 			}
-			// 404 on a path: try next path shape (not necessarily dead account)
-			if code == 404 {
-				lastErr = fmt.Errorf("http 404 on %s", pth)
+			// endpoint missing / wrong method → try next path (qg behavior)
+			if code == 404 || code == 405 {
+				lastErr = fmt.Errorf("http %d on %s", code, pth)
 				continue
 			}
-			// 400 due to wrong request shape for this path: try alternate endpoint
-			// e.g. /v1/responses rejects max_tokens — not an account failure.
-			if code == 400 && IsProbeShapeError(body) {
-				lastErr = fmt.Errorf("http 400 shape on %s", pth)
+			// wrong body shape for this path → try alternate
+			if (code == 400 || code == 422) && IsProbeShapeError(body) {
+				lastErr = fmt.Errorf("http %d shape on %s", code, pth)
 				continue
 			}
 			res.SignalPath = true
@@ -168,10 +169,9 @@ func (r *Runner) probeOne(ctx context.Context, t Target) Result {
 		case <-ctx.Done():
 			res.Err = ctx.Err().Error()
 			return res
-		case <-time.After(time.Duration(attempt+1) * 200 * time.Millisecond):
+		case <-time.After(time.Duration(attempt+1) * 400 * time.Millisecond):
 		}
 	}
-	// Prefer last HTTP result over generic network error when we did get a response.
 	if lastCode > 0 {
 		res.StatusCode = lastCode
 		res.Body = lastBody
@@ -195,8 +195,7 @@ func IsProbeShapeError(body string) bool {
 	if strings.Contains(low, "max_output_tokens") && strings.Contains(low, "not supported") {
 		return true
 	}
-	if strings.Contains(low, "unknown field") || strings.Contains(low, "unsupported") {
-		// only treat as shape if mentions token limits / responses
+	if strings.Contains(low, "unknown field") || strings.Contains(low, "unsupported") || strings.Contains(low, "missing field") {
 		if strings.Contains(low, "token") || strings.Contains(low, "responses") || strings.Contains(low, "messages") || strings.Contains(low, "input") {
 			return true
 		}
@@ -205,9 +204,7 @@ func IsProbeShapeError(body string) bool {
 }
 
 func (r *Runner) postProbe(ctx context.Context, url, pathHint, model, token string) (int, string, error) {
-	// Endpoint-specific payload:
-	//  - /responses: OpenAI-style responses API — max_output_tokens + input (NO max_tokens)
-	//  - /chat/completions: max_tokens + messages
+	// Payload aligned with cpa-xai-quota-guard doChatProbe.
 	lowPath := strings.ToLower(pathHint)
 	var payload map[string]any
 	if strings.Contains(lowPath, "responses") {
@@ -218,10 +215,11 @@ func (r *Runner) postProbe(ctx context.Context, url, pathHint, model, token stri
 			"stream":            false,
 		}
 	} else {
+		// chat/completions fallback (qg uses content "hi")
 		payload = map[string]any{
 			"model": model,
 			"messages": []map[string]string{
-				{"role": "user", "content": "ping"},
+				{"role": "user", "content": "hi"},
 			},
 			"max_tokens": 1,
 			"stream":     false,
@@ -236,10 +234,12 @@ func (r *Runner) postProbe(ctx context.Context, url, pathHint, model, token stri
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	// Grok CLI identity required by cli-chat-proxy; missing => HTTP 426 "CLI version (none)".
-	// Values aligned with cpa-xai-quota-guard DefaultProbeCLIVersion / defaultProbeHeaders.
-	const cliVer = "0.2.93"
+	// Full Grok CLI identity (cpa-xai-quota-guard defaultProbeHeaders).
+	// Missing these → HTTP 426 "CLI version (none) is outdated".
+	cliVer := DefaultProbeCLIVersion
 	req.Header.Set("User-Agent", "grok-pager/"+cliVer+" grok-shell/"+cliVer+" (linux; x86_64)")
+	req.Header.Set("x-authenticateresponse", "authenticate-response")
+	req.Header.Set("x-grok-client-identifier", "grok-pager")
 	req.Header.Set("x-grok-client-version", cliVer)
 	req.Header.Set("x-xai-token-auth", "xai-grok-cli")
 	resp, err := r.HC.Do(req)

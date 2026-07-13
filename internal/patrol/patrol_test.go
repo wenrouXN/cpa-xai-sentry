@@ -87,21 +87,16 @@ func TestIsProbeShapeError(t *testing.T) {
 	}
 }
 
-func TestProbeFallsBackFromResponses400ToChat(t *testing.T) {
-	// first path chat/completions succeeds; also verify responses body shape if hit
+func TestProbeFallsBackFromResponses404ToChat(t *testing.T) {
 	var paths []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
 		var got map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&got)
 		if strings.Contains(r.URL.Path, "responses") {
-			if _, ok := got["max_tokens"]; ok {
-				w.WriteHeader(400)
-				_, _ = w.Write([]byte(`{"error":"'max_tokens' is not supported on /v1/responses — use 'max_output_tokens'"}`))
-				return
-			}
-			w.WriteHeader(200)
-			_, _ = w.Write([]byte(`{"id":"r"}`))
+			// missing endpoint → fall back (quota-guard style)
+			w.WriteHeader(404)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
 			return
 		}
 		// chat/completions
@@ -123,6 +118,59 @@ func TestProbeFallsBackFromResponses400ToChat(t *testing.T) {
 		BaseURL: srv.URL, Token: "tok",
 	}})
 	if len(res) != 1 || res[0].StatusCode != 200 {
-		t.Fatalf("want 200 alive probe, got %+v paths=%v", res, paths)
+		t.Fatalf("want 200 via chat fallback, got %+v paths=%v", res, paths)
+	}
+	if len(paths) < 2 || !strings.Contains(paths[0], "responses") {
+		t.Fatalf("want responses-first then chat, paths=%v", paths)
+	}
+}
+
+func TestProbeResponsesPayloadAlignedWithQuotaGuard(t *testing.T) {
+	var got map[string]any
+	var path string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		// require qg headers
+		if r.Header.Get("x-grok-client-version") == "" || r.Header.Get("x-grok-client-identifier") == "" {
+			w.WriteHeader(426)
+			_, _ = w.Write([]byte(`{"error":"CLI version"}`))
+			return
+		}
+		if strings.Contains(r.URL.Path, "responses") {
+			if _, ok := got["max_tokens"]; ok {
+				w.WriteHeader(400)
+				_, _ = w.Write([]byte(`{"error":"max_tokens not supported"}`))
+				return
+			}
+			if got["input"] == nil {
+				w.WriteHeader(422)
+				_, _ = w.Write([]byte(`{"error":"missing field input"}`))
+				return
+			}
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{"id":"r"}`))
+			return
+		}
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"id":"c"}`))
+	}))
+	defer srv.Close()
+	cfg := sentrycfg.Default()
+	cfg.PatrolModel = "grok-4.5"
+	st := state.New(filepath.Join(t.TempDir(), "s.json"))
+	r := patrol.New(cfg, guard.New(cfg, st, trash.New(t.TempDir(), 7, true, st), nil), nil)
+	res := r.Run(context.Background(), []patrol.Target{{
+		AuthIndex: "h", FileName: "xai-h.json", Provider: "xai",
+		BaseURL: srv.URL + "/v1", Token: "tok",
+	}})
+	if len(res) != 1 || res[0].StatusCode != 200 {
+		t.Fatalf("got %+v path=%s payload=%v", res, path, got)
+	}
+	if !strings.Contains(path, "responses") {
+		t.Fatalf("want /responses first, path=%s", path)
+	}
+	if _, ok := got["max_tokens"]; ok {
+		t.Fatal("responses must not send max_tokens")
 	}
 }
