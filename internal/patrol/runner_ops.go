@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/openclaw-local/cpa-xai-sentry/internal/cpaapi"
+	"github.com/openclaw-local/cpa-xai-sentry/internal/guard"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/state"
 )
 
@@ -137,25 +138,29 @@ func (r *Runner) runJob(ctx context.Context, mode Mode) {
 		_ = r.Guard.Resolver.Ensure(ctx)
 	}
 
+	// Align CPA-disabled free accounts that sentry still shows as Active.
+	// Full patrol only probes enabled files, so already-disabled 429s would be skipped forever.
+	aligned := r.alignDisabledQuotaAccounts(ctx, mode)
+
 	targets := r.collectTargets(ctx, mode)
 	jobMu.Lock()
-	jobStatus.Total = len(targets)
+	jobStatus.Total = len(targets) + aligned
 	jobMu.Unlock()
-	r.appendLog("", "", 0, "info", "开始巡查 · 模式="+string(mode)+" · 目标="+itoa(len(targets)), "start")
+	r.appendLog("", "", 0, "info", "开始巡查 · 模式="+string(mode)+" · 探测目标="+itoa(len(targets))+" · 已禁用额度对齐="+itoa(aligned), "start")
 	if r.Guard.State != nil {
 		r.Guard.State.Log(state.ActionLog{
 			Source: "patrol", Action: "patrol_start",
-			Reason: "mode=" + string(mode) + " total=" + itoa(len(targets)),
+			Reason: "mode=" + string(mode) + " probe=" + itoa(len(targets)) + " align_disabled_quota=" + itoa(aligned),
 		})
 	}
-	if len(targets) == 0 {
-		r.appendLog("", "", 0, "warn", "没有可巡查目标（全量只扫已启用；仅冷却只扫冷却号）", "")
+	if len(targets) == 0 && aligned == 0 {
+		r.appendLog("", "", 0, "warn", "没有可巡查目标（全量只扫已启用；仅冷却只扫冷却号；也无已禁用待对齐额度号）", "")
 		return
 	}
 
 	// run probes (existing Run feeds HandleUsage)
 	results := r.Run(ctx, targets)
-	alive, cool, errs := 0, 0, 0
+	alive, cool, errs := 0, aligned, 0
 	for _, res := range results {
 		label := res.AuthIndex
 		// find target label
@@ -228,6 +233,95 @@ func (r *Runner) runJob(ctx context.Context, mode Mode) {
 		_ = r.Guard.State.Save()
 	}
 	r.appendLog("", "", 0, "info", msg, "done")
+}
+
+
+// alignDisabledQuotaAccounts finds xAI auth files that are CPA-disabled while
+// sentry state is still Active (typical free-usage 429 already disabled by CPA
+// or another tool). Feeds a synthetic free_usage_429 into Guard so state becomes
+// cooldown_quota without needing a live probe (full patrol skips disabled files).
+func (r *Runner) alignDisabledQuotaAccounts(ctx context.Context, mode Mode) int {
+	if r.Guard == nil || r.CPA == nil || mode != ModeFull {
+		return 0
+	}
+	files, err := r.CPA.ListAuthFiles(ctx)
+	if err != nil || len(files) == 0 {
+		return 0
+	}
+	n := 0
+	for _, f := range files {
+		if !f.Disabled {
+			continue
+		}
+		name := strings.TrimSpace(f.Name)
+		prov := f.Provider
+		if prov == "" {
+			prov = f.Type
+		}
+		if name == "" || !cpaapi.IsXAIName(name, prov) {
+			continue
+		}
+		em := strings.TrimSpace(f.Email)
+		if em == "" {
+			em = strings.TrimSpace(f.Account)
+		}
+		ai := strings.TrimSpace(f.AuthIndex)
+		var acc *state.Account
+		if r.Guard.State != nil {
+			if ai != "" {
+				acc = r.Guard.State.Get(ai)
+			}
+			if acc == nil {
+				for _, a := range r.Guard.State.AccountsSnapshot() {
+					if (em != "" && strings.EqualFold(a.Email, em)) ||
+						(name != "" && strings.EqualFold(a.FileName, name)) {
+						acc = a
+						break
+					}
+				}
+			}
+			if acc == nil {
+				acc = r.Guard.State.Get(name)
+			}
+		}
+		if acc != nil {
+			switch acc.State {
+			case state.CooldownQuota, state.CooldownSpending, state.CooldownPermission, state.CandidateDead, state.UserManual, state.Trashed, state.Purged:
+				continue
+			}
+			if acc.DisableSource == "plugin_auto" || acc.DisableSource == "user_manual" {
+				continue
+			}
+		}
+		auth := ai
+		if auth == "" && acc != nil {
+			auth = acc.AuthIndex
+		}
+		if auth == "" {
+			auth = name
+		}
+		provName := prov
+		if provName == "" {
+			provName = "xai"
+		}
+		_ = r.Guard.HandleUsage(ctx, guard.UsageEvent{
+			Provider:   provName,
+			AuthIndex:  auth,
+			FileName:   name,
+			Email:      em,
+			StatusCode: 429,
+			Body:       `{"code":"subscription:free-usage-exhausted","error":"cpa file already disabled; aligned by patrol"}`,
+			Success:    false,
+			Source:     "patrol",
+		})
+		label := em
+		if label == "" {
+			label = name
+		}
+		r.appendLog(auth, label, 429, "warn", "CPA 已禁用且哨兵仍为正常 → 按免费额度用尽对齐冷却（全量巡检不探测已禁用号）", "align_disabled_quota")
+		n++
+	}
+	return n
 }
 
 func (r *Runner) collectTargets(ctx context.Context, mode Mode) []Target {

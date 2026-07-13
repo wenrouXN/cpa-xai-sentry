@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.8
+
+### Fix: full patrol skips CPA-disabled 429 accounts
+- Full mode only probes **enabled** files, so accounts already disabled for free-usage never get cooled in sentry state.
+- Patrol now **aligns** CPA-disabled + sentry-Active xAI accounts as `free_usage_429` cool-down (no HTTP probe).
+- Example: `jc3f4dnnjh@…` file disabled, panel still active → becomes cooldown_quota on next full patrol.
+
+
 ## 1.1.7
 
 ### Fix: duplicate cool-down action logs
@@ -159,6 +167,14 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.8
+
+### Fix: full patrol skips CPA-disabled 429 accounts
+- Full mode only probes **enabled** files, so accounts already disabled for free-usage never get cooled in sentry state.
+- Patrol now **aligns** CPA-disabled + sentry-Active xAI accounts as `free_usage_429` cool-down (no HTTP probe).
+- Example: `jc3f4dnnjh@…` file disabled, panel still active → becomes cooldown_quota on next full patrol.
+
 
 ## 1.1.7
 
