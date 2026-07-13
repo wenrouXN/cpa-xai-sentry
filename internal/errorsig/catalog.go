@@ -50,9 +50,9 @@ type Observed struct {
 func BuiltinDefaults() map[string]Policy {
 	return map[string]Policy{
 		"free_usage_429": {
-			Key: "free_usage_429", Label: "免费额度耗尽(429)", Enabled: true,
+			Key: "free_usage_429", Label: "免费额度用尽(429)", Enabled: true,
 			Action: ActionCooldown, Threshold: 1, CooldownSec: 0, Source: "builtin",
-			Note: "额度类：应冷却，不删号",
+			Note: "额度类：应冷却，不删号；请求/巡查/维护同步统一此标签",
 		},
 		"spending_limit_402": {
 			Key: "spending_limit_402", Label: "消费限额(402)", Enabled: true,
@@ -68,6 +68,16 @@ func BuiltinDefaults() map[string]Policy {
 			Key: "permission_403", Label: "权限拒绝(403)", Enabled: true,
 			Action: ActionCooldown, Threshold: 3, CooldownSec: 1800, Source: "builtin",
 			Note: "默认可恢复，不建议自动删除",
+		},
+		"code:invalid-argument": {
+			Key: "code:invalid-argument", Label: "参数无效/上下文过长(invalid-argument)", Enabled: true,
+			Action: ActionObserve, Threshold: 3, CooldownSec: 0, NeverTrash: true, Source: "builtin",
+			Note: "常见于上下文超长/非法参数；默认仅观察，可调连续N",
+		},
+		"http_404": {
+			Key: "http_404", Label: "HTTP 404（路径/网关）", Enabled: true,
+			Action: ActionObserve, Threshold: 3, CooldownSec: 0, NeverTrash: true, Source: "builtin",
+			Note: "多为探测路径/网关问题，不等于账号死号；默认仅观察",
 		},
 	}
 }
@@ -92,13 +102,21 @@ func KeyFromMatch(res match.Result, statusCode int) string {
 func LabelOf(key string, res match.Result, statusCode int) string {
 	switch key {
 	case "free_usage_429":
-		return "免费额度耗尽(429)"
+		return "免费额度用尽(429)"
 	case "spending_limit_402":
 		return "消费限额(402)"
 	case "auth_401":
 		return "凭证失效(401)"
 	case "permission_403":
 		return "权限拒绝(403)"
+	case "unmatched":
+		return "未分类错误"
+	case "http_404":
+		return "HTTP 404（路径/网关）"
+	case "code:invalid-argument":
+		return "参数无效/上下文过长(invalid-argument)"
+	case "http_0_disabled":
+		return "CPA已禁用(同步)"
 	}
 	if strings.HasPrefix(key, "code:") {
 		return "错误码 " + strings.TrimPrefix(key, "code:")
@@ -109,8 +127,14 @@ func LabelOf(key string, res match.Result, statusCode int) string {
 	if res.Reason == "region_block" {
 		return "区域限制(仅观察)"
 	}
+	if res.Code != "" {
+		return "错误码 " + res.Code
+	}
 	if statusCode > 0 {
 		return fmt.Sprintf("未分类错误 HTTP %d", statusCode)
+	}
+	if key != "" {
+		return key
 	}
 	return "未分类错误"
 }

@@ -568,7 +568,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":         "cpa-xai-sentry",
-		"version":        "0.5.5",
+		"version":        "0.5.6",
 		"mode":           modeOf(*a.Cfg),
 		"mode_label":     modeLabel(modeOf(*a.Cfg)),
 		"summary":        summary,
@@ -1209,7 +1209,7 @@ func (a *API) handlePatrolStatus(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.5",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.6",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 		"cooldown_stats": a.State.CooldownStats(time.Now()),
 	})
@@ -1369,25 +1369,27 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 	pols := a.State.ListErrorPolicies()
 	// join: every observed + every policy
 	type row struct {
-		Key         string `json:"key"`
-		Label       string `json:"label"`
-		Enabled     bool   `json:"enabled"`
-		Action      string `json:"action"`
-		ActionLabel string `json:"action_label"`
-		Threshold   int    `json:"threshold"`
-		CooldownSec int    `json:"cooldown_seconds"`
-		NeverTrash  bool   `json:"never_trash"`
-		Note        string `json:"note"`
-		Source      string `json:"source"`
-		Count       int64  `json:"count"`
-		LastAt      string `json:"last_at,omitempty"`
-		Sample      string `json:"sample,omitempty"`
-		SampleMsg   string `json:"sample_msg,omitempty"`
-		SamplePretty string `json:"sample_pretty,omitempty"`
-		StatusCode  int    `json:"status_code,omitempty"`
-		Code        string `json:"code,omitempty"`
-		LastAuth    string `json:"last_auth,omitempty"`
-		LastFile    string `json:"last_file,omitempty"`
+		Key          string         `json:"key"`
+		Label        string         `json:"label"`
+		Enabled      bool           `json:"enabled"`
+		Action       string         `json:"action"`
+		ActionLabel  string         `json:"action_label"`
+		Threshold    int            `json:"threshold"`
+		CooldownSec  int            `json:"cooldown_seconds"`
+		NeverTrash   bool           `json:"never_trash"`
+		Note         string         `json:"note"`
+		Source       string         `json:"source"`
+		Count        int64          `json:"count"`
+		LastAt       string         `json:"last_at,omitempty"`
+		Sample       string         `json:"sample,omitempty"`
+		SampleMsg    string         `json:"sample_msg,omitempty"`
+		SamplePretty string         `json:"sample_pretty,omitempty"`
+		StatusCode   int            `json:"status_code,omitempty"`
+		Code         string         `json:"code,omitempty"`
+		LastAuth     string         `json:"last_auth,omitempty"`
+		LastFile     string         `json:"last_file,omitempty"`
+		// AccountHits for policy page table (time/account/error/streak/ops)
+		AccountHits  []map[string]any `json:"account_hits,omitempty"`
 	}
 	byKey := map[string]row{}
 	for _, p := range pols {
@@ -1397,25 +1399,161 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 			NeverTrash: p.NeverTrash, Note: p.Note, Source: p.Source,
 		}
 	}
+	// account meta for labels/streaks
+	accBy := map[string]*state.Account{}
+	for _, acc := range a.State.AccountsSnapshot() {
+		accBy[acc.AuthIndex] = acc
+		if acc.Email != "" {
+			accBy[strings.ToLower(acc.Email)] = acc
+		}
+	}
 	for _, o := range obs {
 		r0, ok := byKey[o.Key]
 		if !ok {
 			r0 = row{Key: o.Key, Label: o.Label, Enabled: true, Action: "observe", ActionLabel: actionLabel("observe"), Threshold: 1, Source: "learned"}
 		}
-		if r0.Label == "" {
+		// normalize free-usage label
+		if o.Key == "free_usage_429" || r0.Key == "free_usage_429" {
+			r0.Label = "免费额度用尽(429)"
+		}
+		if r0.Label == "" || r0.Label == "免费额度耗尽(429)" {
 			r0.Label = o.Label
+			if r0.Label == "免费额度耗尽(429)" {
+				r0.Label = "免费额度用尽(429)"
+			}
+		}
+		if o.Key == "code:invalid-argument" {
+			r0.Label = "参数无效/上下文过长(invalid-argument)"
+		}
+		if o.Key == "http_404" {
+			r0.Label = "HTTP 404（路径/网关）"
 		}
 		r0.Count = o.Count
 		if !o.LastAt.IsZero() {
-			r0.LastAt = o.LastAt.UTC().Format(time.RFC3339)
+			r0.LastAt = o.LastAt.In(time.FixedZone("CST", 8*3600)).Format("01-02 15:04:05")
 		}
 		r0.Sample = html.UnescapeString(o.Sample)
 		r0.StatusCode = o.StatusCode
 		r0.Code = o.Code
+		r0.LastAuth = o.LastAuth
+		r0.LastFile = o.LastFile
+		// build account hits from observed Hits ring
+		type agg struct {
+			Auth, Label, File, Source, Sample string
+			Status, Hits, Streak              int
+			LastAt                            time.Time
+		}
+		am := map[string]*agg{}
+		for _, h := range o.Hits {
+			id := h.Auth
+			if id == "" {
+				id = h.File
+			}
+			if id == "" {
+				id = "unknown"
+			}
+			a0 := am[id]
+			if a0 == nil {
+				a0 = &agg{Auth: h.Auth, File: h.File, Source: h.Source, Sample: h.Sample, Status: h.Status}
+				am[id] = a0
+			}
+			a0.Hits++
+			if h.At.After(a0.LastAt) {
+				a0.LastAt = h.At
+				a0.Source = h.Source
+				a0.Sample = h.Sample
+				a0.Status = h.Status
+				a0.File = h.File
+			}
+		}
+		// fallback: if no hits ring yet, use last_auth
+		if len(am) == 0 && o.LastAuth != "" {
+			am[o.LastAuth] = &agg{Auth: o.LastAuth, File: o.LastFile, Hits: int(o.Count), LastAt: o.LastAt, Sample: o.Sample, Status: o.StatusCode}
+		}
+		hits := make([]map[string]any, 0, len(am))
+		for _, a0 := range am {
+			label := a0.Auth
+			streak := 0
+			if acc := accBy[a0.Auth]; acc != nil {
+				label = cpaapi.DisplayName(acc.Email, acc.FileName, acc.AuthIndex)
+				// streak for this error key / signal
+				if acc.Streaks != nil {
+					if v := acc.Streaks[o.Key]; v > 0 {
+						streak = v
+					} else if o.Signal != "" {
+						if v := acc.Streaks[o.Signal]; v > 0 {
+							streak = v
+						}
+					}
+					if streak == 0 && acc.LastSignal == o.Key {
+						// at least 1 if currently holding this signal
+						streak = 1
+					}
+				}
+			} else if a0.File != "" {
+				label = a0.File
+			}
+			src := a0.Source
+			if src == "" {
+				src = "usage"
+			}
+			srcZH := map[string]string{"usage": "请求", "patrol": "巡查", "tick": "维护同步", "panel": "面板", "cpamp": "回补"}[src]
+			if srcZH == "" {
+				srcZH = src
+			}
+			msg := strings.TrimSpace(html.UnescapeString(a0.Sample))
+			if len(msg) > 160 {
+				msg = msg[:160]
+			}
+			// humanize common samples
+			low := strings.ToLower(msg)
+			if strings.Contains(low, "free-usage") || strings.Contains(low, "free_usage") {
+				msg = "免费额度用尽"
+			} else if strings.Contains(low, "invalid-argument") && strings.Contains(low, "maximum prompt") {
+				msg = "上下文过长/参数无效"
+			} else if strings.Contains(low, "<html") || strings.Contains(low, "404 not found") {
+				msg = "路径/网关 404"
+			} else if strings.Contains(low, "unexpected eof") {
+				msg = "连接中断 unexpected EOF"
+			}
+			if msg != "" {
+				msg = msg + "（" + srcZH + "）"
+			} else {
+				msg = r0.Label + "（" + srcZH + "）"
+			}
+			hits = append(hits, map[string]any{
+				"auth": a0.Auth, "label": label, "file": a0.File,
+				"source": src, "source_label": srcZH,
+				"hits": a0.Hits, "streak": streak,
+				"status": a0.Status,
+				"last_at": func() string {
+					if a0.LastAt.IsZero() {
+						return ""
+					}
+					return a0.LastAt.In(time.FixedZone("CST", 8*3600)).Format("01-02 15:04:05")
+				}(),
+				"message": msg,
+				"sample":  a0.Sample,
+			})
+		}
+		// sort by last_at desc
+		sort.SliceStable(hits, func(i, j int) bool {
+			si, _ := hits[i]["last_at"].(string)
+			sj, _ := hits[j]["last_at"].(string)
+			return si > sj
+		})
+		if len(hits) > 50 {
+			hits = hits[:50]
+		}
+		r0.AccountHits = hits
 		byKey[o.Key] = r0
 	}
 	out := make([]row, 0, len(byKey))
 	for _, r0 := range byKey {
+		// final label normalize
+		if r0.Key == "free_usage_429" {
+			r0.Label = "免费额度用尽(429)"
+		}
 		out = append(out, r0)
 	}
 	writeJSON(w, 200, map[string]any{"errors": out, "count": len(out)})

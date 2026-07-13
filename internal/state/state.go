@@ -108,6 +108,18 @@ type ObservedError struct {
 	Sample     string    `json:"sample"`
 	LastAuth   string    `json:"last_auth"`
 	LastFile   string    `json:"last_file"`
+	// Hits keeps recent per-account error events for policy log UI.
+	Hits []ErrorHit `json:"hits,omitempty"`
+}
+
+// ErrorHit is one observed failure instance (for error-policy account log).
+type ErrorHit struct {
+	At     time.Time `json:"at"`
+	Auth   string    `json:"auth"`
+	File   string    `json:"file,omitempty"`
+	Source string    `json:"source,omitempty"` // usage|patrol|tick|panel
+	Status int       `json:"status,omitempty"`
+	Sample string    `json:"sample,omitempty"`
 }
 
 type MetricsFloor struct {
@@ -430,7 +442,7 @@ func (s *Store) SnapshotLogs() []ActionLog {
 }
 
 
-func (s *Store) ObserveError(key, label, signal, code, sample, auth, file string, status int) {
+func (s *Store) ObserveError(key, label, signal, code, sample, auth, file, source string, status int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.Observed == nil {
@@ -460,6 +472,18 @@ func (s *Store) ObserveError(key, label, signal, code, sample, auth, file string
 	}
 	o.LastAuth = auth
 	o.LastFile = file
+	// per-account hit ring (newest last)
+	hitSample := sample
+	if len(hitSample) > 240 {
+		hitSample = hitSample[:240]
+	}
+	o.Hits = append(o.Hits, ErrorHit{
+		At: o.LastAt, Auth: auth, File: file, Source: source, Status: status, Sample: hitSample,
+	})
+	const maxHits = 200
+	if len(o.Hits) > maxHits {
+		o.Hits = o.Hits[len(o.Hits)-maxHits:]
+	}
 }
 
 func (s *Store) ListObserved() []ObservedError {

@@ -172,7 +172,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.5</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.6</span> <span id="modeBadge" class="badge">模式</span></h1>
     </div>
     <div class="row" style="align-items:center">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -317,7 +317,7 @@ select.act{min-width:100px}input.num{width:70px}
 let CFG={}, timer=null, LAST_LOGS=[], LAST_ACCOUNTS=[], ERRORS=[], CURRENT_TAB='accounts';
 let ERR_RENDERED=false, ERR_SNAPSHOT='';
 let MASKED = localStorage.getItem('cpa-xai-sentry-mask') !== '0'; // default masked like CPAMP
-const SIG_ZH={free_usage_429:'免费额度用尽',spending_limit_402:'消费限额',auth_401:'凭证失效',permission_403:'权限拒绝'};
+const SIG_ZH={free_usage_429:'免费额度用尽',spending_limit_402:'消费限额',auth_401:'凭证失效',permission_403:'权限拒绝',http_404:'HTTP 404', 'code:invalid-argument':'参数无效/上下文过长'};
 const API="/v0/management/cpa-xai-sentry";
 const KEY_LS="cpa-xai-sentry-management-key";
 const STATE_ZH={active:'正常',cooldown_quota:'额度冷却',cooldown_spending:'消费冷却',cooldown_permission:'权限冷却',candidate_dead:'候选死号',user_manual:'手动禁用',trashed:'垃圾箱',purged:'已清除'};
@@ -393,7 +393,23 @@ function modeBadge(mode,label){
 }
 function setSwitch(id,on){const el=document.getElementById(id); if(el) el.checked=!!on}
 function tag(cls,text){return '<span class="tag '+cls+'">'+esc(text)+'</span>'}
-function stateTag(st){const zh=STATE_ZH[st]||st; if(st==='active') return tag('active',zh); if(String(st).startsWith('cooldown')) return tag('cooldown',zh); if(st==='candidate_dead') return tag('candidate',zh); if(st==='user_manual') return tag('manual',zh); if(st==='trashed'||st==='purged') return tag('trash',zh); return tag('',zh)}
+function stateTag(st, a){
+  const zh=STATE_ZH[st]||st;
+  let html='';
+  if(st==='active') html=tag('active',zh);
+  else if(String(st).startsWith('cooldown')) html=tag('cooldown',zh);
+  else if(st==='candidate_dead') html=tag('candidate',zh);
+  else if(st==='user_manual') html=tag('manual',zh);
+  else if(st==='trashed'||st==='purged') html=tag('trash',zh);
+  else html=tag('',zh);
+  // show current error signal under state for transparency
+  if(a && a.last_signal){
+    const sig=a.last_signal;
+    const lab=SIG_ZH[sig]||sig;
+    html+='<div class="num-sub" title="'+esc(sig)+'">'+esc(lab)+'</div>';
+  }
+  return html;
+}
 function actionTag(a){const cls=({cooldown:'cooldown',candidate:'candidate',trash:'trash',wait:'wait',review:'review',manual:'manual',observe:'observe',none:'none',restore_or_purge:'trash'}[a]||''); return tag(cls, ACT_ZH[a]||a||'-')}
 function switchTab(name){
   CURRENT_TAB=name;
@@ -524,7 +540,7 @@ function renderAccountRows(list, prevSel){
   return rows.map(a=>'<tr>'+
     '<td><input type="checkbox" class="rowchk" data-auth="'+esc(a.auth_index)+'"'+(prevSel.has(a.auth_index)?' checked':'')+'/></td>'+
     '<td>'+accountCell(a)+'</td>'+
-    '<td>'+stateTag(a.state)+'</td>'+
+    '<td>'+stateTag(a.state, a)+'</td>'+
     '<td>'+totalCallsCell(a)+'</td>'+
     '<td>'+rateCell(a)+'</td>'+
     '<td>'+callsCell(a)+'</td>'+
@@ -759,7 +775,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.5.5');
+    document.getElementById('ver').textContent='v'+(st.version||'0.5.6');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -802,31 +818,51 @@ async function refresh(){
   }catch(e){ toast('刷新失败:'+e.message); console.error(e) }
 }
 function policyErrorRows(key){
-  // build per-account error summary for this signal
+  // Prefer backend account_hits (has source/streak). Fallback to action logs.
+  const err=(ERRORS||[]).find(e=>e.key===key)||{};
+  const hits=Array.isArray(err.account_hits)?err.account_hits:[];
+  if(hits.length){
+    return hits.map(h=>({
+      auth:h.auth,
+      label:h.label||h.auth,
+      lastAt:h.last_at||'',
+      reason:h.message||h.sample||'',
+      req:h.hits||0,
+      fail:h.hits||0,
+      hits:h.hits||0,
+      streak:h.streak||0,
+      source:h.source_label||h.source||'',
+      status:h.status||0,
+    }));
+  }
   const known=new Set(Object.keys(SIG_ZH));
   const logs=(LAST_LOGS||[]).filter(l=>{
     const sig=l.signal||'';
-    if(key==='unmatched') return !sig || !known.has(sig);
-    return sig===key;
+    if(key==='unmatched') return !sig || !known.has(sig) || (l.text||'').toLowerCase().includes('unexpected eof');
+    if(key==='http_404') return (l.text||'').includes('404') || sig==='http_404';
+    if(key==='code:invalid-argument') return (l.text||'').toLowerCase().includes('invalid-argument') || (l.reason||'').toLowerCase().includes('invalid');
+    return sig===key || (l.text||'').includes(key);
   });
-  // group by account
   const by={};
   logs.forEach(l=>{
-    const id=l.auth||l.auth_label||'unknown';
-    if(!by[id]) by[id]={auth:id, label:l.auth_label||l.auth||id, lastAt:l.at||'', reason:l.reason||l.signal_label||l.text||'', hits:0};
+    const id=l.auth||l.auth_label||'';
+    if(!id) return; // drop global unknown rows
+    if(!by[id]) by[id]={auth:id, label:l.auth_label||l.auth||id, lastAt:l.at||'', reason:l.reason||l.signal_label||l.text||'', hits:0, streak:0, source:l.source_label||l.source||''};
     by[id].hits++;
     if((l.at||'') >= (by[id].lastAt||'')) {
       by[id].lastAt=l.at||by[id].lastAt;
       by[id].reason=l.reason||l.signal_label||l.text||by[id].reason;
+      by[id].source=l.source_label||l.source||by[id].source;
     }
   });
-  // enrich with account day stats
   Object.values(by).forEach(r=>{
     const acc=(LAST_ACCOUNTS||[]).find(a=>a.auth_index===r.auth || a.email===r.label || a.display_name===r.label);
     if(acc){
       r.label=acc.display_name||acc.email||r.label;
       r.req=acc.day_calls||0;
       r.fail=acc.day_fail_calls||0;
+      if(acc.streaks && (acc.streaks[key]!=null)) r.streak=acc.streaks[key];
+      else if(acc.last_signal===key) r.streak=1;
     }else{
       r.req=r.hits; r.fail=r.hits;
     }
@@ -834,21 +870,40 @@ function policyErrorRows(key){
   // if no logs, still list accounts currently having this signal
   if(!Object.keys(by).length){
     (LAST_ACCOUNTS||[]).filter(a=>a.last_signal===key).forEach(a=>{
-      by[a.auth_index]={auth:a.auth_index,label:a.display_name||a.email,lastAt:a.updated_at||'',reason:a.reason||(SIG_ZH[key]||key),req:a.day_calls||0,fail:a.day_fail_calls||0,hits:a.day_fail_calls||0};
+      const streak=(a.streaks&&a.streaks[key])||1;
+      by[a.auth_index]={auth:a.auth_index,label:a.display_name||a.email,lastAt:a.updated_at||'',reason:(SIG_ZH[key]||key)+'（账号当前信号）',req:a.day_calls||0,fail:a.day_fail_calls||0,hits:a.day_fail_calls||0,streak:streak,source:'账号状态'};
     });
   }
   return Object.values(by).sort((a,b)=>(b.lastAt||'').localeCompare(a.lastAt||'')).slice(0,50);
 }
 function policyLogsHTML(key){
   const rows=policyErrorRows(key);
-  if(!rows.length) return '<div class="pl-empty">暂无该策略相关报错</div>';
+  if(!rows.length) return '<div class="pl-empty">暂无该策略相关账号报错</div>';
   const err=(ERRORS||[]).find(e=>e.key===key)||{};
-  const sample=err.sample?parseErrorBody(err.sample):null;
-  return '<table><thead><tr><th style="width:70px">时间</th><th>账号</th><th>错误信息</th><th style="width:70px">请求</th><th style="width:70px">失败</th></tr></thead><tbody>'+
+  return '<table><thead><tr>'+
+    '<th style="width:88px">时间</th>'+
+    '<th>账号</th>'+
+    '<th>错误信息</th>'+
+    '<th style="width:54px">连续N</th>'+
+    '<th style="width:54px">命中</th>'+
+    '<th style="width:150px">操作</th>'+
+    '</tr></thead><tbody>'+
     rows.map(r=>{
-      const msg=cleanSample(r.reason||'') || (sample&&sample.message) || (SIG_ZH[key]||key);
+      const msg=String(r.reason||err.label||key);
       const label=dispAuth(r.label||r.auth);
-      return '<tr><td class="mono">'+esc(r.lastAt||'')+'</td><td title="'+esc(r.label||r.auth||'')+'">'+esc(label)+'</td><td title="'+esc(sample&&sample.pretty?sample.pretty:msg)+'">'+esc(String(msg).slice(0,120))+'</td><td>'+(r.req||0)+'</td><td>'+(r.fail||0)+'</td></tr>';
+      const auth=esc(r.auth||'');
+      return '<tr>'+
+        '<td class="mono">'+esc(r.lastAt||'')+'</td>'+
+        '<td title="'+esc(r.label||r.auth||'')+'">'+esc(label)+'</td>'+
+        '<td title="'+esc(msg)+'">'+esc(msg.slice(0,140))+'</td>'+
+        '<td>'+(r.streak||0)+'</td>'+
+        '<td>'+(r.hits||r.fail||0)+'</td>'+
+        '<td class="actions">'+
+          '<button class="xs" data-auth="'+auth+'" onclick="bulkOne(this.getAttribute(\'data-auth\'),\'enable\')">启用</button>'+
+          '<button class="xs warn" data-auth="'+auth+'" onclick="bulkOne(this.getAttribute(\'data-auth\'),\'cooldown\')">冷却</button>'+
+          '<button class="xs danger" data-auth="'+auth+'" onclick="bulkOne(this.getAttribute(\'data-auth\'),\'disable\')">禁用</button>'+
+        '</td>'+
+      '</tr>';
     }).join('')+
   '</tbody></table>';
 }
@@ -1053,6 +1108,18 @@ async function bulk(action){
     const res=await j('/accounts/bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,auths,confirm:true})});
     toast(label+' 成功 '+(res.success||0)+' / 失败 '+(res.failed||0));
     await refresh();
+  }catch(e){ toast(e.message) }
+}
+async function bulkOne(auth, action){
+  if(!auth){ toast('账号为空'); return; }
+  const label={disable:'禁用',enable:'启用',trash:'移入垃圾箱',cooldown:'冷却'}[action]||action;
+  if(!confirm('对账号执行「'+label+'」?')) return;
+  try{
+    const res=await j('/accounts/bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,auths:[auth],confirm:true})});
+    toast(label+' 成功 '+(res.success||0)+' / 失败 '+(res.failed||0));
+    ERR_RENDERED=false;
+    await refresh();
+    if(CURRENT_TAB==='errors') await loadErrors(true);
   }catch(e){ toast(e.message) }
 }
 async function cooldownSuggested(){

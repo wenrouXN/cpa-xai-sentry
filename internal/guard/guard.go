@@ -153,7 +153,7 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 	if len(sample) > 900 {
 		sample = sample[:900]
 	}
-	g.State.ObserveError(errKey, label, string(res.Signal), res.Code, sample, ev.AuthIndex, ev.FileName, ev.StatusCode)
+	g.State.ObserveError(errKey, label, string(res.Signal), res.Code, sample, ev.AuthIndex, ev.FileName, ev.Source, ev.StatusCode)
 
 	// seed policy entry for newly learned errors (default observe)
 	if _, ok := g.State.GetErrorPolicy(errKey); !ok {
@@ -461,6 +461,14 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 		}
 		if sig != "" {
 			g.stampLastSignal(acc.AuthIndex, sig)
+		}
+		// also record into error catalog so policy page has account rows
+		sample := "CPA auth file disabled; synced by maintenance tick"
+		if isFree {
+			sample = "CPA auth file disabled + free-usage evidence; synced by maintenance tick"
+			g.State.ObserveError("free_usage_429", "免费额度用尽(429)", "free_usage_429", "subscription:free-usage-exhausted", sample, acc.AuthIndex, acc.FileName, "tick", 429)
+		} else {
+			g.State.ObserveError("http_0_disabled", "CPA已禁用(同步)", "", "cpa_disabled", sample, acc.AuthIndex, acc.FileName, "tick", 0)
 		}
 		g.State.Log(state.ActionLog{
 			Auth: acc.AuthIndex, Source: "tick", Signal: sig,

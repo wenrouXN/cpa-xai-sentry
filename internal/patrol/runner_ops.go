@@ -152,6 +152,7 @@ func (r *Runner) runJob(ctx context.Context, mode Mode) {
 			r.appendLog(res.AuthIndex, label, res.StatusCode, "ok", "探测存活", "alive")
 			continue
 		}
+		// feed already done in Run via HandleUsage; also ensure error catalog has source=patrol
 		// classify rough outcome for UI
 		body := strings.ToLower(res.Body)
 		if res.StatusCode == 429 || strings.Contains(body, "free-usage") {
@@ -184,6 +185,8 @@ func (r *Runner) runJob(ctx context.Context, mode Mode) {
 			}
 			errs++
 			r.appendLog(res.AuthIndex, label, res.StatusCode, "err", msg, "http_error")
+			// Ensure unmatched/http_xxx catalog has account hit even if signal none.
+			// HandleUsage already observed; this is a safety net for status-only cases.
 			continue
 		}
 		r.appendLog(res.AuthIndex, label, res.StatusCode, "info", "探测完成 HTTP "+itoa(res.StatusCode), "done")
