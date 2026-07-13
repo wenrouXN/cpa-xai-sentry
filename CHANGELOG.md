@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.1.0
+
+### Hard fix: stop cool-down being reopened as "非自有禁用"
+Root cause was structural, not one-account matching:
+1. Self-heal reopen default ON + `ResetToActive` wiped cool-downs after 429/403.
+2. HandleUsage and Tick raced on ownership.
+
+Changes:
+- **Default `reopen_foreign_disabled=false`** (safe). Unknown disables stay closed; only `recover_at` / panel enable open files.
+- Serialize **HandleUsage / Tick / ManualEnable/Disable** with a mutex.
+- Self-heal (if explicitly enabled) **never** opens owned cool-downs and **never** `ResetToActive` on protectable accounts; file enable only.
+- Owned cool-down with file enabled still **re-disables** (`cooldown_reassert`).
+- Production config sets `reopen_foreign_disabled: false`.
+
+
 ## 1.0.11
 
 ### Fixed: owned cool-down file left enabled after false reopen
@@ -86,6 +101,21 @@
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.0
+
+### Hard fix: stop cool-down being reopened as "非自有禁用"
+Root cause was structural, not one-account matching:
+1. Self-heal reopen default ON + `ResetToActive` wiped cool-downs after 429/403.
+2. HandleUsage and Tick raced on ownership.
+
+Changes:
+- **Default `reopen_foreign_disabled=false`** (safe). Unknown disables stay closed; only `recover_at` / panel enable open files.
+- Serialize **HandleUsage / Tick / ManualEnable/Disable** with a mutex.
+- Self-heal (if explicitly enabled) **never** opens owned cool-downs and **never** `ResetToActive` on protectable accounts; file enable only.
+- Owned cool-down with file enabled still **re-disables** (`cooldown_reassert`).
+- Production config sets `reopen_foreign_disabled: false`.
+
 
 ## 1.0.11
 

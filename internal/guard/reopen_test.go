@@ -48,10 +48,7 @@ func TestTickReopensUnownedDisabledSelfHeal(t *testing.T) {
 	cfg.ManagementURL = srv.URL
 	cfg.ManagementKey = "k"
 	cfg.AuthDir = dir
-	// default self-heal
-	if !cfg.ReopenForeignDisabled {
-		t.Fatal("default should reopen unowned disables")
-	}
+	cfg.ReopenForeignDisabled = true // explicit opt-in for this test
 	st := state.New(filepath.Join(dir, "s.json"))
 	st.Touch("auth1")
 	st.UpdateMeta("auth1", "xai-op@lovc.eu.cc.json", "op@lovc.eu.cc", "")
@@ -557,5 +554,13 @@ func TestTickReassertsOwnedCooldownIfFileEnabled(t *testing.T) {
 	}
 	if st.Get("de847af412d8414c").State != state.CooldownQuota {
 		t.Fatalf("state=%s", st.Get("de847af412d8414c").State)
+	}
+}
+
+
+func TestDefaultReopenForeignDisabledFalse(t *testing.T) {
+	cfg := sentrycfg.Default()
+	if cfg.ReopenForeignDisabled {
+		t.Fatal("safe default must be reopen_foreign_disabled=false")
 	}
 }

@@ -35,11 +35,10 @@ type Config struct {
 	CPAMPURL              string         `yaml:"cpamp_url" json:"cpamp_url"`
 	CPAMPAdminKey         string         `yaml:"cpamp_admin_key" json:"cpamp_admin_key"`
 	CPAMPUsageFloor       bool           `yaml:"cpamp_usage_floor" json:"cpamp_usage_floor"`
-	// ReopenForeignDisabled: when true (DEFAULT), tick re-enables CPA auth files
-	// whose disable is NOT owned by this sentry (no plugin_auto cool-down / panel
-	// permanent disable). Rationale: wait for next real usage error to re-stamp
-	// ownership (self-heal). Set false to keep unknown disables closed and mark
-	// them as CPA已禁用 instead.
+	// ReopenForeignDisabled: when true, tick may re-enable CPA auth files that are
+	// disabled and NOT owned by this sentry. DEFAULT false (safe): never auto-open
+	// unknown disables — only recover_at / panel enable open files. Set true only
+	// if you explicitly want self-heal for foreign disables.
 	ReopenForeignDisabled bool `yaml:"reopen_foreign_disabled" json:"reopen_foreign_disabled"`
 }
 
@@ -76,7 +75,7 @@ func Default() Config {
 		PatrolBatchSize:       50,
 		PatrolModel:           "grok-4.5",
 		CPAMPUsageFloor:       true,
-		ReopenForeignDisabled: true, // self-heal: open unowned disables, wait next error
+		ReopenForeignDisabled: false, // SAFE default: do not auto-open unknown disables
 	}
 }
 

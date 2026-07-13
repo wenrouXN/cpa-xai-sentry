@@ -1,3 +1,5 @@
+> **Policy since v1.1.0:** auto-open of unowned disables is **OFF** by default (`reopen_foreign_disabled: false`).
+
 # Auth closed-loop state machine
 
 Single source of truth for how sentry owns CPA auth files.
