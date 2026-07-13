@@ -91,7 +91,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">XAI 账号巡检 / 动态错误管控</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.2.1</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.3.0</span> <span id="modeBadge" class="badge">模式</span></h1>
       <div class="sub">观察用量错误 → 按策略冷却/候选/垃圾箱。默认仅观察；「安全防护」= 自动冷却 + 自动候选，<b>不会</b>自动进垃圾箱。</div>
     </div>
     <div class="row">
@@ -108,6 +108,8 @@ select.act{min-width:100px}input.num{width:70px}
     <b>周期任务</b>：到期自动恢复冷却账号 + 清理过期垃圾箱（不是主动巡检）。
     <b>CPAMP</b>：若已配置地址和密钥，启动后会自动回补今日 xAI 用量；未配置则跳过。
     <b>安全防护</b>：自动冷却 + 自动候选，仍禁止自动进垃圾箱；进垃圾箱需人工确认或单独打开「自动垃圾箱」。
+    <b>开关持久化</b>：面板开关会写入挂载目录，不会被 YAML 重载打回「仅观察」。
+    <b>配额</b>：优先解析错误体；否则用本地日计数 + CPAMP 日地板估算（非官方实时余额）。
   </div>
 
   <div class="card">
@@ -175,15 +177,25 @@ select.act{min-width:100px}input.num{width:70px}
         <option value="observe">观察</option>
         <option value="none">无</option>
       </select>
+      <button class="xs" onclick="selAll(true)">全选当前</button>
+      <button class="xs" onclick="selAll(false)">清空</button>
+      <button class="xs warn" onclick="bulk('disable')">禁用所选</button>
+      <button class="xs primary" onclick="bulk('enable')">启用所选</button>
+      <button class="xs danger" onclick="bulk('trash')">删除→垃圾箱</button>
+      <button class="xs warn" onclick="bulk('cooldown')">冷却所选</button>
+      <button class="xs warn" onclick="cooldownSuggested()">一键冷却「建议冷却」</button>
     </div>
+    <div class="meta" id="coolLine" style="margin:4px 0 6px">冷却/配额：—</div>
     <div class="table-wrap">
       <table>
         <thead>
           <tr>
+            <th style="width:28px"><input type="checkbox" id="chkAll" onchange="selAll(this.checked)"/></th>
             <th style="min-width:180px">账号</th>
             <th>状态</th>
             <th>信号</th>
             <th>连续</th>
+            <th>配额/今日</th>
             <th>建议</th>
             <th>原因</th>
             <th>恢复</th>
@@ -276,15 +288,14 @@ function switchTab(name){
   if(name==='trash') refreshTrashOnly();
 }
 function debouncedRefresh(){clearTimeout(timer); timer=setTimeout(refresh,220)}
-function renderKPIs(s, trashCount, errorCount){
-  s=s||{};
-  // 不重复：只保留总览 KPI，建议动作数字合并进这几个
+function renderKPIs(s, trashCount, cool){
+  s=s||{}; cool=cool||{};
   const items=[
     ['已观测',s.total||0,'accent'],
     ['正常',s.active||0,'ok'],
-    ['冷却中',s.cooldown||0,'warn'],
+    ['冷却中',cool.cooling!=null?cool.cooling:(s.cooldown||0),'warn'],
+    ['待执行冷却',cool.pending_suggest!=null?cool.pending_suggest:(s.pending_suggest||0),'warn'],
     ['候选',s.candidate||0,'danger'],
-    ['有信号',s.with_signal||0,''],
     ['垃圾箱',trashCount||0,''],
   ];
   document.getElementById('kpis').innerHTML=items.map(([l,v,c])=>'<div class="kpi '+(c||'')+'"><span>'+l+'</span><b>'+v+'</b></div>').join('');
@@ -338,33 +349,47 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.2.1');
+    document.getElementById('ver').textContent='v'+(st.version||'0.3.0');
     document.getElementById('updatedAt').textContent='更新 '+(st.updated_at||'—').replace('T',' ').replace('Z','');
-    renderKPIs(st.summary, st.trash_count||0, st.error_count||0);
+    const cool=st.cooldown_stats||{};
+    renderKPIs(st.summary, st.trash_count||0, cool);
     renderSignals(st.signal_counts||{});
     setSwitch('swSentry',!!CFG.sentry_enabled);
     setSwitch('swCool',!!CFG.auto_cooldown);
     setSwitch('swCand',!!CFG.auto_candidate);
     setSwitch('swDel',!!CFG.auto_delete);
     setSwitch('swPatrol',!!CFG.patrol_enabled);
-    document.getElementById('cfgLine').textContent='周期 '+(CFG.tick_seconds||30)+'s · 垃圾箱保留 '+(CFG.trash_retention_days||7)+'天'+(CFG.trash_auto_purge?'（自动清）':'')+' · 密钥 '+(CFG.management_key_set?'已配置':'缺失');
+    document.getElementById('cfgLine').textContent='周期 '+(CFG.tick_seconds||30)+'s · 垃圾箱保留 '+(CFG.trash_retention_days||7)+'天'+(CFG.trash_auto_purge?'（自动清）':'')+' · 密钥 '+(CFG.management_key_set?'已配置':'缺失')+' · 开关已持久化';
     const m=st.metrics||{};
-    const cpampCfg=!!(CFG.cpamp_url && (CFG.cpamp_admin_key_set||CFG.cpamp_url));
     document.getElementById('metricsLine').textContent=
       (CFG.cpamp_url
         ? ('CPAMP 已配置 · 日='+(m.day_key||'—')+' · Token≥'+(m.tokens_floor||0)+' · 调用≥'+(m.calls_floor||0)+' · 最近回补 '+(m.backfill_at||'尚未')+(m.backfill_source?(' / '+m.backfill_source):'')+' · 自动回补开启')
         : 'CPAMP 未配置，跳过自动回补');
+    const coolLine=document.getElementById('coolLine');
+    if(coolLine){
+      const parts=[
+        '冷却中 '+(cool.cooling!=null?cool.cooling:0),
+        '待执行冷却 '+(cool.pending_suggest!=null?cool.pending_suggest:0),
+        '有配额字段 '+(cool.with_quota!=null?cool.with_quota:0),
+        '配额合计 用'+(cool.quota_used_sum||0)+'/限'+(cool.quota_limit_sum||0)+' 剩'+(cool.quota_remain_sum||0)
+      ];
+      if(cool.earliest_recover_at) parts.push('最早恢复 '+(String(cool.earliest_recover_at).replace('T',' ').replace('Z','')));
+      if(cool.latest_recover_at) parts.push('最晚恢复 '+(String(cool.latest_recover_at).replace('T',' ').replace('Z','')));
+      coolLine.textContent=parts.join(' · ')+(st.quota_help?(' · '+st.quota_help):'');
+    }
     document.getElementById('accMeta').textContent=(st.account_count||0)+' 行 / 已观测 '+((st.summary&&st.summary.total)||0);
     document.getElementById('accBody').innerHTML=(st.accounts||[]).map(a=>'<tr>'+
+      '<td><input type="checkbox" class="rowchk" data-auth="'+esc(a.auth_index)+'"/></td>'+
       '<td>'+accountCell(a)+'</td>'+
       '<td>'+stateTag(a.state)+'</td>'+
       '<td>'+esc(a.last_signal||'')+'</td>'+
       '<td class="mono">'+esc(a.streak_summary||'')+'</td>'+
+      '<td class="mono">'+esc(a.quota_text||'—')+'</td>'+
       '<td>'+actionTag(a.suggested_action)+'</td>'+
       '<td class="reason">'+esc(a.reason||'')+'</td>'+
       '<td class="mono">'+esc(a.recover_at||'')+'</td>'+
       '<td class="mono">'+esc(a.updated_at||'')+'</td></tr>').join('')||
-      '<tr><td colspan="8" class="muted">无匹配结果</td></tr>';
+      '<tr><td colspan="10" class="muted">无匹配结果</td></tr>';
 
     if(CURRENT_TAB==='trash') await refreshTrashOnly();
     const lg=await j('/logs'); renderLogs(lg.logs||[]);
@@ -434,6 +459,30 @@ async function runTick(){ try{ await j('/run-tick',{method:'POST'}); toast('周�
 async function restore(id,enable){ try{ await j('/trash/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,enable})}); toast(enable?'已恢复并启用':'已恢复（禁用）'); await refresh() }catch(e){toast(e.message)} }
 async function purge(id){ if(!confirm('彻底清除后不可恢复，确认？')) return; try{ await j('/trash/purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,confirm:true})}); toast('已清除'); await refresh() }catch(e){toast(e.message)} }
 async function purgeExpired(){ if(!confirm('清理所有到期垃圾箱项？')) return; try{ await j('/trash/purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({expired:true,confirm:true})}); toast('到期项已清理'); await refresh() }catch(e){toast(e.message)} }
+function selectedAuths(){return Array.from(document.querySelectorAll('.rowchk:checked')).map(el=>el.getAttribute('data-auth')).filter(Boolean)}
+function selAll(on){
+  document.querySelectorAll('.rowchk').forEach(el=>{el.checked=!!on});
+  const all=document.getElementById('chkAll'); if(all) all.checked=!!on;
+}
+async function bulk(action){
+  const auths=selectedAuths();
+  if(!auths.length){ toast('请先勾选账号'); return; }
+  const label={disable:'禁用',enable:'启用',trash:'移入垃圾箱',cooldown:'冷却'}[action]||action;
+  if(!confirm('对当前勾选的 '+auths.length+' 个账号执行「'+label+'」？'+(action==='trash'?'\n删除会进垃圾箱（可恢复），不是立刻硬删。':''))) return;
+  try{
+    const res=await j('/accounts/bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,auths,confirm:true})});
+    toast(label+' 成功 '+(res.success||0)+' / 失败 '+(res.failed||0));
+    await refresh();
+  }catch(e){ toast(e.message) }
+}
+async function cooldownSuggested(){
+  if(!confirm('对当前「建议冷却」的 active+free_usage_429 账号一键执行冷却？\n（按默认最长 24h / max_reset_seconds）')) return;
+  try{
+    const res=await j('/accounts/cooldown-suggested',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true,hours:24})});
+    toast('已冷却 '+(res.cooled||0)+' 个账号');
+    await refresh();
+  }catch(e){ toast(e.message) }
+}
 document.addEventListener('click',function(ev){
   const t=ev.target;
   if(t.classList.contains('btn-restore')) restore(t.getAttribute('data-id'), false);

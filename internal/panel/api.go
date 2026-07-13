@@ -22,6 +22,10 @@ type API struct {
 	Trash  *trash.Store
 	Guard  *guard.Guard
 	Patrol *patrol.Runner
+	// optional hooks wired by main runtime for durable panel toggles
+	PersistConfig func(c sentrycfg.Config) error
+	GetConfig     func() sentrycfg.Config
+	SetConfig     func(c sentrycfg.Config)
 }
 
 func (a *API) Handler() http.Handler {
@@ -41,9 +45,26 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/errors/policy", a.handleErrorPolicy)
 	mux.HandleFunc("/backfill", a.handleBackfill)
 	mux.HandleFunc("/metrics", a.handleMetrics)
+	mux.HandleFunc("/accounts/bulk", a.handleAccountsBulk)
+	mux.HandleFunc("/accounts/cooldown-suggested", a.handleCooldownSuggested)
 	mux.HandleFunc("/ui", a.handleUI)
 	mux.HandleFunc("/", a.handleUI)
 	return mux
+}
+
+func (a *API) persistSwitches() {
+	if a.Cfg == nil {
+		return
+	}
+	if a.SetConfig != nil {
+		a.SetConfig(*a.Cfg)
+	}
+	if a.PersistConfig != nil {
+		_ = a.PersistConfig(*a.Cfg)
+	}
+	if a.Guard != nil {
+		a.Guard.Cfg = *a.Cfg
+	}
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -121,6 +142,14 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		Reason          string         `json:"reason"`
 		RecoverAt       any            `json:"recover_at,omitempty"`
 		UpdatedAt       any            `json:"updated_at,omitempty"`
+		QuotaLimit      int64          `json:"quota_limit,omitempty"`
+		QuotaUsed       int64          `json:"quota_used,omitempty"`
+		QuotaRemaining  int64          `json:"quota_remaining,omitempty"`
+		QuotaSource     string         `json:"quota_source,omitempty"`
+		DayCalls        int64          `json:"day_calls,omitempty"`
+		DayFailCalls    int64          `json:"day_fail_calls,omitempty"`
+		DayTokens       int64          `json:"day_tokens,omitempty"`
+		QuotaText       string         `json:"quota_text,omitempty"`
 	}
 	summary := map[string]int{
 		"total": 0, "active": 0, "cooldown": 0, "candidate": 0,
@@ -199,21 +228,42 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			}
 			streakSum = strings.Join(parts, " ")
 		}
+		qText := ""
+		if acc.QuotaLimit > 0 || acc.QuotaUsed > 0 || acc.QuotaRemaining > 0 {
+			qText = itoa64(acc.QuotaUsed) + "/" + itoa64(acc.QuotaLimit) + " 剩" + itoa64(acc.QuotaRemaining)
+			if acc.QuotaSource != "" {
+				qText += " (" + acc.QuotaSource + ")"
+			}
+		} else if acc.DayCalls > 0 {
+			qText = "今日调用" + itoa64(acc.DayCalls) + " 失败" + itoa64(acc.DayFailCalls)
+		}
 		rows = append(rows, row{
 			AuthIndex: acc.AuthIndex, FileName: acc.FileName, Email: acc.Email, DisplayName: display,
 			Tier: acc.Tier, State: string(acc.State), Signal: acc.LastSignal,
 			DisableSource: acc.DisableSource, Streaks: acc.Streaks, StreakSummary: streakSum,
 			SuggestedAction: act, Reason: reason, RecoverAt: ra, UpdatedAt: ua,
+			QuotaLimit: acc.QuotaLimit, QuotaUsed: acc.QuotaUsed, QuotaRemaining: acc.QuotaRemaining,
+			QuotaSource: acc.QuotaSource, DayCalls: acc.DayCalls, DayFailCalls: acc.DayFailCalls,
+			DayTokens: acc.DayTokens, QuotaText: qText,
 		})
 	}
 	m := a.State.MetricsSnapshot()
+	cool := a.State.CooldownStats(time.Now())
+	// enrich summary with cooldown capacity
+	if v, ok := cool["cooling"].(int); ok {
+		summary["cooldown"] = v
+	}
+	if v, ok := cool["pending_suggest"].(int); ok {
+		summary["pending_suggest"] = v
+	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":          "cpa-xai-sentry",
-		"version":         "0.2.1",
+		"version":         "0.3.0",
 		"mode":            modeOf(*a.Cfg),
 		"mode_label":      modeLabel(modeOf(*a.Cfg)),
 		"summary":         summary,
 		"signal_counts":   signalCounts,
+		"cooldown_stats":  cool,
 		"accounts":        rows,
 		"account_count":   len(rows),
 		"trash_count":     len(a.State.ListTrash()),
@@ -223,7 +273,30 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		"config":          a.Cfg.Redact(),
 		"updated_at":      time.Now().UTC().Format(time.RFC3339),
 		"tick_help":       "周期任务：到期自动恢复冷却账号，并清理过期垃圾箱。不是巡检。",
+		"quota_help":      "配额数字来自错误体解析/本地日计数/CPAMP 日地板；官方 per-account remaining 不可用时为估算。",
 	})
+}
+
+func itoa64(n int64) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	var b [20]byte
+	i := len(b)
+	for n > 0 {
+		i--
+		b[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		b[i] = '-'
+	}
+	return string(b[i:])
 }
 
 func itoa(n int) string {
@@ -293,9 +366,7 @@ func (a *API) handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		in = in.Validate()
 		*a.Cfg = in
-		if a.Guard != nil {
-			a.Guard.Cfg = in
-		}
+		a.persistSwitches()
 		writeJSON(w, 200, a.Cfg.Redact())
 	default:
 		w.WriteHeader(405)
@@ -420,8 +491,9 @@ func (a *API) handleRunTick(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.2.1",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.3.0",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
+		"cooldown_stats": a.State.CooldownStats(time.Now()),
 	})
 }
 
@@ -457,10 +529,8 @@ func (a *API) handleToggle(w http.ResponseWriter, r *http.Request) {
 		a.Cfg.PatrolEnabled = *in.PatrolEnabled
 	}
 	*a.Cfg = a.Cfg.Validate()
-	if a.Guard != nil {
-		a.Guard.Cfg = *a.Cfg
-	}
-	writeJSON(w, 200, map[string]any{"ok": true, "mode": modeOf(*a.Cfg), "config": a.Cfg.Redact()})
+	a.persistSwitches()
+	writeJSON(w, 200, map[string]any{"ok": true, "mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact()})
 }
 
 func (a *API) handlePreset(w http.ResponseWriter, r *http.Request) {
@@ -497,10 +567,69 @@ func (a *API) handlePreset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	*a.Cfg = a.Cfg.Validate()
-	if a.Guard != nil {
-		a.Guard.Cfg = *a.Cfg
+	a.persistSwitches()
+	writeJSON(w, 200, map[string]any{"ok": true, "mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact()})
+}
+
+func (a *API) handleAccountsBulk(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(405)
+		return
 	}
-	writeJSON(w, 200, map[string]any{"ok": true, "mode": modeOf(*a.Cfg), "config": a.Cfg.Redact()})
+	var in struct {
+		Action  string   `json:"action"` // disable|enable|trash|cooldown
+		Auths   []string `json:"auths"`
+		Confirm bool     `json:"confirm"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	in.Action = strings.ToLower(strings.TrimSpace(in.Action))
+	if in.Action == "delete" {
+		in.Action = "trash"
+	}
+	if in.Action == "" || len(in.Auths) == 0 {
+		writeJSON(w, 400, map[string]string{"error": "action 与 auths 必填"})
+		return
+	}
+	if (in.Action == "trash" || in.Action == "disable") && !in.Confirm {
+		writeJSON(w, 400, map[string]string{"error": "危险操作需要 confirm=true"})
+		return
+	}
+	if a.Guard == nil {
+		writeJSON(w, 503, map[string]string{"error": "guard 未就绪"})
+		return
+	}
+	okN, failN, errs := a.Guard.Bulk(r.Context(), in.Action, in.Auths)
+	writeJSON(w, 200, map[string]any{"ok": true, "action": in.Action, "success": okN, "failed": failN, "errors": errs})
+}
+
+func (a *API) handleCooldownSuggested(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(405)
+		return
+	}
+	var in struct {
+		Auths  []string `json:"auths"`
+		Hours  int      `json:"hours"`
+		Confirm bool    `json:"confirm"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in)
+	if !in.Confirm {
+		writeJSON(w, 400, map[string]string{"error": "confirm=true required"})
+		return
+	}
+	if a.Guard == nil {
+		writeJSON(w, 503, map[string]string{"error": "guard 未就绪"})
+		return
+	}
+	n, err := a.Guard.ApplySuggestedCooldown(r.Context(), in.Auths, in.Hours)
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "cooled": n})
 }
 
 

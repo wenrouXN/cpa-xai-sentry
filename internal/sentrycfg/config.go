@@ -57,9 +57,10 @@ func Default() Config {
 		PermissionCooldownSec: 1800,
 		Auth401CooldownSec:      3600,
 		ManagementURL:         "http://127.0.0.1:8317",
-		StatePath:             "data/cpa-xai-sentry-state.json",
+		// Persist under auth_dir (host-mounted) so panel toggles & state survive container restarts.
+		StatePath:             "/root/.cli-proxy-api/cpa-xai-sentry/state.json",
 		AuthDir:               "/root/.cli-proxy-api",
-		TrashDir:              "data/cpa-xai-sentry-trash",
+		TrashDir:              "/root/.cli-proxy-api/cpa-xai-sentry/trash",
 		TrashRetentionDays:    7,
 		TrashAutoPurge:        true,
 		RestoreDefaultDis:     true,

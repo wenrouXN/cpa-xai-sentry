@@ -72,6 +72,8 @@ func buildManagementRegistration() managementRegistration {
 			{Method: "POST", Path: "/" + pluginID + "/errors/policy", Description: "保存单错误策略"},
 			{Method: "POST", Path: "/" + pluginID + "/backfill", Description: "CPAMP今日用量回补"},
 			{Method: "GET", Path: "/" + pluginID + "/metrics", Description: "用量地板/回补指标"},
+			{Method: "POST", Path: "/" + pluginID + "/accounts/bulk", Description: "筛选账号批量禁用/启用/垃圾箱/冷却"},
+			{Method: "POST", Path: "/" + pluginID + "/accounts/cooldown-suggested", Description: "对建议冷却账号一键执行冷却"},
 		},
 	}
 }

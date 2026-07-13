@@ -37,6 +37,16 @@ type Account struct {
 	Streaks       map[string]int `json:"streaks"`
 	RecoverAt     time.Time      `json:"recover_at"`
 	UpdatedAt     time.Time      `json:"updated_at"`
+	// Best-effort quota accounting (from error bodies / CPAMP day floors).
+	QuotaLimit     int64     `json:"quota_limit,omitempty"`
+	QuotaUsed      int64     `json:"quota_used,omitempty"`
+	QuotaRemaining int64     `json:"quota_remaining,omitempty"`
+	QuotaSource    string    `json:"quota_source,omitempty"`
+	QuotaUpdatedAt time.Time `json:"quota_updated_at,omitempty"`
+	DayCalls       int64     `json:"day_calls,omitempty"`
+	DayFailCalls   int64     `json:"day_fail_calls,omitempty"`
+	DayTokens      int64     `json:"day_tokens,omitempty"`
+	DayKey         string    `json:"day_key,omitempty"`
 }
 
 type ActionLog struct {
@@ -245,6 +255,21 @@ func (s *Store) CanAutoReenable(authIndex string) bool {
 		return false
 	}
 	return acc.Owner == Owner && acc.DisableSource == "plugin_auto"
+}
+
+// ClearManualLock clears user_manual / pre_disabled after an explicit panel enable.
+func (s *Store) ClearManualLock(authIndex string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	acc := s.Accounts[authIndex]
+	if acc == nil {
+		return
+	}
+	acc.State = Active
+	acc.DisableSource = ""
+	acc.PreDisabled = false
+	acc.RecoverAt = time.Time{}
+	acc.UpdatedAt = time.Now()
 }
 
 func (s *Store) Log(entry ActionLog) {
@@ -487,4 +512,108 @@ func (s *Store) MetricsSnapshot() MetricsFloor {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.Metrics
+}
+
+// UpdateQuota writes best-effort per-account quota numbers.
+func (s *Store) UpdateQuota(authIndex string, limit, used, remaining int64, source string, resetAt time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	acc := s.Accounts[authIndex]
+	if acc == nil {
+		acc = &Account{AuthIndex: authIndex, State: Active, Streaks: map[string]int{}}
+		s.Accounts[authIndex] = acc
+	}
+	if limit > 0 {
+		acc.QuotaLimit = limit
+	}
+	if used >= 0 {
+		acc.QuotaUsed = used
+	}
+	if remaining >= 0 {
+		acc.QuotaRemaining = remaining
+	}
+	if source != "" {
+		acc.QuotaSource = source
+	}
+	acc.QuotaUpdatedAt = time.Now()
+	if !resetAt.IsZero() && (acc.RecoverAt.IsZero() || resetAt.Before(acc.RecoverAt)) {
+		// only hint; cooldown path owns RecoverAt when auto-cooling
+		if acc.State == Active {
+			acc.RecoverAt = resetAt
+		}
+	}
+	acc.UpdatedAt = time.Now()
+}
+
+// IncDayUsage bumps local day counters for an account (Shanghai day key expected).
+func (s *Store) IncDayUsage(authIndex, dayKey string, calls, failCalls, tokens int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	acc := s.Accounts[authIndex]
+	if acc == nil {
+		acc = &Account{AuthIndex: authIndex, State: Active, Streaks: map[string]int{}}
+		s.Accounts[authIndex] = acc
+	}
+	if acc.DayKey != dayKey {
+		acc.DayKey = dayKey
+		acc.DayCalls = 0
+		acc.DayFailCalls = 0
+		acc.DayTokens = 0
+	}
+	acc.DayCalls += calls
+	acc.DayFailCalls += failCalls
+	acc.DayTokens += tokens
+	acc.UpdatedAt = time.Now()
+}
+
+// CooldownStats derives cooldown inventory for KPI/capacity view.
+func (s *Store) CooldownStats(now time.Time) map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var cooling, pendingSuggest int
+	var earliest, latest time.Time
+	var knownLimit, knownUsed, knownRemain int64
+	var withQuota int
+	for _, a := range s.Accounts {
+		if a == nil {
+			continue
+		}
+		st := string(a.State)
+		if strings.HasPrefix(st, "cooldown") {
+			cooling++
+			if !a.RecoverAt.IsZero() {
+				if earliest.IsZero() || a.RecoverAt.Before(earliest) {
+					earliest = a.RecoverAt
+				}
+				if latest.IsZero() || a.RecoverAt.After(latest) {
+					latest = a.RecoverAt
+				}
+			}
+		}
+		if a.State == Active && a.LastSignal == "free_usage_429" {
+			pendingSuggest++
+		}
+		if a.QuotaLimit > 0 || a.QuotaRemaining > 0 || a.QuotaUsed > 0 {
+			withQuota++
+			knownLimit += a.QuotaLimit
+			knownUsed += a.QuotaUsed
+			knownRemain += a.QuotaRemaining
+		}
+	}
+	out := map[string]any{
+		"cooling":         cooling,
+		"pending_suggest": pendingSuggest,
+		"with_quota":      withQuota,
+		"quota_limit_sum": knownLimit,
+		"quota_used_sum":  knownUsed,
+		"quota_remain_sum": knownRemain,
+	}
+	if !earliest.IsZero() {
+		out["earliest_recover_at"] = earliest.UTC().Format(time.RFC3339)
+		out["earliest_recover_in_sec"] = int(earliest.Sub(now).Seconds())
+	}
+	if !latest.IsZero() {
+		out["latest_recover_at"] = latest.UTC().Format(time.RFC3339)
+	}
+	return out
 }

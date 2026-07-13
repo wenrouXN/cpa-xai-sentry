@@ -9,6 +9,7 @@ import (
 	"github.com/openclaw-local/cpa-xai-sentry/internal/errorsig"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/match"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/policy"
+	"github.com/openclaw-local/cpa-xai-sentry/internal/quota"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/sentrycfg"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/state"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/tier"
@@ -114,13 +115,36 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 	if acc == nil {
 		acc = g.State.Touch(ev.AuthIndex)
 	}
+	// day usage counters (local)
+	loc, _ := time.LoadLocation("Asia/Shanghai")
+	if loc == nil {
+		loc = time.FixedZone("CST", 8*3600)
+	}
+	day := g.Now().In(loc).Format("2006-01-02")
+	failN := int64(0)
+	if !(ev.Success || (ev.StatusCode >= 200 && ev.StatusCode < 300)) {
+		failN = 1
+	}
+	g.State.IncDayUsage(ev.AuthIndex, day, 1, failN, 0)
 
 	if ev.Success || (ev.StatusCode >= 200 && ev.StatusCode < 300) {
 		g.State.ClearAuthStreaks(ev.AuthIndex)
+		// still try parse remaining from success body if any
+		if q := quota.Parse(ev.Body); q.Limit > 0 || q.Remaining > 0 || q.Used > 0 {
+			g.State.UpdateQuota(ev.AuthIndex, q.Limit, q.Used, q.Remaining, q.Source, q.ResetAt)
+		}
 		return nil
 	}
 
 	res := match.Classify(ev.StatusCode, ev.Body)
+	// best-effort quota parse from failure body
+	q := quota.Parse(ev.Body)
+	if res.Signal == match.SignalFreeUsage429 {
+		q = quota.FreeUsageExhaustedEstimate(ev.Body, res.RecoverAt)
+	}
+	if q.Limit > 0 || q.Remaining > 0 || q.Used > 0 || !q.ResetAt.IsZero() {
+		g.State.UpdateQuota(ev.AuthIndex, q.Limit, q.Used, q.Remaining, q.Source, q.ResetAt)
+	}
 	errKey := errorsig.KeyFromMatch(res, ev.StatusCode)
 	label := errorsig.LabelOf(errKey, res, ev.StatusCode)
 	// always learn/observe errors into dynamic catalog (even unmatched)
@@ -357,4 +381,147 @@ func (g *Guard) Tick(ctx context.Context) error {
 		}
 	}
 	return g.State.Save()
+}
+
+func (g *Guard) resolveFileName(ctx context.Context, authIndex, fileName, email string) string {
+	name := fileName
+	if name == "" || cpaapi.LooksLikeOpaqueID(name) {
+		if g.Resolver != nil {
+			_ = g.Resolver.Ensure(ctx)
+			if id, ok := g.Resolver.Resolve(authIndex, fileName, email); ok && id.FileName != "" {
+				name = id.FileName
+				g.State.UpdateMeta(authIndex, id.FileName, id.Email, "")
+			}
+		}
+	}
+	return name
+}
+
+// ManualDisable disables one account via CPA and marks user_manual.
+func (g *Guard) ManualDisable(ctx context.Context, authIndex string) error {
+	acc := g.State.Get(authIndex)
+	if acc == nil {
+		acc = g.State.Touch(authIndex)
+	}
+	name := g.resolveFileName(ctx, authIndex, acc.FileName, acc.Email)
+	if g.CPA != nil && name != "" && !cpaapi.LooksLikeOpaqueID(name) {
+		if err := g.CPA.SetDisabled(ctx, name, true); err != nil {
+			return err
+		}
+	}
+	g.State.SetAccountState(authIndex, state.UserManual, "user_manual")
+	g.State.SetRecoverAt(authIndex, time.Time{})
+	g.State.Log(state.ActionLog{Auth: authIndex, Source: "panel", Action: "manual_disable", Reason: "panel bulk/manual"})
+	return g.State.Save()
+}
+
+// ManualEnable re-enables account even if previously user_manual.
+func (g *Guard) ManualEnable(ctx context.Context, authIndex string) error {
+	acc := g.State.Get(authIndex)
+	if acc == nil {
+		acc = g.State.Touch(authIndex)
+	}
+	name := g.resolveFileName(ctx, authIndex, acc.FileName, acc.Email)
+	if g.CPA != nil && name != "" && !cpaapi.LooksLikeOpaqueID(name) {
+		if err := g.CPA.SetDisabled(ctx, name, false); err != nil {
+			return err
+		}
+	}
+	g.State.ClearManualLock(authIndex)
+	g.State.Log(state.ActionLog{Auth: authIndex, Source: "panel", Action: "manual_enable", Reason: "panel bulk/manual"})
+	return g.State.Save()
+}
+
+// ManualTrash snapshots+deletes auth file into trash bin.
+func (g *Guard) ManualTrash(ctx context.Context, authIndex string) error {
+	acc := g.State.Get(authIndex)
+	if acc == nil {
+		acc = g.State.Touch(authIndex)
+	}
+	ev := UsageEvent{AuthIndex: authIndex, FileName: acc.FileName, Email: acc.Email, Source: "panel"}
+	res := match.Result{Signal: match.Signal(acc.LastSignal), Reason: "manual_trash"}
+	if res.Signal == "" {
+		res.Signal = match.SignalAuth401
+	}
+	return g.applyTrash(ctx, ev, res, acc)
+}
+
+// ApplySuggestedCooldown cools accounts currently active with free_usage_429 (or provided list).
+func (g *Guard) ApplySuggestedCooldown(ctx context.Context, authIndexes []string, hours int) (int, error) {
+	if hours <= 0 {
+		hours = 24
+	}
+	n := 0
+	now := g.Now()
+	recoverAt := now.Add(time.Duration(hours) * time.Hour)
+	if g.Cfg.MaxResetSeconds > 0 {
+		maxAt := now.Add(time.Duration(g.Cfg.MaxResetSeconds) * time.Second)
+		if recoverAt.After(maxAt) {
+			recoverAt = maxAt
+		}
+	}
+	targets := authIndexes
+	if len(targets) == 0 {
+		for _, acc := range g.State.AccountsSnapshot() {
+			if acc.State == state.Active && acc.LastSignal == string(match.SignalFreeUsage429) {
+				targets = append(targets, acc.AuthIndex)
+			}
+		}
+	}
+	for _, id := range targets {
+		acc := g.State.Get(id)
+		if acc == nil {
+			continue
+		}
+		name := g.resolveFileName(ctx, id, acc.FileName, acc.Email)
+		if g.CPA != nil && name != "" && !cpaapi.LooksLikeOpaqueID(name) {
+			if err := g.CPA.SetDisabled(ctx, name, true); err != nil {
+				g.State.Log(state.ActionLog{Auth: id, Source: "panel", Action: "cooldown_failed", Reason: err.Error()})
+				continue
+			}
+		}
+		g.State.SetAccountState(id, state.CooldownQuota, "plugin_auto")
+		g.State.SetRecoverAt(id, recoverAt)
+		g.State.Log(state.ActionLog{Auth: id, Source: "panel", Signal: acc.LastSignal, Action: "cooldown", Reason: "bulk_suggested_cooldown"})
+		n++
+	}
+	_ = g.State.Save()
+	return n, nil
+}
+
+// Bulk runs disable|enable|trash|cooldown on a list of auth indexes.
+func (g *Guard) Bulk(ctx context.Context, action string, authIndexes []string) (ok int, fail int, errors []string) {
+	for _, id := range authIndexes {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		var err error
+		switch action {
+		case "disable":
+			err = g.ManualDisable(ctx, id)
+		case "enable":
+			err = g.ManualEnable(ctx, id)
+		case "trash", "delete":
+			err = g.ManualTrash(ctx, id)
+		case "cooldown":
+			var n int
+			n, err = g.ApplySuggestedCooldown(ctx, []string{id}, 24)
+			if err == nil && n == 0 {
+				err = nil
+			}
+		default:
+			err = nil
+			fail++
+			errors = append(errors, id+": unknown action")
+			continue
+		}
+		if err != nil {
+			fail++
+			errors = append(errors, id+": "+err.Error())
+		} else {
+			ok++
+		}
+	}
+	return ok, fail, errors
 }

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/openclaw-local/cpa-xai-sentry/internal/guard"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/panel"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/patrol"
+	"github.com/openclaw-local/cpa-xai-sentry/internal/persist"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/sentrycfg"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/state"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/trash"
@@ -70,13 +72,53 @@ func shutdownRuntime() {
 func (r *Runtime) ApplyConfig(cfg sentrycfg.Config) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	cfg = cfg.Validate()
+	cfg = normalizePaths(cfg).Validate()
+	// Host YAML reconfigure must NOT wipe panel toggles.
+	overrides, err := persist.Load(persist.PathFor(cfg))
+	if err != nil {
+		hostLog("warn", "load runtime overrides: "+err.Error())
+	} else {
+		cfg = persist.Apply(cfg, overrides)
+	}
 	if err := r.rebuild(cfg); err != nil {
 		hostLog("error", "apply config failed: "+err.Error())
 	}
 }
 
+func normalizePaths(cfg sentrycfg.Config) sentrycfg.Config {
+	// Prefer mounted auth_dir for durable state/trash when relative paths are used.
+	if cfg.AuthDir != "" {
+		if cfg.StatePath == "" || strings.HasPrefix(cfg.StatePath, "data/") || cfg.StatePath == "data/cpa-xai-sentry-state.json" {
+			cfg.StatePath = filepath.Join(cfg.AuthDir, "cpa-xai-sentry", "state.json")
+		}
+		if cfg.TrashDir == "" || strings.HasPrefix(cfg.TrashDir, "data/") || cfg.TrashDir == "data/cpa-xai-sentry-trash" {
+			cfg.TrashDir = filepath.Join(cfg.AuthDir, "cpa-xai-sentry", "trash")
+		}
+	}
+	return cfg
+}
+
+// PersistPanelConfig writes current switch state so host reconfigure cannot reset them.
+func (r *Runtime) PersistPanelConfig() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	path := persist.PathFor(r.Cfg)
+	o := persist.FromConfig(r.Cfg)
+	if err := persist.Save(path, o); err != nil {
+		return err
+	}
+	// keep panel pointer cfg in sync
+	if r.Panel != nil && r.Panel.Cfg != nil {
+		*r.Panel.Cfg = r.Cfg
+	}
+	if r.Guard != nil {
+		r.Guard.Cfg = r.Cfg
+	}
+	return nil
+}
+
 func (r *Runtime) rebuild(cfg sentrycfg.Config) error {
+	cfg = normalizePaths(cfg).Validate()
 	st, err := state.Load(cfg.StatePath)
 	if err != nil {
 		// start empty on corrupt
@@ -87,7 +129,28 @@ func (r *Runtime) rebuild(cfg sentrycfg.Config) error {
 	cpa := cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, cfg.AuthDir)
 	g := guard.New(cfg, st, tr, cpa)
 	p := patrol.New(cfg, g, cpa)
-	api := &panel.API{Cfg: &cfg, State: st, Trash: tr, Guard: g, Patrol: p}
+	api := &panel.API{
+		Cfg: &cfg, State: st, Trash: tr, Guard: g, Patrol: p,
+		PersistConfig: func(c sentrycfg.Config) error {
+			r.mu.Lock()
+			r.Cfg = c
+			r.mu.Unlock()
+			return persist.Save(persist.PathFor(c), persist.FromConfig(c))
+		},
+		GetConfig: func() sentrycfg.Config {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			return r.Cfg
+		},
+		SetConfig: func(c sentrycfg.Config) {
+			r.mu.Lock()
+			r.Cfg = c
+			if r.Guard != nil {
+				r.Guard.Cfg = c
+			}
+			r.mu.Unlock()
+		},
+	}
 	r.Cfg = cfg
 	r.State = st
 	r.Trash = tr
