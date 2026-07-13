@@ -30,8 +30,8 @@ h1{font-size:16px;margin:0;display:flex;align-items:center;gap:8px;flex-wrap:wra
 .dot{width:7px;height:7px;border-radius:50%;background:currentColor}
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:8px;backdrop-filter:blur(10px)}
 .card h2{font-size:12.5px;margin:0 0 8px;display:flex;justify-content:space-between;gap:8px;align-items:center}
-.kpis{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:6px}
-@media(max-width:1200px){.kpis{grid-template-columns:repeat(4,1fr)}}
+.kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px}
+@media(max-width:1100px){.kpis{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:700px){.kpis{grid-template-columns:repeat(2,1fr)}}
 .kpi{border:1px solid var(--border);border-radius:10px;padding:7px 8px;background:#fff;min-height:56px}
 .kpi b{display:block;font-size:18px;line-height:1.1;margin:2px 0;font-variant-numeric:tabular-nums}
@@ -118,17 +118,16 @@ select.act{min-width:100px}input.num{width:70px}
 <div class="wrap">
   <div class="top">
     <div>
-      <div class="eyebrow">XAI 账号巡检 / 额度池</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.3.4</span> <span id="modeBadge" class="badge">模式</span></h1>
-      <div class="sub">已关闭 = CPA 文件禁用；冷却中 = 哨兵临时禁用（到期可自动恢复）。额度口径：启用号 × 2M 估日池。</div>
+      <div class="eyebrow">xAI 额度哨兵</div>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.3.5</span> <span id="modeBadge" class="badge">模式</span></h1>
     </div>
     <div class="row" style="align-items:center">
-      <label class="sw" title="关闭后不再自动冷却/候选/删号；状态仍可读">
-        <span class="lbl">哨兵总开关</span>
+      <label class="sw" title="关=不再自动处理；开=按下方开关执行">
+        <span class="lbl">总开关</span>
         <span class="switch"><input id="swSentry" type="checkbox" onchange="toggle('sentry_enabled',this.checked)"/><span class="slider"></span></span>
       </label>
-      <input id="cfgKey" type="password" placeholder="管理密钥" style="width:140px"/>
-      <button class="xs" onclick="saveKey()">保存密钥</button>
+      <input id="cfgKey" type="password" placeholder="管理密钥" style="width:130px"/>
+      <button class="xs" onclick="saveKey()">保存</button>
       <button class="xs" onclick="refresh()">刷新</button>
     </div>
   </div>
@@ -136,7 +135,6 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="card">
     <h2><span>总览</span><span class="meta" id="updatedAt">-</span></h2>
     <div class="kpis" id="kpis"></div>
-    <div class="preset-hint" id="poolLine">日额度池:-</div>
     <div class="swbar">
       <label class="sw"><span class="lbl">自动冷却</span>
         <span class="switch"><input id="swCool" type="checkbox" onchange="toggle('auto_cooldown',this.checked)"/><span class="slider"></span></span>
@@ -147,18 +145,14 @@ select.act{min-width:100px}input.num{width:70px}
       <label class="sw"><span class="lbl">自动垃圾箱</span>
         <span class="switch danger"><input id="swDel" type="checkbox" onchange="toggle('auto_delete',this.checked)"/><span class="slider"></span></span>
       </label>
-      <label class="sw" title="主动探测启用中的 xAI 是否仍可用；和「维护 tick」不是一回事">
-        <span class="lbl">定时巡查</span>
+      <label class="sw" title="定时主动探测账号是否可用">
+        <span class="lbl">主动巡查</span>
         <span class="switch"><input id="swPatrol" type="checkbox" onchange="toggle('patrol_enabled',this.checked)"/><span class="slider"></span></span>
       </label>
       <span class="meta" id="cfgLine"></span>
-      <button class="xs" onclick="applyPreset('observe')" title="关闭自动动作">仅观察</button>
-      <button class="xs warn" onclick="applyPreset('safe-guard')" title="自动冷却+候选，不自动垃圾箱">安全防护</button>
-      <button class="xs" onclick="runTick()" title="维护 tick：只做「到期恢复冷却 + 清理过期垃圾箱」。不是主动巡检账号。">维护 tick</button>
-    </div>
-    <div class="preset-hint" id="jobHint">
-      <b>维护 tick</b>：按 tick_seconds 扫描，恢复到期冷却号、清理过期垃圾箱（被动）。
-      <b>定时巡查</b>：按 patrol_interval 主动探测启用号是否还能用（主动）。两者不要混。
+      <button class="xs" onclick="applyPreset('observe')">仅观察</button>
+      <button class="xs warn" onclick="applyPreset('safe-guard')">安全防护</button>
+      <button class="xs" onclick="runTick()" title="只恢复到期冷却 + 清理过期垃圾箱">立即维护</button>
     </div>
   </div>
 
@@ -171,12 +165,12 @@ select.act{min-width:100px}input.num{width:70px}
   </div>
 
   <div id="tab-accounts" class="tabpanel card" style="margin:0">
-    <h2><span>账号巡检结果</span><span class="meta" id="accMeta">0</span></h2>
+    <h2><span>账号</span><span class="meta" id="accMeta">0</span></h2>
     <div class="toolbar">
-      <input id="q" placeholder="搜索邮箱 / 文件 / 信号 / 建议" style="flex:1;min-width:180px" oninput="debouncedRefresh()"/>
-      <select id="view" onchange="refresh()"><option value="focus">焦点视图</option><option value="all">全部已观测</option></select>
+      <input id="q" placeholder="搜邮箱" style="flex:1;min-width:140px" oninput="debouncedRefresh()"/>
+      <select id="view" onchange="refresh()"><option value="focus">问题账号</option><option value="all">全部观测</option></select>
       <select id="stateFilter" onchange="refresh()">
-        <option value="">状态</option>
+        <option value="">全部状态</option>
         <option value="active">正常</option>
         <option value="cooldown_quota">额度冷却</option>
         <option value="cooldown_spending">消费冷却</option>
@@ -185,45 +179,25 @@ select.act{min-width:100px}input.num{width:70px}
         <option value="user_manual">手动禁用</option>
         <option value="trashed">垃圾箱</option>
       </select>
-      <select id="signalFilter" onchange="refresh()">
-        <option value="">信号</option>
-        <option>free_usage_429</option>
-        <option>spending_limit_402</option>
-        <option>auth_401</option>
-        <option>permission_403</option>
-      </select>
-      <select id="actionFilter" onchange="refresh()">
-        <option value="">建议动作</option>
-        <option value="cooldown">冷却</option>
-        <option value="candidate">候选</option>
-        <option value="trash">垃圾箱</option>
-        <option value="wait">等待恢复</option>
-        <option value="review">复查</option>
-        <option value="manual">手动</option>
-        <option value="observe">观察</option>
-        <option value="none">无</option>
-      </select>
-      <button class="xs" onclick="selAll(true)">全选当前</button>
+      <select id="signalFilter" style="display:none" onchange="refresh()"><option value=""></option></select>
+      <select id="actionFilter" style="display:none" onchange="refresh()"><option value=""></option></select>
+      <button class="xs" onclick="selAll(true)">全选</button>
       <button class="xs" onclick="selAll(false)">清空</button>
-      <button class="xs warn" onclick="bulk('disable')">禁用所选</button>
-      <button class="xs primary" onclick="bulk('enable')">启用所选</button>
-      <button class="xs danger" onclick="bulk('trash')">删除→垃圾箱</button>
-      <button class="xs warn" onclick="bulk('cooldown')">冷却所选</button>
-      <button class="xs warn" onclick="cooldownSuggested()">一键冷却「建议冷却」</button>
+      <button class="xs primary" onclick="bulk('enable')">启用</button>
+      <button class="xs warn" onclick="bulk('disable')">禁用</button>
+      <button class="xs danger" onclick="bulk('trash')">进垃圾箱</button>
+      <button class="xs warn" onclick="bulk('cooldown')">冷却</button>
     </div>
-    <div class="meta" id="coolLine" style="margin:4px 0 6px">冷却/配额:-</div>
+    <div class="meta" id="coolLine" style="margin:4px 0 6px"></div>
     <div class="table-wrap accounts">
       <table>
         <thead>
           <tr>
             <th style="width:28px"><input type="checkbox" id="chkAll" onchange="selAll(this.checked)"/></th>
             <th>账号</th>
-            <th>状态</th>
-            <th>信号 / 连续</th>
-            <th>用量</th>
-            <th>建议动作</th>
-            <th>说明</th>
-            <th>恢复时间</th>
+            <th style="width:100px">状态</th>
+            <th style="width:160px">用量</th>
+            <th style="width:110px">恢复时间</th>
           </tr>
         </thead>
         <tbody id="accBody"></tbody>
@@ -321,68 +295,31 @@ function fmtTok(n){
 function renderKPIs(s, trashCount, cool, inv, usage){
   s=s||{}; cool=cool||{}; inv=inv||{}; usage=usage||{};
   const cooling=cool.cooling!=null?cool.cooling:(s.cooldown||0);
-  // 已关闭 vs 冷却中：关闭=CPA disabled；冷却=哨兵临时 plugin_auto（算在 disabled 里，但状态在哨兵）
   const items=[
-    ['xAI 总数', inv.auth_xai!=null?inv.auth_xai:(inv.auth_total||0), 'accent', 'CPA 文件'],
-    ['已开启', inv.auth_enabled!=null?inv.auth_enabled:0, 'ok', '可接流量'],
-    ['已关闭', inv.auth_disabled!=null?inv.auth_disabled:0, '', '含冷却+手动'],
-    ['冷却中', cooling, 'warn', '到期可恢复'],
-    ['日池(估)', fmtTok(usage.pool_est||0), 'accent', '开启×2M'],
+    ['可接流量', inv.auth_enabled!=null?inv.auth_enabled:0, 'ok', '已开启'],
+    ['冷却中', cooling, 'warn', '到期恢复'],
+    ['已关闭', inv.auth_disabled!=null?inv.auth_disabled:0, '', '含冷却'],
+    ['日池剩余', fmtTok(usage.pool_remaining||0), 'ok', '估 开×2M'],
     ['日池已用', fmtTok(usage.pool_used||0), 'warn', (usage.pool_used_pct!=null? (Number(usage.pool_used_pct).toFixed(1)+'%') : '')],
-    ['日池剩余', fmtTok(usage.pool_remaining||0), 'ok', ''],
-    ['候选/箱', (s.candidate||0)+'/'+(trashCount||0), '', ''],
+    ['日池总量', fmtTok(usage.pool_est||0), 'accent', ''],
   ];
   document.getElementById('kpis').innerHTML=items.map(([l,v,c,sub])=>
     '<div class="kpi '+(c||'')+'"><span>'+l+'</span><b>'+v+'</b>'+(sub?('<span class="subn">'+esc(sub)+'</span>'):'')+'</div>'
   ).join('');
-  const pl=document.getElementById('poolLine');
-  if(pl){
-    pl.textContent='日额度池(估) '+fmtTok(usage.pool_est||0)+
-      ' = 开启 '+(usage.pool_enabled!=null?usage.pool_enabled:(inv.auth_enabled||0))+' × 2M'+
-      ' · 已用 '+fmtTok(usage.pool_used||0)+
-      ' · 剩余 '+fmtTok(usage.pool_remaining||0)+
-      (usage.cpamp_day?(' · 统计日 '+usage.cpamp_day):'')+
-      ' · 冷却号行内显示 已用/限额/剩余（无上游数字时按 2M 用尽估算）';
-  }
 }
 function accountCell(a){
   const name=a.display_name||a.email||a.file_name||a.auth_index||'-';
-  const email=a.email||'';
-  const file=a.file_name||'';
-  const id=a.auth_index||'';
   const tier=a.tier&&a.tier!=='unknown'?a.tier:'';
-  let bits=[];
-  if(email && email!==name) bits.push('<span class="k">邮箱</span>'+esc(email));
-  if(tier) bits.push('<span class="k">套餐</span>'+esc(tier));
-  if(id && id!==name) bits.push('<span class="k">ID</span>'+esc(id.length>12?id.slice(0,8)+'...':id));
-  const fileLine=file && file!==name && file!==id ? '<div class="acc-file">'+esc(file)+'</div>' : '';
-  return '<div class="acc-name">'+esc(name)+'</div>'+(bits.length?'<div class="acc-sub">'+bits.join(' · ')+'</div>':'')+fileLine;
-}
-function signalCell(a){
-  // 状态列已是「额度冷却」时，信号只显示原始码，避免「免费额度用尽」再喊一遍
-  const sig=a.last_signal||'';
-  const st=a.state||'';
-  const zh=SIG_ZH[sig]||sig||'-';
-  if(st==='cooldown_quota' && sig==='free_usage_429'){
-    return '<div class="sig-main mono">free_usage_429</div><div class="sig-sub">用尽→冷却</div>';
-  }
-  return '<div class="sig-main">'+esc(zh)+'</div>'+(sig && zh!==sig ? '<div class="sig-sub mono">'+esc(sig)+'</div>':'');
+  return '<div class="acc-name">'+esc(name)+'</div>'+(tier?('<div class="acc-sub">'+esc(tier)+'</div>'):'');
 }
 function quotaCell(a){
-  // prefer used/limit/remaining when present
   if(a.quota_limit || a.quota_used || a.quota_remaining){
-    const main=fmtTok(a.quota_used||0)+' / '+fmtTok(a.quota_limit||0)+' 剩 '+fmtTok(a.quota_remaining||0);
-    const sub=[];
-    if(a.quota_source==='free_usage_exhausted') sub.push('免费额用尽·估2M');
-    else if(a.quota_source) sub.push(a.quota_source);
-    if(a.day_calls) sub.push('调用 '+(a.day_calls||0)+(a.day_fail_calls?('/失败 '+a.day_fail_calls):''));
-    return '<div class="quota-main">'+esc(main)+'</div>'+(sub.length?'<div class="quota-sub">'+esc(sub.join(' · '))+'</div>':'');
+    return '<div class="quota-main">'+esc(fmtTok(a.quota_used||0)+' / '+fmtTok(a.quota_limit||0)+' 剩 '+fmtTok(a.quota_remaining||0))+'</div>';
   }
-  const main=a.quota_text||'-';
-  return '<div class="quota-main">'+esc(main)+'</div>';
+  return '<div class="quota-main">'+esc(a.quota_text||'-')+'</div>';
 }
-function timeCell(recover, updated){
-  return '<div class="time-main">'+esc(recover||'-')+'</div>'+(updated?'<div class="time-sub">更新 '+esc(updated)+'</div>':'');
+function timeCell(recover){
+  return '<div class="time-main">'+esc(recover||'-')+'</div>';
 }
 function decodeEntities(s){
   if(!s) return '';
@@ -442,8 +379,8 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.3.4');
-    document.getElementById('updatedAt').textContent='更新 '+(st.updated_at||'-').replace('T',' ').replace('Z','');
+    document.getElementById('ver').textContent='v'+(st.version||'0.3.5');
+    document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
     const inv=st.inventory||{};
     const usage=st.usage||{};
@@ -455,32 +392,24 @@ async function refresh(){
     setSwitch('swPatrol',!!CFG.patrol_enabled);
     const patrolMin=CFG.patrol_interval? Math.round((CFG.patrol_interval||0)/60)+'分' : '-';
     document.getElementById('cfgLine').textContent=
-      'tick '+(CFG.tick_seconds||30)+'s · 巡查 '+(CFG.patrol_enabled?('开/'+patrolMin):'关')+
-      ' · 垃圾箱'+(CFG.trash_retention_days||7)+'天'+(CFG.trash_auto_purge?'自动清':'')+
+      '维护每'+(CFG.tick_seconds||30)+'s · 巡查'+(CFG.patrol_enabled?('每'+patrolMin):'关')+
       ' · 密钥'+(CFG.management_key_set?'✓':'✗');
     const coolLine=document.getElementById('coolLine');
     if(coolLine){
-      const parts=[
-        '冷却中 '+(cool.cooling!=null?cool.cooling:0)+'（CPA 侧算已关闭，哨兵侧可到期恢复）',
-        '待冷却建议 '+(cool.pending_suggest!=null?cool.pending_suggest:0)
-      ];
-      if(cool.earliest_recover_at) parts.push('最早恢复 '+(String(cool.earliest_recover_at).replace('T',' ').replace('Z','').replace(/:\d{2}$/,'')));
-      if(cool.latest_recover_at) parts.push('最晚 '+(String(cool.latest_recover_at).replace('T',' ').replace('Z','').replace(/:\d{2}$/,'')));
-      coolLine.textContent=parts.join(' · ');
+      let t='冷却 '+(cool.cooling!=null?cool.cooling:0)+' 个';
+      if(cool.earliest_recover_at) t+=' · 最早 '+(String(cool.earliest_recover_at).replace('T',' ').replace('Z','').replace(/:\d{2}$/,''));
+      if(cool.latest_recover_at) t+=' · 最晚 '+(String(cool.latest_recover_at).replace('T',' ').replace('Z','').replace(/:\d{2}$/,''));
+      coolLine.textContent=t;
     }
-    document.getElementById('accMeta').textContent=(st.account_count||0)+' 行 / 已观测 '+((st.summary&&st.summary.total)||0);
-    // preserve checkbox selection across refresh
+    document.getElementById('accMeta').textContent=(st.account_count||0)+' 行';
     const prevSel=new Set(selectedAuths());
     document.getElementById('accBody').innerHTML=(st.accounts||[]).map(a=>'<tr>'+
       '<td><input type="checkbox" class="rowchk" data-auth="'+esc(a.auth_index)+'"'+(prevSel.has(a.auth_index)?' checked':'')+'/></td>'+
       '<td>'+accountCell(a)+'</td>'+
       '<td>'+stateTag(a.state)+'</td>'+
-      '<td>'+signalCell(a)+'</td>'+
       '<td>'+quotaCell(a)+'</td>'+
-      '<td>'+actionTag(a.suggested_action)+'</td>'+
-      '<td class="reason">'+esc(a.reason||'—')+'</td>'+
-      '<td>'+timeCell(a.recover_at,a.updated_at)+'</td></tr>').join('')||
-      '<tr><td colspan="8" class="muted">无匹配结果</td></tr>';
+      '<td>'+timeCell(a.recover_at)+'</td></tr>').join('')||
+      '<tr><td colspan="5" class="muted">无匹配结果</td></tr>';
 
     if(CURRENT_TAB==='trash') await refreshTrashOnly();
     const lg=await j('/logs'); renderLogs(lg.logs||[]);
