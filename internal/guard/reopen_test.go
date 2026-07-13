@@ -58,7 +58,7 @@ func TestTickReopensUnownedDisabledSelfHeal(t *testing.T) {
 	ts := trash.New(filepath.Join(dir, "trash"), 7, true, st)
 	cpa := cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, cfg.AuthDir)
 	g := guard.New(cfg, st, ts, cpa)
-	if err := g.Tick(context.Background()); err != nil {
+	if err := g.TickManual(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if setToFalse != 1 {
@@ -112,7 +112,7 @@ func TestTickProtectsPluginAutoCooldown(t *testing.T) {
 	ts := trash.New(filepath.Join(dir, "trash"), 7, true, st)
 	cpa := cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, cfg.AuthDir)
 	g := guard.New(cfg, st, ts, cpa)
-	if err := g.Tick(context.Background()); err != nil {
+	if err := g.TickManual(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	acc := st.Get("auth-cool")
@@ -162,7 +162,7 @@ func TestTickProtectsPanelManualDisable(t *testing.T) {
 	ts := trash.New(filepath.Join(dir, "trash"), 7, true, st)
 	cpa := cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, dir)
 	g := guard.New(cfg, st, ts, cpa)
-	if err := g.Tick(context.Background()); err != nil {
+	if err := g.TickManual(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if setToFalse != 0 {
@@ -199,7 +199,7 @@ func TestTickRepairsActiveWithPluginAutoFutureRecover(t *testing.T) {
 	ts := trash.New(filepath.Join(dir, "trash"), 7, true, st)
 	cpa := cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, dir)
 	g := guard.New(cfg, st, ts, cpa)
-	if err := g.Tick(context.Background()); err != nil {
+	if err := g.TickManual(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	acc := st.Get("a")
@@ -246,7 +246,7 @@ func TestConservativeModeMarksCPADisabled(t *testing.T) {
 	ts := trash.New(filepath.Join(dir, "trash"), 7, true, st)
 	cpa := cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, dir)
 	g := guard.New(cfg, st, ts, cpa)
-	if err := g.Tick(context.Background()); err != nil {
+	if err := g.TickManual(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if setCalls != 0 {
@@ -303,7 +303,7 @@ func TestTickDoesNotReopenMatchedCooldownByFileName(t *testing.T) {
 	ts := trash.New(filepath.Join(dir, "trash"), 7, true, st)
 	cpa := cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, dir)
 	g := guard.New(cfg, st, ts, cpa)
-	if err := g.Tick(context.Background()); err != nil {
+	if err := g.TickManual(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if setToFalse != 0 {
@@ -349,7 +349,7 @@ func TestTickMatchesEmailFromFilenameWhenListEmailEmpty(t *testing.T) {
 	_ = st.Save()
 	ts := trash.New(filepath.Join(dir, "trash"), 7, true, st)
 	g := guard.New(cfg, st, ts, cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, dir))
-	if err := g.Tick(context.Background()); err != nil {
+	if err := g.TickManual(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if setToFalse != 0 {
@@ -403,7 +403,7 @@ func TestTickProtectsCooldownMatchedByAuthIndex(t *testing.T) {
 	_ = st.Save()
 	ts := trash.New(filepath.Join(dir, "trash"), 7, true, st)
 	g := guard.New(cfg, st, ts, cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, dir))
-	if err := g.Tick(context.Background()); err != nil {
+	if err := g.TickManual(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if setToFalse != 0 {
@@ -456,7 +456,7 @@ func TestTickDoesNotReopenWhenSiblingActiveShellExists(t *testing.T) {
 	st.SetLastSignal("de847af412d8414c", "free_usage_429")
 	_ = st.Save()
 	g := guard.New(cfg, st, trash.New(filepath.Join(dir, "t"), 7, true, st), cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, dir))
-	if err := g.Tick(context.Background()); err != nil {
+	if err := g.TickManual(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if setToFalse != 0 {
@@ -501,7 +501,7 @@ func TestTickGraceProtectsRecentCooldownAction(t *testing.T) {
 	st.Log(state.ActionLog{Auth: "grace1", Action: "cooldown", Reason: "free_usage", At: time.Now()})
 	_ = st.Save()
 	g := guard.New(cfg, st, trash.New(filepath.Join(dir, "t"), 7, true, st), cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, dir))
-	if err := g.Tick(context.Background()); err != nil {
+	if err := g.TickManual(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if setToFalse != 0 {
@@ -543,7 +543,7 @@ func TestTickReassertsOwnedCooldownIfFileEnabled(t *testing.T) {
 	st.SetRecoverAt("de847af412d8414c", time.Now().Add(24*time.Hour))
 	_ = st.Save()
 	g := guard.New(cfg, st, trash.New(filepath.Join(dir, "t"), 7, true, st), cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, dir))
-	if err := g.Tick(context.Background()); err != nil {
+	if err := g.TickManual(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if setTo[true] == 0 {
@@ -592,11 +592,61 @@ func TestConservativeTickDoesNotOverwriteCooldown(t *testing.T) {
 	st.SetLastSignal("8bd2c3e0b7e7634a", "free_usage_429")
 	_ = st.Save()
 	g := guard.New(cfg, st, trash.New(filepath.Join(dir, "t"), 7, true, st), cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, dir))
-	if err := g.Tick(context.Background()); err != nil {
+	if err := g.TickManual(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	acc := st.Get("8bd2c3e0b7e7634a")
 	if acc.State != state.CooldownQuota || acc.DisableSource != "plugin_auto" {
 		t.Fatalf("cool-down overwritten: state=%s src=%s", acc.State, acc.DisableSource)
+	}
+}
+
+
+func TestAutoTickSkipsForeignScan(t *testing.T) {
+	dir := t.TempDir()
+	setToFalse := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v0/management/auth-files" && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"files": []map[string]any{{
+				"name": "xai-foreign@lovc.eu.cc.json", "auth_index": "foreign1",
+				"email": "foreign@lovc.eu.cc", "provider": "xai", "type": "xai", "disabled": true,
+			}}})
+		case r.URL.Path == "/v0/management/auth-files/status":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if d, ok := body["disabled"].(bool); ok && !d {
+				setToFalse++
+			}
+			w.WriteHeader(200)
+		default:
+			w.WriteHeader(200)
+		}
+	}))
+	defer srv.Close()
+	cfg := sentrycfg.Default()
+	cfg.SentryEnabled = true
+	cfg.ManagementURL = srv.URL
+	cfg.ManagementKey = "k"
+	cfg.ReopenForeignDisabled = true
+	st := state.New(filepath.Join(dir, "s.json"))
+	st.Touch("foreign1")
+	st.UpdateMeta("foreign1", "xai-foreign@lovc.eu.cc.json", "foreign@lovc.eu.cc", "")
+	st.SetAccountState("foreign1", state.Active, "")
+	_ = st.Save()
+	g := guard.New(cfg, st, trash.New(filepath.Join(dir, "t"), 7, true, st), cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, dir))
+	// auto tick must NOT open
+	if err := g.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if setToFalse != 0 {
+		t.Fatalf("auto Tick must not scan foreign disables, opens=%d", setToFalse)
+	}
+	// manual tick opens unowned
+	if err := g.TickManual(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if setToFalse == 0 {
+		t.Fatal("TickManual must open unowned disable")
 	}
 }

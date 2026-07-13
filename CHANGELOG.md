@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.3
+
+### Foreign-disable scan only on manual maintenance
+- Periodic Tick: recover cool-downs, trash purge, **owned reassert only** — no `file_disabled_sync` / unowned reopen spam.
+- Panel **立即维护** (`TickManual`): one-shot full scan — open unowned (if enabled) or mark CPA已禁用.
+- Rationale: unowned disables are rare after one audit; continuous scan only creates noise and races.
+
+
 ## 1.1.2
 
 ### Ops preference restored: open unowned disables
@@ -116,6 +124,14 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.3
+
+### Foreign-disable scan only on manual maintenance
+- Periodic Tick: recover cool-downs, trash purge, **owned reassert only** — no `file_disabled_sync` / unowned reopen spam.
+- Panel **立即维护** (`TickManual`): one-shot full scan — open unowned (if enabled) or mark CPA已禁用.
+- Rationale: unowned disables are rare after one audit; continuous scan only creates noise and races.
+
 
 ## 1.1.2
 

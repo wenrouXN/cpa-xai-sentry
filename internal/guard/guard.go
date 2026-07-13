@@ -395,8 +395,20 @@ func (g *Guard) applyTrash(ctx context.Context, ev UsageEvent, res match.Result,
 	})
 }
 
-// Tick recovers cooldowns, syncs CPA disabled status, refreshes identity metadata, and auto-purges trash.
+// Tick is the periodic maintenance path: recover due cool-downs, purge trash,
+// and reassert owned disables. It does NOT scan unowned/foreign disables
+// (no reopen_foreign / file_disabled_sync). Use TickManual for that.
 func (g *Guard) Tick(ctx context.Context) error {
+	return g.tick(ctx, false)
+}
+
+// TickManual is panel "立即维护": full foreign-disable scan once
+// (open unowned if reopen_foreign_disabled, or mark CPA已禁用 if not).
+func (g *Guard) TickManual(ctx context.Context) error {
+	return g.tick(ctx, true)
+}
+
+func (g *Guard) tick(ctx context.Context, manual bool) error {
 	if !g.Cfg.Enabled || !g.Cfg.SentryEnabled {
 		return nil
 	}
@@ -412,9 +424,8 @@ func (g *Guard) Tick(ctx context.Context) error {
 			}
 		}
 	}
-	// Align sentry state with CPA disabled files (do NOT auto-open by default).
-	// Optional reopen of non-sentry disables is gated by reopen_foreign_disabled.
-	if _, err := g.syncDisabledFromCPA(ctx, now); err != nil {
+	// Owned cool-down reassert always; unowned foreign scan only on manual maintenance.
+	if _, err := g.syncDisabledFromCPA(ctx, now, manual); err != nil {
 		g.State.Log(state.ActionLog{Source: "tick", Action: "sync_disabled_failed", Reason: err.Error()})
 	}
 	g.pruneDuplicateAccounts()
@@ -544,7 +555,7 @@ func (g *Guard) shouldProtectDisable(acc *state.Account, now time.Time) bool {
 //     Next real usage/patrol error re-stamps ownership.
 //
 // Optional (reopen_foreign_disabled=false) — keep unowned closed + mark CPA已禁用.
-func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, error) {
+func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time, scanForeign bool) (int, error) {
 	if g.CPA == nil {
 		return 0, nil
 	}
@@ -723,6 +734,10 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 		}
 		if !f.Disabled {
 			// not owned and already enabled — nothing to self-heal
+			continue
+		}
+		// Periodic tick: only owned reassert above. Foreign open/mark is manual-only.
+		if !scanForeign {
 			continue
 		}
 		var cands []*state.Account

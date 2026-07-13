@@ -1501,7 +1501,7 @@ func (a *API) handleRunTick(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(405)
 		return
 	}
-	if err := a.Guard.Tick(r.Context()); err != nil {
+	if err := a.Guard.TickManual(r.Context()); err != nil {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}

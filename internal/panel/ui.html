@@ -214,7 +214,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.2</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.3</span></h1>
     </div>
     <div class="top-actions">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -240,7 +240,7 @@ select.act{min-width:100px}input.num{width:70px}
       <button class="xs" onclick="refresh()">刷新</button>
       <button class="xs" onclick="applyPreset('observe')" title="关闭自动冷却/候选/垃圾箱，只记录观察">仅观察</button>
       <button class="xs warn" onclick="applyPreset('safe-guard')" title="打开自动冷却+自动候选；不会自动进垃圾箱">安全防护</button>
-      <button class="xs" onclick="runTick()" title="被动维护：恢复到期冷却 + 清理过期垃圾箱（不消耗额度）">立即维护</button>
+      <button class="xs" onclick="runTick()" title="立即维护：恢复到期冷却 + 清理过期垃圾箱 + 扫描非自有禁用（打开/对齐）。定时维护不做非自有扫描。">立即维护</button>
     </div>
   </div>
 
@@ -957,7 +957,7 @@ async function refresh(){
     ]);
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'1.1.2');
+    document.getElementById('ver').textContent='v'+(st.version||'1.1.3');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -1358,7 +1358,7 @@ async function runTick(){
     const r=await j('/run-tick',{method:'POST'});
     const c=(r&&r.cooldown_stats)||{};
     const n=c.cooling!=null?c.cooling:'?';
-    toast('维护完成：已同步 CPA 禁用状态 · 当前冷却 '+n+' 个');
+    toast('立即维护完成（含非自有禁用扫描）· 冷却 '+n+' 个');
     await refresh();
   }catch(e){toast(e.message)}
 }
