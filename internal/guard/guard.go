@@ -360,6 +360,8 @@ func (g *Guard) Tick(ctx context.Context) error {
 		g.State.Log(state.ActionLog{Source: "tick", Action: "reopen_foreign_failed", Reason: reopenErr.Error()})
 	}
 	g.pruneDuplicateAccounts()
+	// closed-loop hygiene: Active must be clean (no residual signal/plugin_auto lock)
+	g.scrubDirtyActiveAccounts()
 	for _, acc := range g.State.AccountsSnapshot() {
 		if acc.RecoverAt.IsZero() || acc.RecoverAt.After(now) {
 			continue
@@ -502,6 +504,33 @@ func (g *Guard) reopenForeignDisabled(ctx context.Context, now time.Time) (int, 
 		n++
 	}
 	return n, nil
+}
+
+// scrubDirtyActiveAccounts fixes half-recovered accounts:
+// state=active but still carrying last_signal / plugin_auto / streaks / recover_at.
+// These show as "正常" while reason still looks like 403冷却 — closed-loop violation.
+func (g *Guard) scrubDirtyActiveAccounts() {
+	if g.State == nil {
+		return
+	}
+	for _, acc := range g.State.AccountsSnapshot() {
+		if acc.State != state.Active && acc.State != "" {
+			continue
+		}
+		dirty := acc.LastSignal != "" ||
+			acc.DisableSource == "plugin_auto" ||
+			len(acc.Streaks) > 0 ||
+			!acc.RecoverAt.IsZero()
+		if !dirty {
+			continue
+		}
+		// only auto-scrub plugin-owned residues; leave pure empty active alone if clean
+		g.State.ResetToActive(acc.AuthIndex)
+		g.State.Log(state.ActionLog{
+			Auth: acc.AuthIndex, Source: "tick", Signal: acc.LastSignal,
+			Action: "scrub_active", Reason: "closed_loop_clean",
+		})
+	}
 }
 
 // pruneDuplicateAccounts keeps one state entry per email/file (prefer hash auth_index).

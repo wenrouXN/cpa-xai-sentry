@@ -217,6 +217,13 @@ func suggestAction(acc *state.Account) (action, reason string) {
 	case state.Trashed:
 		return "restore_or_purge", "垃圾箱"
 	}
+	// active is terminal clean/dirty; never show cool-down reason from residual signal alone
+	if acc.State == state.Active || acc.State == "" {
+		if acc.LastSignal != "" || acc.DisableSource == "plugin_auto" {
+			return "observe", "状态正常（残留信号待清理）"
+		}
+		return "none", ""
+	}
 	switch acc.LastSignal {
 	case "auth_401":
 		return "candidate", "401·候删"
@@ -226,9 +233,6 @@ func suggestAction(acc *state.Account) (action, reason string) {
 		return "cooldown", "429·额度冷却"
 	case "spending_limit_402":
 		return "cooldown", "402·消费冷却"
-	}
-	if acc.State == state.Active && acc.LastSignal == "" {
-		return "none", ""
 	}
 	return "observe", ""
 }
@@ -678,7 +682,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":         "cpa-xai-sentry",
-		"version":        "0.5.14",
+		"version":        "0.5.15",
 		"mode":           modeOf(*a.Cfg),
 		"mode_label":     modeLabel(modeOf(*a.Cfg)),
 		"summary":        summary,
@@ -953,6 +957,8 @@ func humanizeReason(reason, sigL, action string) string {
 		return "CPA凭证文件已禁用（非面板操作）"
 	case "foreign_or_unknown_disabled", "foreign_disabled_untracked":
 		return "非本哨兵冷却禁用，已重新打开"
+	case "closed_loop_clean":
+		return "闭环清理脏正常态"
 	case "cpa_disabled_free_usage_sync":
 		return "CPA已禁用且有免费额度证据（状态对齐）"
 	case "demote_false_quota_cooldown":
@@ -1122,6 +1128,8 @@ func logActionZH(a string) string {
 		return "CPA文件禁用对齐"
 	case "reopen_foreign":
 		return "打开非自有禁用"
+	case "scrub_active":
+		return "清理脏正常态"
 	case "reopen_foreign_failed":
 		return "打开非自有禁用失败"
 	case "manual_enable":
@@ -1363,7 +1371,7 @@ func (a *API) handlePatrolStatus(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.14",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.15",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 		"cooldown_stats": a.State.CooldownStats(time.Now()),
 	})
