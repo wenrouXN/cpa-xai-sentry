@@ -158,7 +158,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.4.8</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.4.9</span> <span id="modeBadge" class="badge">模式</span></h1>
     </div>
     <div class="row" style="align-items:center">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -235,13 +235,15 @@ select.act{min-width:100px}input.num{width:70px}
           <tr>
             <th style="width:28px"><input type="checkbox" id="chkAll" onchange="selAll(this.checked)"/></th>
             <th>账号</th>
-            <th style="width:78px">状态</th>
-            <th style="width:72px">请求总数</th>
-            <th style="width:64px">成功率</th>
-            <th style="width:92px">最近15次</th>
-            <th style="width:168px">用量</th>
-            <th style="width:100px">更新时间</th>
-            <th style="width:92px">恢复时间</th>
+            <th style="width:72px">状态</th>
+            <th style="width:68px">请求总数</th>
+            <th style="width:58px">成功率</th>
+            <th style="width:90px">最近15次</th>
+            <th style="width:72px">总计用量</th>
+            <th style="width:72px">今日用量</th>
+            <th style="width:96px">今日/24h额度</th>
+            <th style="width:96px">更新时间</th>
+            <th style="width:88px">恢复时间</th>
           </tr>
         </thead>
         <tbody id="accBody"></tbody>
@@ -442,35 +444,36 @@ function callsCell(a){
   const title = seq.length ? ('最近'+seq.length+'次 · 成'+ok+' 败'+fail+(fail>0?' · 点红格看报错':'')) : '暂无请求记录';
   return '<div class="reqcell"><div class="sigbars'+clickable+'"'+wrapClick+' title="'+esc(title)+'">'+parts.join('')+'</div></div>';
 }
-function quotaCell(a){
-  // pure numbers: 总计 · 今日 · 今日/24h额度
-  let main='-';
-  if(a.quota_text){
-    main=String(a.quota_text||'').replace(/\s*·\s*(报错体|估|免费额用尽).*$/,'').trim() || '-';
+function totalTokensCell(a){
+  const tot=Number(a.total_tokens||0);
+  if(!tot) return '<div class="num-main">-</div>';
+  return '<div class="num-main" title="历史累计 token">'+esc(fmtTok(tot))+'</div>';
+}
+function dayTokensCell(a){
+  const day=Number(a.day_tokens||0);
+  if(!day) return '<div class="num-main">-</div>';
+  return '<div class="num-main" title="今日 token">'+esc(fmtTok(day))+'</div>';
+}
+function quotaRatioCell(a){
+  // 今日用量 / 24h额度
+  const day=Number(a.day_tokens||0);
+  let lim=Number(a.quota_limit||0);
+  if(lim<=0) lim=2000000; // free-tier 24h estimate
+  if(a.quota_ratio_text){
+    return '<div class="num-main" title="今日用量 / 24小时额度">'+esc(String(a.quota_ratio_text))+'</div>';
   }
-  if(main==='-' || !main){
-    const tot=Number(a.total_tokens||0);
-    const day=Number(a.day_tokens||0);
-    if(tot>0 || day>0){
-      main=fmtTok(tot)+' · '+fmtTok(day);
-      if(a.quota_ratio_text) main+=' · '+a.quota_ratio_text;
-      else if(a.quota_limit) main+=' · '+fmtTok(day)+' / '+fmtTok(a.quota_limit);
-      else if(day>0) main+=' · '+fmtTok(day)+' / 2M';
-    } else if(a.quota_limit || a.quota_used){
-      // free-usage actual/limit only — if no parseable numbers and exhausted, show 用尽
-      if(Number(a.quota_used||0)<=0 && Number(a.quota_limit||0)<=0){
-        main='用尽';
-      } else {
-        main=fmtTok(a.quota_used||0)+' / '+fmtTok(a.quota_limit||0);
-      }
-    }
+  if(!day && !a.quota_used){
+    // exhausted without numbers
+    if(a.state && String(a.state).indexOf('cooldown')>=0) return '<div class="num-main">用尽</div>';
+    return '<div class="num-main">-</div>';
   }
-  return '<div class="quota-main" title="'+esc(main)+'">'+esc(main)+'</div>';
+  const used=day>0?day:Number(a.quota_used||0);
+  return '<div class="num-main" title="今日用量 / 24小时额度">'+esc(fmtTok(used)+' / '+fmtTok(lim))+'</div>';
 }
 function renderAccountRows(list, prevSel){
   prevSel=prevSel||new Set();
   const rows=list||[];
-  if(!rows.length) return '<tr><td colspan="9" class="muted">无匹配结果</td></tr>';
+  if(!rows.length) return '<tr><td colspan="11" class="muted">无匹配结果</td></tr>';
   return rows.map(a=>'<tr>'+
     '<td><input type="checkbox" class="rowchk" data-auth="'+esc(a.auth_index)+'"'+(prevSel.has(a.auth_index)?' checked':'')+'/></td>'+
     '<td>'+accountCell(a)+'</td>'+
@@ -478,7 +481,9 @@ function renderAccountRows(list, prevSel){
     '<td>'+totalCallsCell(a)+'</td>'+
     '<td>'+rateCell(a)+'</td>'+
     '<td>'+callsCell(a)+'</td>'+
-    '<td>'+quotaCell(a)+'</td>'+
+    '<td>'+totalTokensCell(a)+'</td>'+
+    '<td>'+dayTokensCell(a)+'</td>'+
+    '<td>'+quotaRatioCell(a)+'</td>'+
     '<td>'+updatedCell(a.updated_at)+'</td>'+
     '<td>'+timeCell(a.recover_at)+'</td></tr>').join('');
 }
@@ -680,7 +685,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.4.8');
+    document.getElementById('ver').textContent='v'+(st.version||'0.4.9');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
