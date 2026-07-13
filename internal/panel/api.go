@@ -12,6 +12,7 @@ import (
 	"github.com/openclaw-local/cpa-xai-sentry/internal/errorsig"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/guard"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/patrol"
+	"github.com/openclaw-local/cpa-xai-sentry/internal/quota"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/sentrycfg"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/state"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/trash"
@@ -290,22 +291,42 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			}
 			streakSum = strings.Join(parts, " ")
 		}
-		qText := ""
-		if acc.QuotaLimit > 0 || acc.QuotaUsed > 0 || acc.QuotaRemaining > 0 {
-			qText = itoa64(acc.QuotaUsed) + "/" + itoa64(acc.QuotaLimit) + " 剩" + itoa64(acc.QuotaRemaining)
-			if acc.QuotaSource != "" {
-				qText += " (" + acc.QuotaSource + ")"
+		qLimit, qUsed, qRem := acc.QuotaLimit, acc.QuotaUsed, acc.QuotaRemaining
+		qSrc := acc.QuotaSource
+		// free-usage exhausted often arrives without numeric fields — show 1M estimate like quota-guard
+		if (qLimit == 0 && qUsed == 0 && qRem == 0) &&
+			(acc.LastSignal == "free_usage_429" || qSrc == "free_usage_exhausted" ||
+				acc.State == state.CooldownQuota) {
+			qLimit = quota.FreeQuotaPerAccount
+			qUsed = quota.FreeQuotaPerAccount
+			qRem = 0
+			if qSrc == "" {
+				qSrc = "free_usage_exhausted"
 			}
+		}
+		qText := ""
+		if qLimit > 0 || qUsed > 0 || qRem > 0 {
+			qText = formatTokens(qUsed) + " / " + formatTokens(qLimit) + " 剩 " + formatTokens(qRem)
+			if qSrc == "free_usage_exhausted" {
+				qText += " · 免费额用尽"
+			} else if qSrc != "" && qSrc != "body_field" {
+				qText += " · " + qSrc
+			}
+		} else if acc.DayTokens > 0 {
+			qText = "今日 token " + formatTokens(acc.DayTokens)
 		} else if acc.DayCalls > 0 {
-			qText = "今日调用" + itoa64(acc.DayCalls) + " 失败" + itoa64(acc.DayFailCalls)
+			qText = "今日调用 " + itoa64(acc.DayCalls)
+			if acc.DayFailCalls > 0 {
+				qText += " · 失败 " + itoa64(acc.DayFailCalls)
+			}
 		}
 		rows = append(rows, row{
 			AuthIndex: acc.AuthIndex, FileName: acc.FileName, Email: acc.Email, DisplayName: display,
 			Tier: acc.Tier, State: string(acc.State), Signal: acc.LastSignal,
 			DisableSource: acc.DisableSource, Streaks: acc.Streaks, StreakSummary: streakSum,
 			SuggestedAction: act, Reason: reason, RecoverAt: ra, UpdatedAt: ua,
-			QuotaLimit: acc.QuotaLimit, QuotaUsed: acc.QuotaUsed, QuotaRemaining: acc.QuotaRemaining,
-			QuotaSource: acc.QuotaSource, DayCalls: acc.DayCalls, DayFailCalls: acc.DayFailCalls,
+			QuotaLimit: qLimit, QuotaUsed: qUsed, QuotaRemaining: qRem,
+			QuotaSource: qSrc, DayCalls: acc.DayCalls, DayFailCalls: acc.DayFailCalls,
 			DayTokens: acc.DayTokens, QuotaText: qText,
 		})
 	}
@@ -319,6 +340,24 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		summary["pending_suggest"] = v
 	}
 	inv := a.inventoryFromCPA(r)
+	enabledN := asInt(inv["auth_enabled"])
+	poolEst := int64(enabledN) * quota.FreeQuotaPerAccount
+	// used: real usage tokens preferred, else CPAMP floor (same spirit as quota-guard status bar)
+	usedTok := dayTokens
+	if usedTok == 0 {
+		usedTok = m.TokensFloor
+	}
+	remainTok := poolEst - usedTok
+	if remainTok < 0 {
+		remainTok = 0
+	}
+	pct := 0.0
+	if poolEst > 0 {
+		pct = float64(usedTok) / float64(poolEst) * 100
+		if pct > 100 {
+			pct = 100
+		}
+	}
 	usage := map[string]any{
 		"day_calls":      dayCalls,
 		"day_fail_calls": dayFails,
@@ -326,10 +365,18 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		"cpamp_tokens":   m.TokensFloor,
 		"cpamp_calls":    m.CallsFloor,
 		"cpamp_day":      m.DayKey,
+		// quota-guard style daily pool estimate
+		"pool_est":          poolEst,
+		"pool_per_account":  quota.FreeQuotaPerAccount,
+		"pool_enabled":      enabledN,
+		"pool_used":         usedTok,
+		"pool_remaining":    remainTok,
+		"pool_used_pct":     pct,
+		"pool_source":       "enabled×1M (rolling free-tier est)",
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":         "cpa-xai-sentry",
-		"version":        "0.3.2",
+		"version":        "0.3.3",
 		"mode":           modeOf(*a.Cfg),
 		"mode_label":     modeLabel(modeOf(*a.Cfg)),
 		"summary":        summary,
@@ -346,6 +393,39 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		"config":         a.Cfg.Redact(),
 		"updated_at":     time.Now().In(time.FixedZone("CST", 8*3600)).Format("01-02 15:04:05"),
 	})
+}
+
+func asInt(v any) int {
+	switch t := v.(type) {
+	case int:
+		return t
+	case int64:
+		return int(t)
+	case float64:
+		return int(t)
+	default:
+		return 0
+	}
+}
+
+// formatTokens renders large token counts compactly (1.0M / 549k / 120).
+func formatTokens(n int64) string {
+	if n < 0 {
+		n = -n
+	}
+	if n >= 1_000_000 {
+		// one decimal for millions
+		whole := n / 1_000_000
+		frac := (n % 1_000_000) / 100_000
+		if frac == 0 {
+			return itoa64(whole) + "M"
+		}
+		return itoa64(whole) + "." + itoa64(frac) + "M"
+	}
+	if n >= 10_000 {
+		return itoa64(n/1000) + "k"
+	}
+	return itoa64(n)
 }
 
 func itoa64(n int64) string {
@@ -633,7 +713,7 @@ func (a *API) handleRunTick(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.3.2",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.3.3",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 		"cooldown_stats": a.State.CooldownStats(time.Now()),
 	})

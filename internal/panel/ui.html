@@ -118,33 +118,26 @@ select.act{min-width:100px}input.num{width:70px}
 <div class="wrap">
   <div class="top">
     <div>
-      <div class="eyebrow">XAI 账号巡检 / 动态错误管控</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.3.2</span> <span id="modeBadge" class="badge">模式</span></h1>
-      <div class="sub">库存 KPI 看全量 xAI auth；账号表只看巡检结果。开关控制自动行为，右侧是中文动作日志。</div>
+      <div class="eyebrow">XAI 账号巡检 / 额度池</div>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.3.3</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <div class="sub">已关闭 = CPA 文件禁用；冷却中 = 哨兵临时禁用（到期可自动恢复）。额度口径对齐 quota-guard：启用号 × 1M 估日池。</div>
     </div>
-    <div class="row">
-      <input id="cfgKey" type="password" placeholder="管理密钥 X-Management-Key" style="width:170px"/>
+    <div class="row" style="align-items:center">
+      <label class="sw" title="关闭后不再自动冷却/候选/删号；状态仍可读">
+        <span class="lbl">哨兵总开关</span>
+        <span class="switch"><input id="swSentry" type="checkbox" onchange="toggle('sentry_enabled',this.checked)"/><span class="slider"></span></span>
+      </label>
+      <input id="cfgKey" type="password" placeholder="管理密钥" style="width:140px"/>
       <button class="xs" onclick="saveKey()">保存密钥</button>
       <button class="xs" onclick="refresh()">刷新</button>
-      <button class="xs primary" onclick="runTick()" title="恢复到期冷却 + 清理过期垃圾箱">执行周期任务</button>
     </div>
-  </div>
-
-  <div class="help" id="helpBox">
-    <b>顶部 KPI</b>:xAI auth 开启/关闭来自 CPA 全量文件；冷却/候选/观测来自哨兵状态。
-    <b>开关</b>:哨兵/自动冷却/自动候选/自动垃圾箱/巡查；不再用顶部预设按钮重复一套。
-    <b>周期任务</b>:到期恢复冷却 + 清理过期垃圾箱（不是主动巡检）。
-    <b>配额</b>:优先错误体；否则本地日计数 + CPAMP 地板（非官方实时余额）。
   </div>
 
   <div class="card">
     <h2><span>总览</span><span class="meta" id="updatedAt">-</span></h2>
     <div class="kpis" id="kpis"></div>
-    <div class="chips" id="signalChips"></div>
+    <div class="preset-hint" id="poolLine">日额度池:-</div>
     <div class="swbar">
-      <label class="sw"><span class="lbl">哨兵总开关</span>
-        <span class="switch"><input id="swSentry" type="checkbox" onchange="toggle('sentry_enabled',this.checked)"/><span class="slider"></span></span>
-      </label>
       <label class="sw"><span class="lbl">自动冷却</span>
         <span class="switch"><input id="swCool" type="checkbox" onchange="toggle('auto_cooldown',this.checked)"/><span class="slider"></span></span>
       </label>
@@ -154,14 +147,19 @@ select.act{min-width:100px}input.num{width:70px}
       <label class="sw"><span class="lbl">自动垃圾箱</span>
         <span class="switch danger"><input id="swDel" type="checkbox" onchange="toggle('auto_delete',this.checked)"/><span class="slider"></span></span>
       </label>
-      <label class="sw"><span class="lbl">定时巡查</span>
+      <label class="sw" title="主动探测启用中的 xAI 是否仍可用；和「维护 tick」不是一回事">
+        <span class="lbl">定时巡查</span>
         <span class="switch"><input id="swPatrol" type="checkbox" onchange="toggle('patrol_enabled',this.checked)"/><span class="slider"></span></span>
       </label>
       <span class="meta" id="cfgLine"></span>
-      <button class="xs" onclick="applyPreset('observe')" title="关闭自动动作，仅观察">切到仅观察</button>
-      <button class="xs warn" onclick="applyPreset('safe-guard')" title="自动冷却+候选，不自动垃圾箱">切到安全防护</button>
+      <button class="xs" onclick="applyPreset('observe')" title="关闭自动动作">仅观察</button>
+      <button class="xs warn" onclick="applyPreset('safe-guard')" title="自动冷却+候选，不自动垃圾箱">安全防护</button>
+      <button class="xs" onclick="runTick()" title="维护 tick：只做「到期恢复冷却 + 清理过期垃圾箱」。不是主动巡检账号。">维护 tick</button>
     </div>
-    <div class="preset-hint" id="metricsLine">库存/用量:-</div>
+    <div class="preset-hint" id="jobHint">
+      <b>维护 tick</b>：按 tick_seconds 扫描，恢复到期冷却号、清理过期垃圾箱（被动）。
+      <b>定时巡查</b>：按 patrol_interval 主动探测启用号是否还能用（主动）。两者不要混。
+    </div>
   </div>
 
   <div class="main-grid">
@@ -314,28 +312,38 @@ function switchTab(name){
   renderLogs(LAST_LOGS);
 }
 function debouncedRefresh(){clearTimeout(timer); timer=setTimeout(refresh,220)}
+function fmtTok(n){
+  n=Number(n)||0; if(n<0) n=-n;
+  if(n>=1e6){ const w=Math.floor(n/1e6), f=Math.floor((n%1e6)/1e5); return f? (w+'.'+f+'M') : (w+'M'); }
+  if(n>=1e4) return Math.floor(n/1000)+'k';
+  return String(n);
+}
 function renderKPIs(s, trashCount, cool, inv, usage){
   s=s||{}; cool=cool||{}; inv=inv||{}; usage=usage||{};
   const cooling=cool.cooling!=null?cool.cooling:(s.cooldown||0);
+  // 已关闭 vs 冷却中：关闭=CPA disabled；冷却=哨兵临时 plugin_auto（算在 disabled 里，但状态在哨兵）
   const items=[
-    ['xAI 总数', inv.auth_xai!=null?inv.auth_xai:(inv.auth_total||0), 'accent', inv.source==='cpa_auth_files'?'CPA 全量文件':(inv.source||'')],
-    ['已开启', inv.auth_enabled!=null?inv.auth_enabled:0, 'ok', 'CPA 未禁用'],
-    ['已关闭', inv.auth_disabled!=null?inv.auth_disabled:0, '', 'CPA 已禁用'],
-    ['冷却中', cooling, 'warn', '哨兵状态'],
-    ['正常观测', s.active||0, 'ok', 'state=active'],
-    ['候选', s.candidate||0, 'danger', ''],
-    ['垃圾箱', trashCount||0, '', ''],
-    ['今日失败', usage.day_fail_calls!=null?usage.day_fail_calls:0, 'warn', '调用 '+(usage.day_calls||0)],
+    ['xAI 总数', inv.auth_xai!=null?inv.auth_xai:(inv.auth_total||0), 'accent', 'CPA 文件'],
+    ['已开启', inv.auth_enabled!=null?inv.auth_enabled:0, 'ok', '可接流量'],
+    ['已关闭', inv.auth_disabled!=null?inv.auth_disabled:0, '', '含冷却+手动'],
+    ['冷却中', cooling, 'warn', '到期可恢复'],
+    ['日池(估)', fmtTok(usage.pool_est||0), 'accent', '开启×1M'],
+    ['日池已用', fmtTok(usage.pool_used||0), 'warn', (usage.pool_used_pct!=null? (Number(usage.pool_used_pct).toFixed(1)+'%') : '')],
+    ['日池剩余', fmtTok(usage.pool_remaining||0), 'ok', ''],
+    ['候选/箱', (s.candidate||0)+'/'+(trashCount||0), '', ''],
   ];
   document.getElementById('kpis').innerHTML=items.map(([l,v,c,sub])=>
     '<div class="kpi '+(c||'')+'"><span>'+l+'</span><b>'+v+'</b>'+(sub?('<span class="subn">'+esc(sub)+'</span>'):'')+'</div>'
   ).join('');
-}
-function renderSignals(sc){
-  sc=sc||{}; const keys=Object.keys(sc);
-  document.getElementById('signalChips').innerHTML=keys.length
-    ? keys.map(k=>'<span class="chip">'+esc(SIG_ZH[k]||k)+' <b>'+sc[k]+'</b></span>').join('')
-    : '<span class="muted">暂无信号聚合</span>';
+  const pl=document.getElementById('poolLine');
+  if(pl){
+    pl.textContent='日额度池(估) '+fmtTok(usage.pool_est||0)+
+      ' = 开启 '+(usage.pool_enabled!=null?usage.pool_enabled:(inv.auth_enabled||0))+' × 1M'+
+      ' · 已用 '+fmtTok(usage.pool_used||0)+
+      ' · 剩余 '+fmtTok(usage.pool_remaining||0)+
+      (usage.cpamp_day?(' · 统计日 '+usage.cpamp_day):'')+
+      ' · 冷却号行内显示 已用/限额/剩余（无上游数字时按 1M 用尽估算）';
+  }
 }
 function accountCell(a){
   const name=a.display_name||a.email||a.file_name||a.auth_index||'-';
@@ -351,17 +359,27 @@ function accountCell(a){
   return '<div class="acc-name">'+esc(name)+'</div>'+(bits.length?'<div class="acc-sub">'+bits.join(' · ')+'</div>':'')+fileLine;
 }
 function signalCell(a){
+  // 状态列已是「额度冷却」时，信号只显示原始码，避免「免费额度用尽」再喊一遍
   const sig=a.last_signal||'';
+  const st=a.state||'';
   const zh=SIG_ZH[sig]||sig||'-';
-  const streak=(a.streak_summary||'').replace(sig+':', '×') || '';
-  return '<div class="sig-main">'+esc(zh)+'</div>'+(sig?'<div class="sig-sub mono">'+esc(sig)+(streak?(' '+esc(streak)):'')+'</div>':'');
+  if(st==='cooldown_quota' && sig==='free_usage_429'){
+    return '<div class="sig-main mono">free_usage_429</div><div class="sig-sub">用尽→冷却</div>';
+  }
+  return '<div class="sig-main">'+esc(zh)+'</div>'+(sig && zh!==sig ? '<div class="sig-sub mono">'+esc(sig)+'</div>':'');
 }
 function quotaCell(a){
+  // prefer used/limit/remaining when present
+  if(a.quota_limit || a.quota_used || a.quota_remaining){
+    const main=fmtTok(a.quota_used||0)+' / '+fmtTok(a.quota_limit||0)+' 剩 '+fmtTok(a.quota_remaining||0);
+    const sub=[];
+    if(a.quota_source==='free_usage_exhausted') sub.push('免费额用尽·估1M');
+    else if(a.quota_source) sub.push(a.quota_source);
+    if(a.day_calls) sub.push('调用 '+(a.day_calls||0)+(a.day_fail_calls?('/失败 '+a.day_fail_calls):''));
+    return '<div class="quota-main">'+esc(main)+'</div>'+(sub.length?'<div class="quota-sub">'+esc(sub.join(' · '))+'</div>':'');
+  }
   const main=a.quota_text||'-';
-  const sub=[];
-  if(a.day_calls) sub.push('今日 '+(a.day_calls||0)+' 次 / 失败 '+(a.day_fail_calls||0));
-  if(a.quota_source) sub.push(a.quota_source);
-  return '<div class="quota-main">'+esc(main)+'</div>'+(sub.length?'<div class="quota-sub">'+esc(sub.join(' · '))+'</div>':'');
+  return '<div class="quota-main">'+esc(main)+'</div>';
 }
 function timeCell(recover, updated){
   return '<div class="time-main">'+esc(recover||'-')+'</div>'+(updated?'<div class="time-sub">更新 '+esc(updated)+'</div>':'');
@@ -424,29 +442,27 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.3.2');
+    document.getElementById('ver').textContent='v'+(st.version||'0.3.3');
     document.getElementById('updatedAt').textContent='更新 '+(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
     const inv=st.inventory||{};
     const usage=st.usage||{};
     renderKPIs(st.summary, st.trash_count||0, cool, inv, usage);
-    renderSignals(st.signal_counts||{});
     setSwitch('swSentry',!!CFG.sentry_enabled);
     setSwitch('swCool',!!CFG.auto_cooldown);
     setSwitch('swCand',!!CFG.auto_candidate);
     setSwitch('swDel',!!CFG.auto_delete);
     setSwitch('swPatrol',!!CFG.patrol_enabled);
-    document.getElementById('cfgLine').textContent='周期 '+(CFG.tick_seconds||30)+'s · 垃圾箱 '+(CFG.trash_retention_days||7)+'天'+(CFG.trash_auto_purge?'·自动清':'')+' · 密钥'+(CFG.management_key_set?'✓':'✗');
-    const m=st.metrics||{};
-    const invLine='xAI '+(inv.auth_xai!=null?inv.auth_xai:'?')+' · 开 '+(inv.auth_enabled!=null?inv.auth_enabled:'?')+' · 关 '+(inv.auth_disabled!=null?inv.auth_disabled:'?')+(inv.source?(' · '+inv.source):'')+(inv.error?(' · 库存错误:'+inv.error):'');
-    const useLine='今日调用 '+(usage.day_calls||0)+' / 失败 '+(usage.day_fail_calls||0)+(usage.cpamp_day?(' · CPAMP日 '+usage.cpamp_day):'')+(CFG.cpamp_url?(' · Token≥'+(m.tokens_floor||usage.cpamp_tokens||0)):' · 无CPAMP');
-    document.getElementById('metricsLine').textContent=invLine+' | '+useLine;
+    const patrolMin=CFG.patrol_interval? Math.round((CFG.patrol_interval||0)/60)+'分' : '-';
+    document.getElementById('cfgLine').textContent=
+      'tick '+(CFG.tick_seconds||30)+'s · 巡查 '+(CFG.patrol_enabled?('开/'+patrolMin):'关')+
+      ' · 垃圾箱'+(CFG.trash_retention_days||7)+'天'+(CFG.trash_auto_purge?'自动清':'')+
+      ' · 密钥'+(CFG.management_key_set?'✓':'✗');
     const coolLine=document.getElementById('coolLine');
     if(coolLine){
       const parts=[
-        '冷却中 '+(cool.cooling!=null?cool.cooling:0),
-        '待执行 '+(cool.pending_suggest!=null?cool.pending_suggest:0),
-        '有配额字段 '+(cool.with_quota!=null?cool.with_quota:0)
+        '冷却中 '+(cool.cooling!=null?cool.cooling:0)+'（CPA 侧算已关闭，哨兵侧可到期恢复）',
+        '待冷却建议 '+(cool.pending_suggest!=null?cool.pending_suggest:0)
       ];
       if(cool.earliest_recover_at) parts.push('最早恢复 '+(String(cool.earliest_recover_at).replace('T',' ').replace('Z','').replace(/:\d{2}$/,'')));
       if(cool.latest_recover_at) parts.push('最晚 '+(String(cool.latest_recover_at).replace('T',' ').replace('Z','').replace(/:\d{2}$/,'')));
