@@ -200,6 +200,9 @@ func applyConfigMap(cfg *sentrycfg.Config, m map[string]any) {
 	if v, ok := asBool(m["cpamp_usage_floor"]); ok {
 		cfg.CPAMPUsageFloor = v
 	}
+	if v, ok := asBool(m["reopen_foreign_disabled"]); ok {
+		cfg.ReopenForeignDisabled = v
+	}
 }
 
 func asBool(v any) (bool, bool) {

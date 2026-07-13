@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.1
+
+### Fixed
+- **Stop auto-reopening operator disables**: maintenance no longer re-enables CPA auth files that are disabled outside sentry cool-down/manual locks.
+- Disabled files are synced to panel state as `CPA已禁用` (`cpa_file_disabled`) so they stay locked until you click **启用**.
+- New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
+
+# Changelog
+
 ## 1.0.0 — production release
 
 ### Added

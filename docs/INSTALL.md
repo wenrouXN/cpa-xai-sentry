@@ -200,6 +200,7 @@ plugins:
 | `tick_seconds` | no | maintain interval (default 30) |
 | `patrol_*` | no | active probe settings |
 | `cpamp_*` | no | usage analytics |
+| `reopen_foreign_disabled` | no | **default false**. If true, tick auto-opens CPA files disabled outside sentry (can undo operator disables — avoid) |
 
 ---
 

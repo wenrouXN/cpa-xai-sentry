@@ -35,6 +35,10 @@ type Config struct {
 	CPAMPURL              string         `yaml:"cpamp_url" json:"cpamp_url"`
 	CPAMPAdminKey         string         `yaml:"cpamp_admin_key" json:"cpamp_admin_key"`
 	CPAMPUsageFloor       bool           `yaml:"cpamp_usage_floor" json:"cpamp_usage_floor"`
+	// ReopenForeignDisabled: when true, tick re-enables CPA auth files that are
+	// disabled but not owned by this sentry (plugin_auto cool-down / user_manual).
+	// Default false — operator disables (CPA panel / file) must stay disabled.
+	ReopenForeignDisabled bool `yaml:"reopen_foreign_disabled" json:"reopen_foreign_disabled"`
 }
 
 func Default() Config {
@@ -132,5 +136,6 @@ func (c Config) Redact() map[string]any {
 		"cpamp_url":                   c.CPAMPURL,
 		"cpamp_admin_key_set":         c.CPAMPAdminKey != "",
 		"cpamp_usage_floor":           c.CPAMPUsageFloor,
+		"reopen_foreign_disabled":     c.ReopenForeignDisabled,
 	}
 }

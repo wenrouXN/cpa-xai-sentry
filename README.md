@@ -215,6 +215,7 @@ go run . -addr 127.0.0.1:18999 -data ./data
 | `auth_dir` / `state_path` / `trash_dir` | Auth + durable paths (mount these) |
 | `patrol_enabled` / `patrol_interval` | Scheduled patrol |
 | `trash_retention_days` | Trash TTL |
+| `reopen_foreign_disabled` | default **false**; do not auto-open operator/CPA disables |
 
 Full field list + Docker examples: **[docs/INSTALL.md](docs/INSTALL.md)**.  
 Per-error ladder is edited in the panel (overrides YAML defaults).

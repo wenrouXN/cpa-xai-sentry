@@ -363,12 +363,10 @@ func (g *Guard) Tick(ctx context.Context) error {
 			}
 		}
 	}
-	// Re-open CPA files disabled by non-sentry causes; leave our plugin_auto cool-downs alone.
-	// Wait for next real usage/patrol error instead of inventing cooldown from file flags.
-	reopened, reopenErr := g.reopenForeignDisabled(ctx, now)
-	_ = reopened
-	if reopenErr != nil {
-		g.State.Log(state.ActionLog{Source: "tick", Action: "reopen_foreign_failed", Reason: reopenErr.Error()})
+	// Align sentry state with CPA disabled files (do NOT auto-open by default).
+	// Optional reopen of non-sentry disables is gated by reopen_foreign_disabled.
+	if _, err := g.syncDisabledFromCPA(ctx, now); err != nil {
+		g.State.Log(state.ActionLog{Source: "tick", Action: "sync_disabled_failed", Reason: err.Error()})
 	}
 	g.pruneDuplicateAccounts()
 	// closed-loop hygiene: Active must be clean (no residual signal/plugin_auto lock)
@@ -411,11 +409,18 @@ func (g *Guard) Tick(ctx context.Context) error {
 	return g.State.Save()
 }
 
-// reopenForeignDisabled re-enables CPA auth files that are disabled but NOT owned by
-// this sentry's intentional cool-down / 候删 / panel-manual lock.
-// Policy: if we didn't put it into plugin_auto cooldown/candidate, open it and wait
-// for the next real error signal from usage/patrol.
-func (g *Guard) reopenForeignDisabled(ctx context.Context, now time.Time) (int, error) {
+// syncDisabledFromCPA inspects CPA auth files that are currently disabled.
+//
+// Default (reopen_foreign_disabled=false):
+//   - Never auto-open disabled files.
+//   - If sentry does not already own the disable (plugin_auto cool-down / user_manual),
+//     mark state as user_manual + cpa_file_disabled so the panel shows「CPA已禁用」
+//     and operators can enable manually.
+//
+// Optional (reopen_foreign_disabled=true):
+//   - Re-enable files that are disabled but NOT owned by this sentry
+//     (legacy behaviour; can undo operator/CPA-panel disables — use carefully).
+func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, error) {
 	if g.CPA == nil {
 		return 0, nil
 	}
@@ -423,7 +428,7 @@ func (g *Guard) reopenForeignDisabled(ctx context.Context, now time.Time) (int, 
 	if err != nil {
 		return 0, err
 	}
-	// index sentry accounts by file/email for ownership checks
+	// index sentry accounts by file/email
 	byFile := map[string]*state.Account{}
 	byEmail := map[string]*state.Account{}
 	for _, acc := range g.State.AccountsSnapshot() {
@@ -434,17 +439,20 @@ func (g *Guard) reopenForeignDisabled(ctx context.Context, now time.Time) (int, 
 			byEmail[strings.ToLower(strings.TrimSpace(acc.Email))] = acc
 		}
 	}
-	// protect=true means DO NOT auto-reopen (leave disabled)
+	// protect=true: sentry intentionally disabled this account — do not reopen / do not re-tag
 	protect := func(acc *state.Account) bool {
 		if acc == nil {
-			return false // untracked disabled file → reopen
+			return false
 		}
-		// trash stays
 		if acc.State == state.Trashed || acc.State == state.Purged {
 			return true
 		}
-		// panel manual lock
-		if acc.DisableSource == "user_manual" || acc.PreDisabled {
+		// panel permanent disable (or any user_manual state)
+		if acc.State == state.UserManual || acc.DisableSource == "user_manual" || acc.PreDisabled {
+			return true
+		}
+		// already marked as CPA-file disable (operator/external)
+		if acc.DisableSource == "cpa_file_disabled" || acc.DisableSource == "cpa_disabled" {
 			return true
 		}
 		// our auto cool-down / 候删
@@ -454,7 +462,6 @@ func (g *Guard) reopenForeignDisabled(ctx context.Context, now time.Time) (int, 
 				return true
 			}
 		}
-		// cpa_file_disabled / foreign / active+file disabled / empty → reopen
 		return false
 	}
 
@@ -480,38 +487,52 @@ func (g *Guard) reopenForeignDisabled(ctx context.Context, now time.Time) (int, 
 		if acc == nil && em != "" {
 			acc = byFile["xai-"+em+".json"]
 		}
-		// if we intentionally disabled it for cool-down/候删/manual — skip
+		// sentry-owned disable: leave file alone
 		if protect(acc) {
 			continue
 		}
-		// foreign / unknown / cpa_file_disabled / empty ownership → re-open file
-		if err := g.CPA.SetDisabled(ctx, name, false); err != nil {
-			g.State.Log(state.ActionLog{
-				Auth: func() string {
-					if acc != nil {
-						return acc.AuthIndex
-					}
-					return name
-				}(),
-				Source: "tick", Action: "reopen_foreign_failed", Reason: err.Error(),
-			})
+
+		// Optional legacy reopen of non-owned disables
+		if g.Cfg.ReopenForeignDisabled {
+			if err := g.CPA.SetDisabled(ctx, name, false); err != nil {
+				auth := name
+				if acc != nil {
+					auth = acc.AuthIndex
+				}
+				g.State.Log(state.ActionLog{Auth: auth, Source: "tick", Action: "reopen_foreign_failed", Reason: err.Error()})
+				continue
+			}
+			if acc != nil {
+				g.State.ClearManualLock(acc.AuthIndex)
+				g.State.Log(state.ActionLog{Auth: acc.AuthIndex, Source: "tick", Action: "reopen_foreign", Reason: "reopen_foreign_disabled=true"})
+			} else {
+				g.State.Log(state.ActionLog{Auth: name, Source: "tick", Action: "reopen_foreign", Reason: "reopen_foreign_disabled=true untracked"})
+			}
+			n++
 			continue
 		}
-		// clear sentry sticky state if any
+
+		// Default: keep file disabled; align sentry state so panel shows CPA已禁用
+		// and never treat it as a foreign disable to reopen later.
+		authIndex := ""
 		if acc != nil {
-			g.State.ClearManualLock(acc.AuthIndex)
-			// also clear last_signal? keep for history; recover cleared by ClearManualLock
-			g.State.Log(state.ActionLog{
-				Auth: acc.AuthIndex, Source: "tick", Action: "reopen_foreign",
-				Reason: "foreign_or_unknown_disabled",
-			})
+			authIndex = acc.AuthIndex
 		} else {
-			// file not tracked yet — just open, next usage will create state
-			g.State.Log(state.ActionLog{
-				Auth: name, Source: "tick", Action: "reopen_foreign",
-				Reason: "foreign_disabled_untracked",
-			})
+			// create a tracked row keyed by file name so next ticks protect it
+			authIndex = name
+			g.State.Touch(authIndex)
+			if em != "" {
+				g.State.UpdateMeta(authIndex, name, em, "")
+			} else {
+				g.State.UpdateMeta(authIndex, name, "", "")
+			}
 		}
+		g.State.SetAccountState(authIndex, state.UserManual, "cpa_file_disabled")
+		g.State.SetRecoverAt(authIndex, time.Time{})
+		g.State.Log(state.ActionLog{
+			Auth: authIndex, Source: "tick", Action: "file_disabled_sync",
+			Reason: "cpa_disabled_sync",
+		})
 		n++
 	}
 	return n, nil
