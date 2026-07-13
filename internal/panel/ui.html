@@ -30,11 +30,13 @@ h1{font-size:16px;margin:0;display:flex;align-items:center;gap:8px;flex-wrap:wra
 .dot{width:7px;height:7px;border-radius:50%;background:currentColor}
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:8px;backdrop-filter:blur(10px)}
 .card h2{font-size:12.5px;margin:0 0 8px;display:flex;justify-content:space-between;gap:8px;align-items:center}
-.kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px}
-@media(max-width:900px){.kpis{grid-template-columns:repeat(3,1fr)}}
+.kpis{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:6px}
+@media(max-width:1200px){.kpis{grid-template-columns:repeat(4,1fr)}}
+@media(max-width:700px){.kpis{grid-template-columns:repeat(2,1fr)}}
 .kpi{border:1px solid var(--border);border-radius:10px;padding:7px 8px;background:#fff;min-height:56px}
 .kpi b{display:block;font-size:18px;line-height:1.1;margin:2px 0;font-variant-numeric:tabular-nums}
 .kpi span{color:var(--muted);font-size:10.5px;font-weight:700}
+.kpi .subn{display:block;color:var(--muted);font-size:10px;margin-top:2px;font-weight:600}
 .kpi.accent{border-color:#409eff55;background:linear-gradient(160deg,#ecf5ff,#fff)}
 .kpi.warn{border-color:#e6a23c55;background:linear-gradient(160deg,#fdf6ec,#fff)}
 .kpi.danger{border-color:#f56c6c55;background:linear-gradient(160deg,#fef0f0,#fff)}
@@ -117,25 +119,22 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">XAI 账号巡检 / 动态错误管控</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.3.1</span> <span id="modeBadge" class="badge">模式</span></h1>
-      <div class="sub">观察用量错误 → 按策略冷却/候选/垃圾箱。默认仅观察;「安全防护」= 自动冷却 + 自动候选,<b>不会</b>自动进垃圾箱。</div>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.3.2</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <div class="sub">库存 KPI 看全量 xAI auth；账号表只看巡检结果。开关控制自动行为，右侧是中文动作日志。</div>
     </div>
     <div class="row">
       <input id="cfgKey" type="password" placeholder="管理密钥 X-Management-Key" style="width:170px"/>
       <button class="xs" onclick="saveKey()">保存密钥</button>
       <button class="xs" onclick="refresh()">刷新</button>
-      <button class="xs primary" onclick="runTick()" title="恢复到期冷却 + 清理过期垃圾箱;不是主动巡检">执行周期任务</button>
-      <button class="xs" onclick="applyPreset('observe')">仅观察</button>
-      <button class="xs warn" onclick="applyPreset('safe-guard')" title="打开自动冷却+自动候选;仍不自动进垃圾箱">安全防护</button>
+      <button class="xs primary" onclick="runTick()" title="恢复到期冷却 + 清理过期垃圾箱">执行周期任务</button>
     </div>
   </div>
 
   <div class="help" id="helpBox">
-    <b>周期任务</b>:到期自动恢复冷却账号 + 清理过期垃圾箱(不是主动巡检)。
-    <b>CPAMP</b>:若已配置地址和密钥,启动后会自动回补今日 xAI 用量;未配置则跳过。
-    <b>安全防护</b>:自动冷却 + 自动候选,仍禁止自动进垃圾箱;进垃圾箱需人工确认或单独打开「自动垃圾箱」。
-    <b>开关持久化</b>:面板开关会写入挂载目录,不会被 YAML 重载打回「仅观察」。
-    <b>配额</b>:优先解析错误体;否则用本地日计数 + CPAMP 日地板估算(非官方实时余额)。
+    <b>顶部 KPI</b>:xAI auth 开启/关闭来自 CPA 全量文件；冷却/候选/观测来自哨兵状态。
+    <b>开关</b>:哨兵/自动冷却/自动候选/自动垃圾箱/巡查；不再用顶部预设按钮重复一套。
+    <b>周期任务</b>:到期恢复冷却 + 清理过期垃圾箱（不是主动巡检）。
+    <b>配额</b>:优先错误体；否则本地日计数 + CPAMP 地板（非官方实时余额）。
   </div>
 
   <div class="card">
@@ -159,8 +158,10 @@ select.act{min-width:100px}input.num{width:70px}
         <span class="switch"><input id="swPatrol" type="checkbox" onchange="toggle('patrol_enabled',this.checked)"/><span class="slider"></span></span>
       </label>
       <span class="meta" id="cfgLine"></span>
+      <button class="xs" onclick="applyPreset('observe')" title="关闭自动动作，仅观察">切到仅观察</button>
+      <button class="xs warn" onclick="applyPreset('safe-guard')" title="自动冷却+候选，不自动垃圾箱">切到安全防护</button>
     </div>
-    <div class="preset-hint" id="metricsLine">CPAMP:-</div>
+    <div class="preset-hint" id="metricsLine">库存/用量:-</div>
   </div>
 
   <div class="main-grid">
@@ -313,22 +314,27 @@ function switchTab(name){
   renderLogs(LAST_LOGS);
 }
 function debouncedRefresh(){clearTimeout(timer); timer=setTimeout(refresh,220)}
-function renderKPIs(s, trashCount, cool){
-  s=s||{}; cool=cool||{};
+function renderKPIs(s, trashCount, cool, inv, usage){
+  s=s||{}; cool=cool||{}; inv=inv||{}; usage=usage||{};
+  const cooling=cool.cooling!=null?cool.cooling:(s.cooldown||0);
   const items=[
-    ['已观测',s.total||0,'accent'],
-    ['正常',s.active||0,'ok'],
-    ['冷却中',cool.cooling!=null?cool.cooling:(s.cooldown||0),'warn'],
-    ['待执行冷却',cool.pending_suggest!=null?cool.pending_suggest:(s.pending_suggest||0),'warn'],
-    ['候选',s.candidate||0,'danger'],
-    ['垃圾箱',trashCount||0,''],
+    ['xAI 总数', inv.auth_xai!=null?inv.auth_xai:(inv.auth_total||0), 'accent', inv.source==='cpa_auth_files'?'CPA 全量文件':(inv.source||'')],
+    ['已开启', inv.auth_enabled!=null?inv.auth_enabled:0, 'ok', 'CPA 未禁用'],
+    ['已关闭', inv.auth_disabled!=null?inv.auth_disabled:0, '', 'CPA 已禁用'],
+    ['冷却中', cooling, 'warn', '哨兵状态'],
+    ['正常观测', s.active||0, 'ok', 'state=active'],
+    ['候选', s.candidate||0, 'danger', ''],
+    ['垃圾箱', trashCount||0, '', ''],
+    ['今日失败', usage.day_fail_calls!=null?usage.day_fail_calls:0, 'warn', '调用 '+(usage.day_calls||0)],
   ];
-  document.getElementById('kpis').innerHTML=items.map(([l,v,c])=>'<div class="kpi '+(c||'')+'"><span>'+l+'</span><b>'+v+'</b></div>').join('');
+  document.getElementById('kpis').innerHTML=items.map(([l,v,c,sub])=>
+    '<div class="kpi '+(c||'')+'"><span>'+l+'</span><b>'+v+'</b>'+(sub?('<span class="subn">'+esc(sub)+'</span>'):'')+'</div>'
+  ).join('');
 }
 function renderSignals(sc){
   sc=sc||{}; const keys=Object.keys(sc);
   document.getElementById('signalChips').innerHTML=keys.length
-    ? keys.map(k=>'<span class="chip">'+esc(k)+' <b>'+sc[k]+'</b></span>').join('')
+    ? keys.map(k=>'<span class="chip">'+esc(SIG_ZH[k]||k)+' <b>'+sc[k]+'</b></span>').join('')
     : '<span class="muted">暂无信号聚合</span>';
 }
 function accountCell(a){
@@ -386,12 +392,16 @@ function renderLogs(logs){
   const box=document.getElementById('logbox');
   if(!box) return;
   const lines=LAST_LOGS.slice().reverse().slice(0,300).map(e=>{
+    const act=e.action_label||ACT_ZH[e.action]||e.action||'—';
+    const sig=e.signal_label||SIG_ZH[e.signal]||e.signal||'';
+    const who=e.auth_label||e.auth||'';
+    const text=e.text || [act, sig, who, e.reason].filter(Boolean).join(' · ');
     const cls=String(e.action||'').includes('fail')||String(e.action||'').includes('error')?'l-err':'l-act';
-    return '<div><span class="muted">'+esc((e.at||'').replace('T',' ').replace('Z',''))+'</span> <span class="'+cls+'">'+esc(e.action)+'</span> <span class="l-sig">'+esc(e.signal||'-')+'</span> <span>'+esc(e.auth||'')+'</span> <span class="muted">'+esc(e.reason||'')+'</span></div>';
+    return '<div><span class="muted">'+esc(e.at||'')+'</span> <span class="'+cls+'">'+esc(text)+'</span></div>';
   });
   box.innerHTML=lines.join('')||'暂无日志';
   const meta=document.getElementById('logMeta');
-  if(meta) meta.textContent=(LAST_LOGS.length||0)+' 条 · 右侧常驻';
+  if(meta) meta.textContent=(LAST_LOGS.length||0)+' 条 · 中文';
 }
 async function refreshTrashOnly(){
   try{
@@ -414,33 +424,33 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.3.1');
+    document.getElementById('ver').textContent='v'+(st.version||'0.3.2');
     document.getElementById('updatedAt').textContent='更新 '+(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
-    renderKPIs(st.summary, st.trash_count||0, cool);
+    const inv=st.inventory||{};
+    const usage=st.usage||{};
+    renderKPIs(st.summary, st.trash_count||0, cool, inv, usage);
     renderSignals(st.signal_counts||{});
     setSwitch('swSentry',!!CFG.sentry_enabled);
     setSwitch('swCool',!!CFG.auto_cooldown);
     setSwitch('swCand',!!CFG.auto_candidate);
     setSwitch('swDel',!!CFG.auto_delete);
     setSwitch('swPatrol',!!CFG.patrol_enabled);
-    document.getElementById('cfgLine').textContent='周期 '+(CFG.tick_seconds||30)+'s · 垃圾箱保留 '+(CFG.trash_retention_days||7)+'天'+(CFG.trash_auto_purge?'(自动清)':'')+' · 密钥 '+(CFG.management_key_set?'已配置':'缺失')+' · 开关已持久化';
+    document.getElementById('cfgLine').textContent='周期 '+(CFG.tick_seconds||30)+'s · 垃圾箱 '+(CFG.trash_retention_days||7)+'天'+(CFG.trash_auto_purge?'·自动清':'')+' · 密钥'+(CFG.management_key_set?'✓':'✗');
     const m=st.metrics||{};
-    document.getElementById('metricsLine').textContent=
-      (CFG.cpamp_url
-        ? ('CPAMP 已配置 · 日='+(m.day_key||'-')+' · Token≥'+(m.tokens_floor||0)+' · 调用≥'+(m.calls_floor||0)+' · 最近回补 '+(m.backfill_at||'尚未')+(m.backfill_source?(' / '+m.backfill_source):'')+' · 自动回补开启')
-        : 'CPAMP 未配置,跳过自动回补');
+    const invLine='xAI '+(inv.auth_xai!=null?inv.auth_xai:'?')+' · 开 '+(inv.auth_enabled!=null?inv.auth_enabled:'?')+' · 关 '+(inv.auth_disabled!=null?inv.auth_disabled:'?')+(inv.source?(' · '+inv.source):'')+(inv.error?(' · 库存错误:'+inv.error):'');
+    const useLine='今日调用 '+(usage.day_calls||0)+' / 失败 '+(usage.day_fail_calls||0)+(usage.cpamp_day?(' · CPAMP日 '+usage.cpamp_day):'')+(CFG.cpamp_url?(' · Token≥'+(m.tokens_floor||usage.cpamp_tokens||0)):' · 无CPAMP');
+    document.getElementById('metricsLine').textContent=invLine+' | '+useLine;
     const coolLine=document.getElementById('coolLine');
     if(coolLine){
       const parts=[
         '冷却中 '+(cool.cooling!=null?cool.cooling:0),
-        '待执行冷却 '+(cool.pending_suggest!=null?cool.pending_suggest:0),
-        '有配额字段 '+(cool.with_quota!=null?cool.with_quota:0),
-        '配额合计 用'+(cool.quota_used_sum||0)+'/限'+(cool.quota_limit_sum||0)+' 剩'+(cool.quota_remain_sum||0)
+        '待执行 '+(cool.pending_suggest!=null?cool.pending_suggest:0),
+        '有配额字段 '+(cool.with_quota!=null?cool.with_quota:0)
       ];
-      if(cool.earliest_recover_at) parts.push('最早恢复 '+(String(cool.earliest_recover_at).replace('T',' ').replace('Z','')));
-      if(cool.latest_recover_at) parts.push('最晚恢复 '+(String(cool.latest_recover_at).replace('T',' ').replace('Z','')));
-      coolLine.textContent=parts.join(' · ')+(st.quota_help?(' · '+st.quota_help):'');
+      if(cool.earliest_recover_at) parts.push('最早恢复 '+(String(cool.earliest_recover_at).replace('T',' ').replace('Z','').replace(/:\d{2}$/,'')));
+      if(cool.latest_recover_at) parts.push('最晚 '+(String(cool.latest_recover_at).replace('T',' ').replace('Z','').replace(/:\d{2}$/,'')));
+      coolLine.textContent=parts.join(' · ');
     }
     document.getElementById('accMeta').textContent=(st.account_count||0)+' 行 / 已观测 '+((st.summary&&st.summary.total)||0);
     // preserve checkbox selection across refresh

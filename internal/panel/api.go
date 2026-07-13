@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/openclaw-local/cpa-xai-sentry/internal/cpaapi"
@@ -14,6 +15,12 @@ import (
 	"github.com/openclaw-local/cpa-xai-sentry/internal/sentrycfg"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/state"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/trash"
+)
+
+var (
+	invMu    sync.Mutex
+	invCache map[string]any
+	invAt    time.Time
 )
 
 type API struct {
@@ -80,32 +87,83 @@ func suggestAction(acc *state.Account) (action, reason string) {
 	}
 	switch acc.State {
 	case state.CandidateDead:
-		return "trash", "候选死号，建议移入垃圾箱"
+		return "trash", "候选死号"
 	case state.CooldownQuota:
-		return "wait", "free-usage 冷却中，到期自动恢复"
+		return "wait", "额度冷却中"
 	case state.CooldownSpending:
-		return "wait", "spending-limit 冷却中，勿删除"
+		return "wait", "消费限额冷却中"
 	case state.CooldownPermission:
-		return "review", "permission 软故障，复查后决定"
+		return "review", "权限冷却中"
 	case state.UserManual:
-		return "manual", "用户手动禁用，不自动启用"
+		return "manual", "手动禁用"
 	case state.Trashed:
-		return "restore_or_purge", "已在垃圾箱"
+		return "restore_or_purge", "垃圾箱"
 	}
 	switch acc.LastSignal {
 	case "auth_401":
-		return "candidate", "凭证失效信号，建议候选/人工确认"
+		return "candidate", "凭证失效"
 	case "permission_403":
-		return "cooldown", "权限拒绝，默认可恢复冷却"
+		return "cooldown", "权限拒绝"
 	case "free_usage_429":
-		return "cooldown", "免费额度耗尽，应冷却不应删除"
+		return "cooldown", "免费额度用尽"
 	case "spending_limit_402":
-		return "cooldown", "消费限额，硬禁止自动删除"
+		return "cooldown", "消费限额"
 	}
 	if acc.State == state.Active && acc.LastSignal == "" {
-		return "none", "正常"
+		return "none", ""
 	}
-	return "observe", "仅观察"
+	return "observe", ""
+}
+
+// inventoryFromCPA counts xAI auth files enabled/disabled (cached ~20s).
+func (a *API) inventoryFromCPA(r *http.Request) map[string]any {
+	invMu.Lock()
+	defer invMu.Unlock()
+	if invCache != nil && time.Since(invAt) < 20*time.Second {
+		return invCache
+	}
+	out := map[string]any{
+		"auth_total": 0, "auth_enabled": 0, "auth_disabled": 0, "auth_xai": 0, "source": "none",
+	}
+	if a.Guard == nil || a.Guard.CPA == nil {
+		invCache, invAt = out, time.Now()
+		return out
+	}
+	files, err := a.Guard.CPA.ListAuthFiles(r.Context())
+	if err != nil || len(files) == 0 {
+		// fallback: scan auth_dir via resolver cache if present
+		if a.Guard.Resolver != nil {
+			_ = a.Guard.Resolver.Ensure(r.Context())
+		}
+		out["source"] = "error"
+		if err != nil {
+			out["error"] = err.Error()
+		}
+		invCache, invAt = out, time.Now()
+		return out
+	}
+	total, en, dis, xai := 0, 0, 0, 0
+	for _, f := range files {
+		name := strings.ToLower(f.Name + " " + f.Provider + " " + f.Type)
+		isXAI := strings.Contains(name, "xai") || strings.Contains(name, "grok") || strings.HasPrefix(strings.ToLower(f.Name), "xai-")
+		if !isXAI {
+			continue
+		}
+		xai++
+		total++
+		if f.Disabled {
+			dis++
+		} else {
+			en++
+		}
+	}
+	out["auth_total"] = total
+	out["auth_xai"] = xai
+	out["auth_enabled"] = en
+	out["auth_disabled"] = dis
+	out["source"] = "cpa_auth_files"
+	invCache, invAt = out, time.Now()
+	return out
 }
 
 func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
@@ -158,9 +216,13 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		"suggest_review": 0, "suggest_wait": 0,
 	}
 	signalCounts := map[string]int{}
+	var dayCalls, dayFails, dayTokens int64
 	rows := make([]row, 0, len(accs))
 	for _, acc := range accs {
 		summary["total"]++
+		dayCalls += acc.DayCalls
+		dayFails += acc.DayFailCalls
+		dayTokens += acc.DayTokens
 		switch acc.State {
 		case state.Active:
 			summary["active"]++
@@ -256,24 +318,33 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	if v, ok := cool["pending_suggest"].(int); ok {
 		summary["pending_suggest"] = v
 	}
+	inv := a.inventoryFromCPA(r)
+	usage := map[string]any{
+		"day_calls":      dayCalls,
+		"day_fail_calls": dayFails,
+		"day_tokens":     dayTokens,
+		"cpamp_tokens":   m.TokensFloor,
+		"cpamp_calls":    m.CallsFloor,
+		"cpamp_day":      m.DayKey,
+	}
 	writeJSON(w, 200, map[string]any{
-		"plugin":          "cpa-xai-sentry",
-		"version":         "0.3.1",
-		"mode":            modeOf(*a.Cfg),
-		"mode_label":      modeLabel(modeOf(*a.Cfg)),
-		"summary":         summary,
-		"signal_counts":   signalCounts,
-		"cooldown_stats":  cool,
-		"accounts":        rows,
-		"account_count":   len(rows),
-		"trash_count":     len(a.State.ListTrash()),
-		"error_count":     len(a.State.ListObserved()),
-		"policy_count":    len(a.State.ListErrorPolicies()),
-		"metrics":         m,
-		"config":          a.Cfg.Redact(),
-		"updated_at":      time.Now().UTC().Format(time.RFC3339),
-		"tick_help":       "周期任务：到期自动恢复冷却账号，并清理过期垃圾箱。不是巡检。",
-		"quota_help":      "配额数字来自错误体解析/本地日计数/CPAMP 日地板；官方 per-account remaining 不可用时为估算。",
+		"plugin":         "cpa-xai-sentry",
+		"version":        "0.3.2",
+		"mode":           modeOf(*a.Cfg),
+		"mode_label":     modeLabel(modeOf(*a.Cfg)),
+		"summary":        summary,
+		"inventory":      inv,
+		"usage":          usage,
+		"signal_counts":  signalCounts,
+		"cooldown_stats": cool,
+		"accounts":       rows,
+		"account_count":  len(rows),
+		"trash_count":    len(a.State.ListTrash()),
+		"error_count":    len(a.State.ListObserved()),
+		"policy_count":   len(a.State.ListErrorPolicies()),
+		"metrics":        m,
+		"config":         a.Cfg.Redact(),
+		"updated_at":     time.Now().In(time.FixedZone("CST", 8*3600)).Format("01-02 15:04:05"),
 	})
 }
 
@@ -374,23 +445,94 @@ func (a *API) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) {
-	// return last logs without secrets
 	type L struct {
-		At     string `json:"at"`
-		Auth   string `json:"auth"`
-		Source string `json:"source"`
-		Signal string `json:"signal"`
-		Action string `json:"action"`
-		Reason string `json:"reason"`
+		At          string `json:"at"`
+		Auth        string `json:"auth"`
+		AuthLabel   string `json:"auth_label"`
+		Source      string `json:"source"`
+		Signal      string `json:"signal"`
+		SignalLabel string `json:"signal_label"`
+		Action      string `json:"action"`
+		ActionLabel string `json:"action_label"`
+		Reason      string `json:"reason"`
+		Text        string `json:"text"`
 	}
 	out := make([]L, 0)
 	for _, e := range a.State.SnapshotLogs() {
+		label := e.Auth
+		if acc := a.State.Get(e.Auth); acc != nil {
+			label = cpaapi.DisplayName(acc.Email, acc.FileName, acc.AuthIndex)
+		}
+		actL := logActionZH(e.Action)
+		sigL := logSignalZH(e.Signal)
+		reason := e.Reason
+		if reason == "free_usage" || reason == "bulk_suggested_cooldown" {
+			reason = "免费额度用尽"
+		}
+		if reason == "recover_at" {
+			reason = "到期恢复"
+		}
+		text := actL
+		if sigL != "" {
+			text += " · " + sigL
+		}
+		if label != "" {
+			text += " · " + label
+		}
+		if reason != "" && reason != sigL && reason != e.Action {
+			text += " · " + reason
+		}
 		out = append(out, L{
-			At: e.At.UTC().Format(time.RFC3339), Auth: e.Auth, Source: e.Source,
-			Signal: e.Signal, Action: e.Action, Reason: e.Reason,
+			At: e.At.In(time.FixedZone("CST", 8*3600)).Format("15:04:05"),
+			Auth: e.Auth, AuthLabel: label, Source: e.Source,
+			Signal: e.Signal, SignalLabel: sigL,
+			Action: e.Action, ActionLabel: actL, Reason: reason, Text: text,
 		})
 	}
 	writeJSON(w, 200, map[string]any{"logs": out})
+}
+
+func logActionZH(a string) string {
+	switch a {
+	case "cooldown":
+		return "冷却"
+	case "cooldown_failed":
+		return "冷却失败"
+	case "reenable":
+		return "恢复启用"
+	case "reenable_failed":
+		return "恢复失败"
+	case "candidate":
+		return "进候选"
+	case "manual_disable":
+		return "手动禁用"
+	case "manual_enable":
+		return "手动启用"
+	case "backfill":
+		return "用量回补"
+	case "trash", "delete":
+		return "进垃圾箱"
+	default:
+		if a == "" {
+			return "—"
+		}
+		return a
+	}
+}
+
+func logSignalZH(s string) string {
+	switch s {
+	case "free_usage_429":
+		return "免费额度用尽"
+	case "spending_limit_402":
+		return "消费限额"
+	case "auth_401":
+		return "凭证失效"
+	case "permission_403":
+		return "权限拒绝"
+	default:
+		return s
+	}
 }
 
 func (a *API) handleCandidates(w http.ResponseWriter, r *http.Request) {
@@ -491,7 +633,7 @@ func (a *API) handleRunTick(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.3.1",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.3.2",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 		"cooldown_stats": a.State.CooldownStats(time.Now()),
 	})
