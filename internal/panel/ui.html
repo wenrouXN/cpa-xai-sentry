@@ -50,18 +50,34 @@ button.xs{padding:3px 7px;font-size:11px;border-radius:7px}
 input,select{border:1px solid var(--border);border-radius:8px;padding:5px 8px;background:#fff;min-width:0}
 .toolbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 6px;padding:7px 8px;background:linear-gradient(180deg,#f6faff,#fff);border:1px solid var(--border);border-radius:10px}
 .table-wrap{max-height:min(58vh,600px);overflow:auto;border:1px solid var(--border);border-radius:10px;background:#fff}
-table{width:100%;border-collapse:collapse}
-th,td{text-align:left;padding:6px 7px;border-bottom:1px solid var(--border);vertical-align:top}
-th{position:sticky;top:0;background:#f8fbff;color:var(--muted);font-weight:700;font-size:11px;z-index:1}
-tr:hover td{background:#409eff0c}
-.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px}
-.muted{color:var(--muted)}
-.tag{display:inline-block;padding:1px 6px;border-radius:999px;font-size:10.5px;border:1px solid var(--border);background:#f8fafc;white-space:nowrap}
-.tag.active,.tag.ok{background:#f0f9eb;color:#529b2e;border-color:#c2e7b0}
-.tag.cooldown,.tag.wait{background:#fdf6ec;color:#b88230;border-color:#f5dab1}
-.tag.candidate,.tag.trash{background:#fef0f0;color:#c45656;border-color:#fbc4c4}
+table{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #eef1f5;vertical-align:middle}
+th{position:sticky;top:0;background:#f7f9fc;color:#64748b;font-weight:600;font-size:11px;z-index:1;letter-spacing:.02em}
+tr:hover td{background:#f5f9ff}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
+.acc-name{font-size:12px;font-weight:500;color:#1f2937;line-height:1.3}
+.acc-sub{display:none}
+.tag{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;border:1px solid transparent;background:#f1f5f9;color:#475569;white-space:nowrap;font-weight:600}
+.tag.active,.tag.ok{background:#ecfdf3;color:#067647;border-color:#abefc6}
+.tag.cooldown,.tag.wait{background:#f2f4f7;color:#344054;border-color:#e4e7ec}
+.tag.candidate,.tag.trash{background:#fef3f2;color:#b42318;border-color:#fecdca}
 .tag.manual,.tag.review{background:#f4f4f5;color:#606266}
-.tag.observe,.tag.none{background:#ecf5ff;color:#337ecc;border-color:#b3d8ff}
+.tag.observe,.tag.none{background:#eff8ff;color:#175cd3;border-color:#b2ddff}
+.reqcell{display:flex;align-items:center;min-width:78px}
+.sigbars{display:inline-flex;align-items:flex-end;gap:1.5px;height:16px;padding:0;cursor:default;user-select:none}
+.sigbars .slot{width:3px;height:100%;border-radius:1px;background:#e5e7eb}
+.sigbars .slot.on{background:#12b76a}
+.sigbars .slot.fail{background:#f04438;cursor:pointer}
+.sigbars .slot.fail:hover{filter:brightness(.92)}
+.sigbars .slot.empty{background:#eef2f6}
+.sigbars.clickable{cursor:pointer}
+.quota-main{font-variant-numeric:tabular-nums;font-weight:500;font-size:12px;color:#1f2937;white-space:nowrap}
+.quota-sub{display:none}
+.time-main{font-variant-numeric:tabular-nums;font-weight:500;font-size:12px;color:#344054;white-space:nowrap}
+.time-sub{display:none}
+.table-wrap.accounts{max-height:min(62vh,680px)}
+.table-wrap.accounts th,.table-wrap.accounts td{padding:9px 10px}
+.table-wrap.accounts tr td:nth-child(2){min-width:180px}
 .chips{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}
 .chip{border:1px solid var(--border);background:#fff;border-radius:999px;padding:2px 8px;font-size:11px}
 .chip b{color:var(--accent)}
@@ -86,27 +102,9 @@ tr:hover td{background:#409eff0c}
 .switch input:checked+.slider:before{transform:translateX(18px)}
 .switch.danger input:checked+.slider{background:var(--danger)}
 .preset-hint{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.4}
-.acc-name{font-weight:700;font-size:13px;color:var(--text);letter-spacing:.01em}
-.acc-sub{color:var(--muted);font-size:11px;margin-top:3px;line-height:1.35}
-.acc-sub .k{color:#94a3b8;margin-right:2px}
 .acc-file{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10.5px;color:#64748b;margin-top:2px;word-break:break-all}
 .sig-main{font-weight:700;font-size:12px}
 .sig-sub{color:var(--muted);font-size:10.5px;margin-top:2px}
-.reqcell{display:flex;flex-direction:column;gap:3px;align-items:flex-start;min-width:92px}
-.reqcell .nums{font-variant-numeric:tabular-nums;font-weight:600;font-size:11px;color:var(--reg);letter-spacing:.01em}
-.reqcell .nums .failn{color:var(--danger);font-weight:700}
-.reqcell .pct{font-size:10.5px;color:var(--ok);font-weight:600;font-variant-numeric:tabular-nums}
-/* CPAMP request-monitor style: 15 vertical slots */
-.sigbars{display:inline-flex;align-items:flex-end;gap:1.5px;height:18px;padding:1px 2px;cursor:default;user-select:none}
-.sigbars .slot{width:3px;height:100%;border-radius:1px;background:#e5e7eb;position:relative;overflow:hidden}
-.sigbars .slot.on{background:#67c23a}
-.sigbars .slot.fail{background:#f56c6c;cursor:pointer}
-.sigbars .slot.fail:hover{outline:1px solid #f56c6c;outline-offset:1px}
-.sigbars .slot.empty{background:#eef1f5}
-.sigbars.clickable{cursor:pointer}
-.sigbars.clickable:hover .slot.fail{filter:brightness(.95)}
-.fail-label{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--danger);font-weight:600}
-.fail-label .rd{width:6px;height:6px;border-radius:50%;background:var(--danger)}
 .mask-btn.active{background:#ecf5ff;border-color:#b3d8ff;color:#337ecc}
 .err-pop{position:fixed;z-index:50;display:none;width:min(560px,calc(100vw - 24px));max-height:min(72vh,560px);overflow:auto;background:#fff;border:1px solid #0f172a18;border-radius:12px;box-shadow:0 18px 50px #0f172a2e;padding:0}
 .err-pop.open{display:block}
@@ -125,12 +123,7 @@ tr:hover td{background:#409eff0c}
 .policy-log th,.policy-log td{padding:6px 8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
 .policy-log th{position:sticky;top:0;background:#f1f5f9;color:var(--muted);font-weight:700}
 .policy-log .pl-empty{color:#94a3b8;padding:12px;text-align:center}
-.tag.danger{background:#fef0f0;color:#c45656;border-color:#fbc4c4}
-.tag.ok{background:#f0f9eb;color:#529b2e;border-color:#c2e7b0}
-.quota-main{font-variant-numeric:tabular-nums;font-weight:600}
-.quota-sub{color:var(--muted);font-size:10.5px;margin-top:2px}
-.time-main{font-variant-numeric:tabular-nums;font-weight:600}
-.time-sub{color:var(--muted);font-size:10.5px;margin-top:2px}
+.tag.danger{background:#fef3f2;color:#b42318;border-color:#fecdca}
 .err-card{border:1px solid var(--border);border-radius:12px;background:#fff;padding:10px 12px;margin-bottom:8px}
 .err-head{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start}
 .err-title{font-size:13.5px;font-weight:700}
@@ -139,11 +132,9 @@ tr:hover td{background:#409eff0c}
 @media(max-width:900px){.err-controls{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .err-controls label{display:flex;flex-direction:column;gap:4px;font-size:10.5px;color:var(--muted);font-weight:700}
 .err-empty{color:var(--muted);padding:16px;text-align:center}
-.table-wrap.accounts{max-height:min(62vh,680px)}
-.table-wrap.accounts th,.table-wrap.accounts td{padding:8px 8px}
-.table-wrap.accounts tr td:nth-child(2){min-width:210px}
 .tabpanel[hidden]{display:none!important}
 select.act{min-width:100px}input.num{width:70px}
+.muted{color:var(--muted)}
 </style>
 </head>
 <body>
@@ -151,7 +142,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.4.1</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.4.2</span> <span id="modeBadge" class="badge">模式</span></h1>
     </div>
     <div class="row" style="align-items:center">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -228,9 +219,10 @@ select.act{min-width:100px}input.num{width:70px}
           <tr>
             <th style="width:28px"><input type="checkbox" id="chkAll" onchange="selAll(this.checked)"/></th>
             <th>账号</th>
-            <th style="width:90px">状态</th>
-            <th style="width:110px">请求/报错</th>
-            <th style="width:150px">用量</th>
+            <th style="width:88px">状态</th>
+            <th style="width:96px">请求</th>
+            <th style="width:120px">用量</th>
+            <th style="width:110px">更新时间</th>
             <th style="width:100px">恢复时间</th>
           </tr>
         </thead>
@@ -315,8 +307,9 @@ function toggleMask(){
       '<td>'+stateTag(a.state)+'</td>'+
       '<td>'+callsCell(a)+'</td>'+
       '<td>'+quotaCell(a)+'</td>'+
+      '<td>'+updatedCell(a.updated_at)+'</td>'+
       '<td>'+timeCell(a.recover_at)+'</td></tr>').join('')||
-      '<tr><td colspan="6" class="muted">无匹配结果</td></tr>';
+      '<tr><td colspan="7" class="muted">无匹配结果</td></tr>';
   }
   renderLogs(LAST_LOGS||[]);
   if(CURRENT_TAB==='errors'){ ERR_RENDERED=false; renderErrorCards(ERRORS||[], true); }
@@ -390,9 +383,8 @@ function renderKPIs(s, trashCount, cool, inv, usage){
 }
 function accountCell(a){
   const name=dispName(a);
-  const tier=a.tier&&a.tier!=='unknown'?a.tier:'';
   const title=a.display_name||a.email||a.auth_index||'';
-  return '<div class="acc-name" title="'+esc(title)+'">'+esc(name)+'</div>'+(tier?('<div class="acc-sub">'+esc(tier)+'</div>'):'');
+  return '<div class="acc-name" title="'+esc(title)+'">'+esc(name)+'</div>';
 }
 function callsCell(a){
   const req=Number(a.day_calls||0), fail=Number(a.day_fail_calls||0);
@@ -523,16 +515,27 @@ document.addEventListener('click',function(ev){
   closeErrPop();
 });
 function quotaCell(a){
+  // pure numbers only: used / limit  remain
   if(a.quota_limit || a.quota_used || a.quota_remaining){
-    const main=fmtTok(a.quota_used||0)+' / '+fmtTok(a.quota_limit||0);
-    const rem=a.quota_remaining!=null?(' 剩 '+fmtTok(a.quota_remaining||0)):'';
-    const src=a.quota_source==='free_usage_exhausted'?'报错体':(a.quota_source==='free_usage_exhausted_est'?'估':'');
-    return '<div class="quota-main">'+esc(main+rem)+'</div>'+(src?('<div class="quota-sub">'+esc(src)+'</div>'):'');
+    const used=fmtTok(a.quota_used||0), lim=fmtTok(a.quota_limit||0);
+    let rem='';
+    if(a.quota_remaining!=null && a.quota_remaining!=='') rem=' 剩 '+fmtTok(a.quota_remaining||0);
+    else if(a.quota_limit!=null && a.quota_used!=null){
+      const r=Math.max(0, Number(a.quota_limit||0)-Number(a.quota_used||0));
+      rem=' 剩 '+fmtTok(r);
+    }
+    return '<div class="quota-main">'+esc(used+' / '+lim+rem)+'</div>';
   }
-  return '<div class="quota-main">'+esc(a.quota_text||'-')+'</div>';
+  // "用尽" / empty stay compact, no "报错体"
+  const t=String(a.quota_text||'').replace(/\s*·\s*(报错体|估|免费额用尽).*$/,'').trim();
+  return '<div class="quota-main">'+esc(t||'-')+'</div>';
 }
-function timeCell(recover){
+function timeCell(recover, updated){
+  // recover only for recover column
   return '<div class="time-main">'+esc(recover||'-')+'</div>';
+}
+function updatedCell(updated){
+  return '<div class="time-main">'+esc(updated||'-')+'</div>';
 }
 function decodeEntities(s){
   if(!s) return '';
@@ -592,7 +595,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.4.1');
+    document.getElementById('ver').textContent='v'+(st.version||'0.4.2');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -633,8 +636,9 @@ async function refresh(){
       '<td>'+stateTag(a.state)+'</td>'+
       '<td>'+callsCell(a)+'</td>'+
       '<td>'+quotaCell(a)+'</td>'+
+      '<td>'+updatedCell(a.updated_at)+'</td>'+
       '<td>'+timeCell(a.recover_at)+'</td></tr>').join('')||
-      '<tr><td colspan="6" class="muted">无匹配结果</td></tr>';
+      '<tr><td colspan="7" class="muted">无匹配结果</td></tr>';
 
     if(CURRENT_TAB==='trash') await refreshTrashOnly();
     if(CURRENT_TAB==='errors') await loadErrors(false);

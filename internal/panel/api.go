@@ -323,13 +323,6 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			}
 			if qLimit > 0 || qUsed > 0 || qRem > 0 {
 				qText = formatTokens(qUsed) + " / " + formatTokens(qLimit) + " 剩 " + formatTokens(qRem)
-				if qSrc == "free_usage_exhausted" {
-					qText += " · 报错体"
-				} else if qSrc == "free_usage_exhausted_est" {
-					qText += " · 估"
-				} else if qSrc != "" && qSrc != "body_field" {
-					qText += " · " + qSrc
-				}
 			} else if acc.DayTokens > 0 {
 				qText = "今日 token " + formatTokens(acc.DayTokens)
 			}
@@ -397,7 +390,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":         "cpa-xai-sentry",
-		"version":        "0.4.1",
+		"version":        "0.4.2",
 		"mode":           modeOf(*a.Cfg),
 		"mode_label":     modeLabel(modeOf(*a.Cfg)),
 		"summary":        summary,
@@ -734,7 +727,7 @@ func (a *API) handleRunTick(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.4.1",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.4.2",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 		"cooldown_stats": a.State.CooldownStats(time.Now()),
 	})
