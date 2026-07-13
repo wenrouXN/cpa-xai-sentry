@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-
 )
 
 type managementRequest struct {
@@ -59,6 +58,7 @@ func buildManagementRegistration() managementRegistration {
 			{Method: "GET", Path: "/" + pluginID + "/state", Description: "状态"},
 			{Method: "GET", Path: "/" + pluginID + "/config", Description: "配置（脱敏）"},
 			{Method: "POST", Path: "/" + pluginID + "/config", Description: "更新配置"},
+			{Method: "GET", Path: "/" + pluginID + "/persist", Description: "持久化覆盖与路径"},
 			{Method: "GET", Path: "/" + pluginID + "/logs", Description: "动作日志"},
 			{Method: "GET", Path: "/" + pluginID + "/candidates", Description: "候选列表"},
 			{Method: "GET", Path: "/" + pluginID + "/trash", Description: "垃圾箱"},

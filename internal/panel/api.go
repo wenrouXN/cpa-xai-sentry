@@ -16,11 +16,14 @@ import (
 	"github.com/openclaw-local/cpa-xai-sentry/internal/guard"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/match"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/patrol"
+	"github.com/openclaw-local/cpa-xai-sentry/internal/persist"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/quota"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/sentrycfg"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/state"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/trash"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/version"
+	"os"
+	"path/filepath"
 )
 
 var (
@@ -45,6 +48,7 @@ func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/state", a.handleState)
 	mux.HandleFunc("/config", a.handleConfig)
+	mux.HandleFunc("/persist", a.handlePersist)
 	mux.HandleFunc("/logs", a.handleLogs)
 	mux.HandleFunc("/candidates", a.handleCandidates)
 	mux.HandleFunc("/trash", a.handleTrash)
@@ -92,8 +96,6 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)
 }
-
-
 
 // dedupeAccountsForPanel collapses hash-id + filename-id duplicates of the same xAI account.
 func dedupeAccountsForPanel(accs []*state.Account) []*state.Account {
@@ -198,7 +200,6 @@ func dedupeAccountsForPanel(accs []*state.Account) []*state.Account {
 	}
 	return out
 }
-
 
 func itoaPanel(n int) string {
 	if n == 0 {
@@ -460,13 +461,13 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		TotalFailure    int64          `json:"total_failure,omitempty"`
 		TotalTokens     int64          `json:"total_tokens,omitempty"`
 		// Recent15: last 15 request outcomes, oldest→newest; true=success false=fail
-		Recent15        []bool         `json:"recent15,omitempty"`
-		QuotaText       string         `json:"quota_text,omitempty"`
-		UsageSource     string         `json:"usage_source,omitempty"`
-		SuccessRate     float64        `json:"success_rate,omitempty"` // total success rate
-		DaySuccessRate  float64        `json:"day_success_rate,omitempty"`
-		QuotaRatioText  string         `json:"quota_ratio_text,omitempty"` // 今日/24h额度
-		SortMS          int64          `json:"-"`
+		Recent15       []bool  `json:"recent15,omitempty"`
+		QuotaText      string  `json:"quota_text,omitempty"`
+		UsageSource    string  `json:"usage_source,omitempty"`
+		SuccessRate    float64 `json:"success_rate,omitempty"` // total success rate
+		DaySuccessRate float64 `json:"day_success_rate,omitempty"`
+		QuotaRatioText string  `json:"quota_ratio_text,omitempty"` // 今日/24h额度
+		SortMS         int64   `json:"-"`
 	}
 	summary := map[string]int{
 		"total": 0, "active": 0, "cooldown": 0, "candidate": 0,
@@ -734,10 +735,10 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			QuotaSource: qSrc, DayCalls: dayC, DayFailCalls: dayF,
 			DayTokens: dayT, DaySuccess: dayS, DayInputTokens: dayIn, DayOutputTokens: dayOut,
 			TotalCalls: totC, TotalSuccess: totS, TotalFailure: totF, TotalTokens: totT,
-			Recent15: recent15,
+			Recent15:  recent15,
 			QuotaText: usageMain, UsageSource: usageSrc, SuccessRate: rate, DaySuccessRate: dayRate,
 			QuotaRatioText: ratioText,
-			SortMS: lastReqMS, ActionMS: actionMS,
+			SortMS:         lastReqMS, ActionMS: actionMS,
 		})
 	}
 	// newest activity first: max(request_ms, action_ms)
@@ -822,11 +823,11 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		"pool_source":      "xai_total×2M est; used=cpamp per-account tokens",
 	}
 	writeJSON(w, 200, map[string]any{
-		"plugin":         "cpa-xai-sentry",
-		"version":        version.Version,
-		"mode":           modeOf(*a.Cfg),
-		"mode_label":     modeLabel(modeOf(*a.Cfg)),
-		"summary":        summary,
+		"plugin":     "cpa-xai-sentry",
+		"version":    version.Version,
+		"mode":       modeOf(*a.Cfg),
+		"mode_label": modeLabel(modeOf(*a.Cfg)),
+		"summary":    summary,
 		"state_filters": []map[string]any{
 			{"value": "", "label": "全部状态", "count": summary["total"]},
 			{"value": "active_clean", "label": "正常·可用", "count": summary["active_clean"]},
@@ -962,7 +963,6 @@ func itoa(n int) string {
 	return string(b[i:])
 }
 
-
 func modeOf(c sentrycfg.Config) string {
 	if !c.SentryEnabled {
 		return "off"
@@ -1046,6 +1046,36 @@ func (a *API) handleConfig(w http.ResponseWriter, r *http.Request) {
 		if v, ok := raw["sentry_enabled"].(bool); ok {
 			cfg.SentryEnabled = v
 		}
+		if v, ok := asFloatAny(raw["tick_seconds"]); ok && v > 0 {
+			cfg.TickSeconds = int(v)
+		}
+		if v, ok := asFloatAny(raw["max_reset_seconds"]); ok && v >= 0 {
+			cfg.MaxResetSeconds = int(v)
+		}
+		if v, ok := asFloatAny(raw["min_reset_seconds"]); ok && v >= 0 {
+			cfg.MinResetSeconds = int(v)
+		}
+		if v, ok := asFloatAny(raw["permission_cooldown_seconds"]); ok && v > 0 {
+			cfg.PermissionCooldownSec = int(v)
+		}
+		if v, ok := asFloatAny(raw["auth401_cooldown_seconds"]); ok && v > 0 {
+			cfg.Auth401CooldownSec = int(v)
+		}
+		if v, ok := raw["reopen_foreign_disabled"].(bool); ok {
+			cfg.ReopenForeignDisabled = v
+		}
+		if v, ok := raw["cpamp_usage_floor"].(bool); ok {
+			cfg.CPAMPUsageFloor = v
+		}
+		if v, ok := asFloatAny(raw["trash_retention_days"]); ok && v > 0 {
+			cfg.TrashRetentionDays = int(v)
+		}
+		if v, ok := raw["trash_auto_purge"].(bool); ok {
+			cfg.TrashAutoPurge = v
+		}
+		if v, ok := raw["restore_default_disabled"].(bool); ok {
+			cfg.RestoreDefaultDis = v
+		}
 		cfg = cfg.Validate()
 		*a.Cfg = cfg
 		a.persistSwitches()
@@ -1053,6 +1083,53 @@ func (a *API) handleConfig(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(405)
 	}
+}
+
+// handlePersist returns durable override file + paths (no secrets).
+func (a *API) handlePersist(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(405)
+		return
+	}
+	cfg := sentrycfg.Default()
+	if a.Cfg != nil {
+		cfg = *a.Cfg
+	}
+	path := persist.PathFor(cfg)
+	o, err := persist.Load(path)
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	hist := ""
+	if cfg.StatePath != "" {
+		hist = filepath.Join(filepath.Dir(cfg.StatePath), "patrol-history.json")
+	} else if cfg.AuthDir != "" {
+		hist = filepath.Join(cfg.AuthDir, "cpa-xai-sentry", "patrol-history.json")
+	}
+	// public map of override values currently on disk
+	disk := map[string]any{}
+	if b, err := os.ReadFile(path); err == nil && len(b) > 0 {
+		_ = json.Unmarshal(b, &disk)
+	}
+	writeJSON(w, 200, map[string]any{
+		"ok":                   true,
+		"overrides_path":       path,
+		"patrol_history_path":  hist,
+		"state_path":           cfg.StatePath,
+		"overrides_updated_at": o.UpdatedAt,
+		"overrides":            disk,
+		"live": map[string]any{
+			"patrol_batch_size":           cfg.PatrolBatchSize,
+			"patrol_interval":             cfg.PatrolInterval,
+			"patrol_enabled":              cfg.PatrolEnabled,
+			"tick_seconds":                cfg.TickSeconds,
+			"permission_cooldown_seconds": cfg.PermissionCooldownSec,
+			"auth401_cooldown_seconds":    cfg.Auth401CooldownSec,
+			"reopen_foreign_disabled":     cfg.ReopenForeignDisabled,
+			"max_reset_seconds":           cfg.MaxResetSeconds,
+		},
+	})
 }
 
 func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) {
@@ -1138,7 +1215,7 @@ func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) {
 		reason := humanizeReason(e.Reason, sigL, e.Action)
 		text, level := composeLogText(actL, e.Action, sigL, e.Signal, label, reason, srcL, e.Source)
 		out = append(out, L{
-			At: e.At.In(time.FixedZone("CST", 8*3600)).Format("01-02 15:04:05"),
+			At:   e.At.In(time.FixedZone("CST", 8*3600)).Format("01-02 15:04:05"),
 			Auth: e.Auth, AuthLabel: label, Source: e.Source, SourceLabel: srcL,
 			Signal: e.Signal, SignalLabel: sigL,
 			Action: e.Action, ActionLabel: actL, Reason: reason, Text: text, Level: level,
@@ -1653,7 +1730,6 @@ func (a *API) handlePatrolStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true, "patrol": st, "history": hist})
 }
 
-
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
 		"ok": true, "plugin": "cpa-xai-sentry", "version": version.Version,
@@ -1669,7 +1745,7 @@ func (a *API) handleToggle(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct {
 		SentryEnabled *bool `json:"sentry_enabled"`
-		AutoCooldown   *bool `json:"auto_cooldown"`
+		AutoCooldown  *bool `json:"auto_cooldown"`
 		AutoCandidate *bool `json:"auto_candidate"`
 		AutoDelete    *bool `json:"auto_delete"`
 		PatrolEnabled *bool `json:"patrol_enabled"`
@@ -1776,9 +1852,9 @@ func (a *API) handleCooldownSuggested(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Auths  []string `json:"auths"`
-		Hours  int      `json:"hours"`
-		Confirm bool    `json:"confirm"`
+		Auths   []string `json:"auths"`
+		Hours   int      `json:"hours"`
+		Confirm bool     `json:"confirm"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&in)
 	if !in.Confirm {
@@ -1796,7 +1872,6 @@ func (a *API) handleCooldownSuggested(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"ok": true, "cooled": n})
 }
-
 
 func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 	// ensure builtins
@@ -1835,30 +1910,30 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 	pols := a.State.ListErrorPolicies()
 	// join: every observed + every policy
 	type row struct {
-		Key          string         `json:"key"`
-		Label        string         `json:"label"`
-		Enabled      bool           `json:"enabled"`
-		Action       string         `json:"action"`
-		ActionLabel  string         `json:"action_label"`
-		Threshold    int            `json:"threshold"`
-		CooldownSec  int            `json:"cooldown_seconds"`
-		CountMode    string         `json:"count_mode,omitempty"`
+		Key          string                 `json:"key"`
+		Label        string                 `json:"label"`
+		Enabled      bool                   `json:"enabled"`
+		Action       string                 `json:"action"`
+		ActionLabel  string                 `json:"action_label"`
+		Threshold    int                    `json:"threshold"`
+		CooldownSec  int                    `json:"cooldown_seconds"`
+		CountMode    string                 `json:"count_mode,omitempty"`
 		Escalations  []state.EscalationRule `json:"escalations,omitempty"`
-		NeverTrash   bool           `json:"never_trash"`
-		Note         string         `json:"note"`
-		Source       string         `json:"source"`
-		Count        int64          `json:"count"`
-		LastAt       string         `json:"last_at,omitempty"`
-		Sample       string         `json:"sample,omitempty"`
-		SampleMsg    string         `json:"sample_msg,omitempty"`
-		SamplePretty string         `json:"sample_pretty,omitempty"`
-		StatusCode   int            `json:"status_code,omitempty"`
-		Code         string         `json:"code,omitempty"`
-		LastAuth     string         `json:"last_auth,omitempty"`
-		LastFile     string         `json:"last_file,omitempty"`
+		NeverTrash   bool                   `json:"never_trash"`
+		Note         string                 `json:"note"`
+		Source       string                 `json:"source"`
+		Count        int64                  `json:"count"`
+		LastAt       string                 `json:"last_at,omitempty"`
+		Sample       string                 `json:"sample,omitempty"`
+		SampleMsg    string                 `json:"sample_msg,omitempty"`
+		SamplePretty string                 `json:"sample_pretty,omitempty"`
+		StatusCode   int                    `json:"status_code,omitempty"`
+		Code         string                 `json:"code,omitempty"`
+		LastAuth     string                 `json:"last_auth,omitempty"`
+		LastFile     string                 `json:"last_file,omitempty"`
 		// AccountHits for policy page table (time/account/error/streak/ops)
-		AccountHits  []map[string]any `json:"account_hits,omitempty"`
-		Shapes       []map[string]any `json:"shapes,omitempty"` // unmatched split candidates
+		AccountHits []map[string]any `json:"account_hits,omitempty"`
+		Shapes      []map[string]any `json:"shapes,omitempty"` // unmatched split candidates
 	}
 	byKey := map[string]row{}
 	for _, p := range pols {
@@ -1995,7 +2070,7 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 				"source": src, "source_label": srcZH,
 				"hits": a0.Hits, "streak": streak,
 				"status": a0.Status,
-				"shape": shape, "shape_label": shapeLabel, "suggest_key": suggestKey,
+				"shape":  shape, "shape_label": shapeLabel, "suggest_key": suggestKey,
 				"last_at": func() string {
 					if a0.LastAt.IsZero() {
 						return ""
@@ -2204,14 +2279,13 @@ func (a *API) handleBackfill(w http.ResponseWriter, r *http.Request) {
 	a.State.Log(state.ActionLog{Source: "cpamp", Action: "backfill", Reason: "今日用量回补"})
 	_ = a.State.Save()
 	writeJSON(w, 200, map[string]any{
-		"ok": true,
-		"day": day,
-		"cpamp": sum,
+		"ok":      true,
+		"day":     day,
+		"cpamp":   sum,
 		"metrics": m,
-		"help": "从 CPAMP 监控分析拉取今日 xAI 汇总，写入用量地板（只升不降），用于对照插件观察数据。",
+		"help":    "从 CPAMP 监控分析拉取今日 xAI 汇总，写入用量地板（只升不降），用于对照插件观察数据。",
 	})
 }
-
 
 func (a *API) handleUI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.17
+
+### Broader runtime-overrides + persist viewer
+- Persist ops knobs: `tick_seconds`, permission/401 cool-down seconds, `max_reset_seconds`,
+  `reopen_foreign_disabled`, trash/cpamp floor flags (in addition to patrol fields).
+- Panel: save writes disk; **查看持久化** shows overrides path + on-disk JSON + live values.
+- Secrets remain YAML-only.
+
+
 ## 1.1.16
 
 ### Persist patrol config + job history across restarts
@@ -233,6 +242,15 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.17
+
+### Broader runtime-overrides + persist viewer
+- Persist ops knobs: `tick_seconds`, permission/401 cool-down seconds, `max_reset_seconds`,
+  `reopen_foreign_disabled`, trash/cpamp floor flags (in addition to patrol fields).
+- Panel: save writes disk; **查看持久化** shows overrides path + on-disk JSON + live values.
+- Secrets remain YAML-only.
+
 
 ## 1.1.16
 

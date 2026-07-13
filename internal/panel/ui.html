@@ -217,7 +217,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.16</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.17</span></h1>
       <div class="ver-line"><span class="ver-meta" id="cfgLine">维护每30s · 巡查关 · 密钥—</span></div>
     </div>
     <div class="top-actions">
@@ -323,14 +323,24 @@ select.act{min-width:100px}input.num{width:70px}
           <label>周期(秒)<input id="pInterval" type="number" min="60" step="60" value="3600"/></label>
           <label>超时(秒)<input id="pTimeout" type="number" min="3" step="1" value="15"/></label>
           <label>并发<input id="pConc" type="number" min="1" max="64" step="1" value="8"/></label>
-          <label>每轮上限<input id="pBatch" type="number" min="0" step="1" value="50"/></label>
+          <label>每轮上限<input id="pBatch" type="number" min="0" step="1" value="500"/></label>
           <label>模型<input id="pModel" type="text" value="grok-4.5"/></label>
           <label>代理URL<input id="pProxy" type="text" placeholder="可选 http://..."/></label>
+          <label>维护间隔(秒)<input id="pTick" type="number" min="5" step="1" value="30" title="tick_seconds"/></label>
+          <label>403冷却(秒)<input id="p403" type="number" min="60" step="60" value="1800"/></label>
+          <label>401冷却(秒)<input id="p401" type="number" min="60" step="60" value="3600"/></label>
+          <label>最长恢复(秒)<input id="pMaxReset" type="number" min="0" step="60" value="86400"/></label>
+          <label class="sw" style="flex-direction:row;align-items:center;gap:8px;padding-top:18px" title="非自有禁用是否自动打开">
+            <span>自愈打开非自有</span>
+            <input id="pReopen" type="checkbox"/>
+          </label>
         </div>
         <div class="row" style="margin-top:4px">
-          <button class="xs" onclick="savePatrolCfg()" title="保存巡查参数">保存巡查配置</button>
-          <span class="meta">改完记得保存</span>
+          <button class="xs primary" onclick="savePatrolCfg()" title="写入 runtime-overrides.json，重启不丢">保存并持久化</button>
+          <button class="xs" onclick="showPersist()" title="查看磁盘上的 overrides / 路径">查看持久化</button>
+          <span class="meta" id="persistHint">改完点保存，会写入磁盘</span>
         </div>
+        <pre class="meta" id="persistBox" style="display:none;margin-top:8px;max-height:220px;overflow:auto;background:#0b1220;color:#dbe7ff;padding:8px;border-radius:8px;white-space:pre-wrap"></pre>
       </div>
       <div class="meta" id="patrolStatus">空闲</div>
       <div class="patrol-progress" id="patrolProgress">
@@ -973,7 +983,7 @@ async function refresh(){
     ]);
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'1.1.16');
+    document.getElementById('ver').textContent='v'+(st.version||'1.1.17');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -1408,32 +1418,63 @@ function fillPatrolForm(cfg){
   set('pInterval', cfg.patrol_interval||3600);
   set('pTimeout', cfg.patrol_timeout||15);
   set('pConc', cfg.patrol_concurrency||8);
-  set('pBatch', cfg.patrol_batch_size||50);
+  set('pBatch', cfg.patrol_batch_size!=null?cfg.patrol_batch_size:500);
   set('pModel', cfg.patrol_model||'grok-4.5');
   set('pProxy', cfg.patrol_proxy_url||'');
+  set('pTick', cfg.tick_seconds||30);
+  set('p403', cfg.permission_cooldown_seconds||1800);
+  set('p401', cfg.auth401_cooldown_seconds||3600);
+  set('pMaxReset', cfg.max_reset_seconds!=null?cfg.max_reset_seconds:86400);
+  const re=document.getElementById('pReopen');
+  if(re && document.activeElement!==re) re.checked=!!cfg.reopen_foreign_disabled;
   syncPatrolPanels();
 }
 function markPatrolDirty(){ PATROL_CFG_DIRTY=true; }
-['pInterval','pTimeout','pConc','pBatch','pModel','pProxy'].forEach(id=>{
+['pInterval','pTimeout','pConc','pBatch','pModel','pProxy','pTick','p403','p401','pMaxReset','pReopen'].forEach(id=>{
   // bound after DOM ready via refresh; also attach now if present
   const el=document.getElementById(id);
   if(el){ el.addEventListener('input', markPatrolDirty); el.addEventListener('change', markPatrolDirty); }
 });
+async function showPersist(){
+  try{
+    const r=await j('/persist');
+    const box=document.getElementById('persistBox');
+    if(!box) return;
+    box.style.display='block';
+    box.textContent=JSON.stringify({
+      overrides_path:r.overrides_path,
+      patrol_history_path:r.patrol_history_path,
+      state_path:r.state_path,
+      overrides_updated_at:r.overrides_updated_at,
+      live:r.live,
+      overrides:r.overrides
+    }, null, 2);
+    toast('已加载磁盘持久化信息');
+  }catch(e){ toast('读取失败:'+e.message) }
+}
 async function savePatrolCfg(){
+
   try{
     const body={
       patrol_enabled: !!document.getElementById('swPatrol')?.checked,
       patrol_interval: Number(document.getElementById('pInterval').value||3600),
       patrol_timeout: Number(document.getElementById('pTimeout').value||15),
       patrol_concurrency: Number(document.getElementById('pConc').value||8),
-      patrol_batch_size: Number(document.getElementById('pBatch').value||50),
+      patrol_batch_size: Number(document.getElementById('pBatch').value||500),
       patrol_model: (document.getElementById('pModel').value||'grok-4.5').trim(),
       patrol_proxy_url: (document.getElementById('pProxy').value||'').trim(),
+      tick_seconds: Number(document.getElementById('pTick')?.value||30),
+      permission_cooldown_seconds: Number(document.getElementById('p403')?.value||1800),
+      auth401_cooldown_seconds: Number(document.getElementById('p401')?.value||3600),
+      max_reset_seconds: Number(document.getElementById('pMaxReset')?.value||86400),
+      reopen_foreign_disabled: !!document.getElementById('pReopen')?.checked,
     };
     CFG=await j('/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     PATROL_CFG_DIRTY=false;
     fillPatrolForm(CFG);
-    toast('巡查配置已保存');
+    toast('已保存并持久化（重启不丢）');
+    const hint=document.getElementById('persistHint');
+    if(hint) hint.textContent='已写入 runtime-overrides · batch='+(CFG.patrol_batch_size||'?');
   }catch(e){ toast('保存失败:'+e.message) }
 }
 async function patrolStart(mode){
