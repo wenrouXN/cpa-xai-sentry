@@ -214,7 +214,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.3</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.4</span></h1>
     </div>
     <div class="top-actions">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -384,7 +384,7 @@ const SIG_ZH={free_usage_429:'免费额度用尽',spending_limit_402:'消费限�
 const API="/v0/management/cpa-xai-sentry";
 const KEY_LS="cpa-xai-sentry-management-key";
 const STATE_ZH={active:'正常·可用',cooldown_quota:'429·额度冷却',cooldown_spending:'402·消费冷却',cooldown_permission:'403·权限冷却',candidate_dead:'401·候删',user_manual:'永久禁用',trashed:'垃圾箱',purged:'已清除'};
-const ACT_ZH={observe:'仅观察',cooldown:'冷却',candidate:'候删',disable:'永久禁用',trash:'进垃圾箱',wait:'等待恢复',review:'复查',manual:'永久禁用',none:'无',restore_or_purge:'恢复/清除'};
+const ACT_ZH={observe:'仅观察',cooldown:'冷却',cooldown_reassert:'冷却补关',reenable:'到期恢复',candidate:'候删',disable:'永久禁用',manual_disable:'永久禁用',manual_enable:'手动启用',trash:'进垃圾箱',wait:'等待恢复',review:'复查',manual:'永久禁用',none:'无',restore_or_purge:'恢复/清除',reopen_foreign:'自愈打开',file_disabled_sync:'CPA禁用对齐',clear_cpa_disabled_tag:'清除禁用标记',scrub_active:'清理残留',repair_cooldown_state:'修复冷却态'};
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2400)}
 function esc(s){return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 // CPAMP-style mask: local part >8 => abc***wxyz@domain
@@ -828,7 +828,8 @@ function logLineHTML(e){
     :(e.action==='reenable'||e.action==='manual_enable'||e.action==='backfill'||e.action==='auto_backfill'||e.action==='patrol_done'||e.action==='reopen_foreign'?'ok':'info')));
   const badge=e.action_label||ACT_ZH[e.action]||e.action||'事件';
   let text=e.text || '';
-  if(!text || (text.indexOf(' · ')>=0 && text.split(' · ').length>=3 && !/因|已将|已恢复|失败|巡查|维护|打开|标记/.test(text))){
+  // rebuild if missing, or looks like raw "action · who · reason" english glue
+  if(!text || /^[a-z0-9_]+ · /i.test(text) || (text.indexOf(' · ')>=0 && text.split(' · ').length>=3 && !/【|因|已将|已恢复|失败|巡查|维护|打开|标记|冷却|恢复|补关|自愈|对齐/.test(text))){
     text=composeLogClient(e);
   }
   const htmlText=esc(text).replace(/([a-z0-9._%+\-*]+@[a-z0-9.\-*]+\.[a-z*]{2,})/ig,'<span class="who">$1</span>');
@@ -912,22 +913,36 @@ async function loadLogs(opt){
   }
 }
 function composeLogClient(e){
+  // Prefer server-composed text when present
+  if(e.text && !/^[A-Za-z0-9_]+ · /.test(e.text)) return e.text;
   const act=e.action||'';
   const who=dispAuth(e.auth_label||e.auth||'');
-  const why=e.reason||e.signal_label||SIG_ZH[e.signal]||e.signal||'';
-  if(act==='cooldown') return why?('因'+why+'，已将 '+(who||'账号')+' 转入冷却'):('已将 '+(who||'账号')+' 转入冷却');
-  if(act==='reenable') return '冷却/额度重置到期，已恢复启用 '+(who||'账号')+'（状态已重置为正常）';
-  if(act==='candidate') return why?('因'+why+'，已将 '+(who||'账号')+' 移入候选'):('已将 '+(who||'账号')+' 移入候选');
-  if(act==='trash'||act==='delete') return why?('因'+why+'，已将 '+(who||'账号')+' 移入垃圾箱'):('已将 '+(who||'账号')+' 移入垃圾箱');
-  if(act==='reopen_foreign') return '维护发现非本哨兵冷却禁用，已重新打开 '+(who||'账号')+'，等待下次真实报错';
-  if(act==='file_disabled_sync') return '维护发现 CPA 凭证文件已禁用，已将 '+(who||'账号')+' 标记为「CPA已禁用」（不是你点的）';
-  if(act==='manual_disable') return '已永久禁用 '+(who||'账号')+'（不会自动恢复）';
-  if(act==='manual_enable') return '已在面板手动启用 '+(who||'账号');
-  if(act==='cooldown_failed') return '冷却 '+(who||'账号')+' 失败'+(why?('：'+why):'');
-  if(act==='reenable_failed') return '恢复启用 '+(who||'账号')+' 失败'+(why?('：'+why):'');
+  let why=e.reason||e.signal_label||SIG_ZH[e.signal]||e.signal||'';
+  // humanize common english reasons on client
+  const RH={permission_denied:'权限拒绝(403)','permission-denied':'权限拒绝(403)',free_usage:'免费额度用尽',
+    recover_at:'冷却到期自动恢复',owned_disable_was_enabled:'自有冷却期间文件被打开，已重新关闭',
+    cpa_disabled_sync:'CPA 文件处于禁用（非面板永久禁用）',file_already_enabled:'文件已启用，清除粘滞标记',
+    unowned_disabled_self_heal:'非自有禁用，已打开，等待下次真实报错再判定',
+    unowned_disabled_untracked_self_heal:'非自有禁用，已打开，等待下次真实报错再判定',
+    bulk_suggested_cooldown:'面板批量冷却'};
+  if(RH[why]) why=RH[why];
+  if(act==='cooldown') return who?(why?('【冷却】'+who+' · 原因：'+why):('【冷却】'+who)):'【冷却】已执行';
+  if(act==='cooldown_reassert') return who?('【冷却补关】'+who+' 仍在自有冷却，但 CPA 文件是开着的 → 已重新关闭，避免继续接流'):'【冷却补关】已重新关闭文件';
+  if(act==='reenable') return who?('【到期恢复】'+who+' 冷却时间到，已重新启用（状态恢复为正常）'):'【到期恢复】已重新启用';
+  if(act==='candidate') return who?(why?('【候删】'+who+' · 原因：'+why):('【候删】'+who)):'【候删】';
+  if(act==='trash'||act==='delete') return who?(why?('【垃圾箱】'+who+' · 原因：'+why):('【垃圾箱】'+who)):'【垃圾箱】';
+  if(act==='reopen_foreign') return who?('【自愈打开】'+who+' 属于非自有禁用 → 已打开；下次真实报错再判定是否冷却'):'【自愈打开】非自有禁用已打开';
+  if(act==='file_disabled_sync') return who?('【CPA对齐】'+who+' 的凭证文件已禁用 → 标为「CPA已禁用」（不是面板点的永久禁用）'):'【CPA对齐】凭证文件已禁用';
+  if(act==='clear_cpa_disabled_tag') return who?('【清标记】'+who+' 文件已是启用状态 → 去掉粘滞的「CPA已禁用」标签'):'【清标记】';
+  if(act==='manual_disable') return '【永久禁用】'+(who||'账号')+'（不会自动恢复）';
+  if(act==='manual_enable') return '【手动启用】'+(who||'账号');
+  if(act==='cooldown_failed') return '【冷却失败】'+(who||'')+(why?('：'+why):'');
+  if(act==='reenable_failed') return '【恢复失败】'+(who||'')+(why?('：'+why):'');
   if(act==='backfill'||act==='auto_backfill') return why||'已回补今日用量数据';
+  if(act==='scrub_active') return who?('【清理】'+who+' 去掉半恢复残留字段'):'【清理】';
+  if(act==='repair_cooldown_state') return who?('【修复冷却】'+who+' 显示正常但仍有未到期冷却 → 已改回冷却态'):'【修复冷却】';
   const actL=e.action_label||ACT_ZH[act]||act||'事件';
-  return [actL, who, why].filter(Boolean).join(' · ');
+  return [actL, who, why?('原因：'+why):''].filter(Boolean).join(' · ');
 }
 async function refreshTrashOnly(){
   try{
@@ -957,7 +972,7 @@ async function refresh(){
     ]);
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'1.1.3');
+    document.getElementById('ver').textContent='v'+(st.version||'1.1.4');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};

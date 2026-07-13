@@ -1159,36 +1159,48 @@ func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) {
 func humanizeReason(reason, sigL, action string) string {
 	r := strings.TrimSpace(reason)
 	switch r {
-	case "", "free_usage", "bulk_suggested_cooldown":
+	case "bulk_suggested_cooldown":
+		return "面板批量冷却"
+	case "", "free_usage":
+		if r == "free_usage" {
+			return "免费额度用尽"
+		}
 		if sigL != "" {
 			return sigL
 		}
-		if r == "bulk_suggested_cooldown" {
-			return "批量按建议冷却"
-		}
 		return ""
+	case "permission_denied", "permission-denied":
+		return "权限拒绝(403)"
 	case "recover_at":
-		return "冷却/额度重置到期"
+		return "冷却到期自动恢复"
 	case "panel bulk/manual":
-		return "面板批量操作"
+		return "面板操作"
 	case "cpa_disabled_sync":
-		return "CPA凭证文件已禁用（非面板操作）"
-	case "foreign_or_unknown_disabled", "foreign_disabled_untracked", "unowned_disabled_self_heal", "unowned_disabled_untracked_self_heal":
-		return "非自有禁用，已打开等待下次报错纠偏"
-	case "closed_loop_clean":
-		return "闭环清理脏正常态"
+		return "CPA 文件处于禁用（非面板永久禁用）"
+	case "foreign_or_unknown_disabled", "foreign_disabled_untracked",
+		"unowned_disabled_self_heal", "unowned_disabled_untracked_self_heal",
+		"unowned_disabled_self_heal_file_only", "unowned_disabled_untracked_file_only":
+		return "非自有禁用，已打开，等待下次真实报错再判定"
+	case "owned_disable_was_enabled":
+		return "自有冷却期间文件被打开，已重新关闭"
+	case "closed_loop_clean", "half_recovered_residue", "stale_recover_at_only":
+		return "清理半恢复残留状态"
+	case "active_with_future_recover_at":
+		return "状态像正常但仍有未到期冷却，已改回冷却"
 	case "cpa_disabled_free_usage_sync":
-		return "CPA已禁用且有免费额度证据（状态对齐）"
+		return "CPA 已禁用且有免费额度证据"
 	case "demote_false_quota_cooldown":
-		return "纠正误标额度冷却（CPA文件禁用，无免费额度证据）"
+		return "纠正误标额度冷却"
+	case "file_already_enabled":
+		return "文件已启用，清除粘滞「CPA已禁用」标记"
 	case "今日用量自动回补", "今日用量回补":
 		return r
+	case "permanent_disable", "policy_permanent_disable":
+		return "永久禁用"
 	}
-	// already chinese / readable
-	if strings.ContainsAny(r, "冷却恢复候选垃圾箱额度权限凭证") {
+	if strings.ContainsAny(r, "冷却恢复候选垃圾箱额度权限凭证禁用打开") {
 		return r
 	}
-	// map common english leftovers
 	switch r {
 	case "free_usage_exhausted", "subscription:free-usage-exhausted":
 		return "免费额度用尽"
@@ -1202,11 +1214,11 @@ func humanizeReason(reason, sigL, action string) string {
 func composeLogText(actL, action, sigL, signal, who, reason, srcL, source string) (string, string) {
 	level := "info"
 	switch action {
-	case "cooldown_failed", "reenable_failed":
+	case "cooldown_failed", "reenable_failed", "reopen_foreign_failed", "cooldown_reassert_failed":
 		level = "err"
-	case "cooldown", "candidate", "trash", "delete", "manual_disable":
+	case "cooldown", "candidate", "trash", "delete", "manual_disable", "cooldown_reassert", "file_disabled_sync", "repair_cooldown_state":
 		level = "warn"
-	case "reenable", "manual_enable", "backfill", "auto_backfill", "restore":
+	case "reenable", "manual_enable", "backfill", "auto_backfill", "restore", "reopen_foreign", "clear_cpa_disabled_tag":
 		level = "ok"
 	}
 	who = strings.TrimSpace(who)
@@ -1223,58 +1235,94 @@ func composeLogText(actL, action, sigL, signal, who, reason, srcL, source string
 	switch action {
 	case "cooldown":
 		if source == "tick" && who != "" {
-			return "维护同步：CPA 已禁用 " + who + "，已对齐为冷却", level
+			return "【冷却】" + who + "（维护对齐）", level
 		}
 		if who != "" && why != "" {
-			return "因" + why + "，已将 " + who + " 转入冷却", level
+			return "【冷却】" + who + " · 原因：" + why, level
 		}
 		if who != "" {
-			return "已将 " + who + " 转入冷却", level
+			return "【冷却】" + who, level
 		}
-		return "已执行冷却", level
+		return "【冷却】已执行", level
 	case "cooldown_failed":
 		if who != "" && why != "" {
-			return "冷却 " + who + " 失败：" + why, level
+			return "【冷却失败】" + who + "：" + why, level
 		}
 		if who != "" {
-			return "冷却 " + who + " 失败", level
+			return "【冷却失败】" + who, level
 		}
-		return "冷却失败", level
+		return "【冷却失败】", level
+	case "cooldown_reassert":
+		if who != "" {
+			return "【冷却补关】" + who + " 仍在自有冷却，但 CPA 文件是开着的 → 已重新关闭，避免继续接流", "warn"
+		}
+		return "【冷却补关】自有冷却账号的文件被打开，已重新关闭", "warn"
+	case "cooldown_reassert_failed":
+		if who != "" && why != "" {
+			return "【冷却补关失败】" + who + "：" + why, "err"
+		}
+		return "【冷却补关失败】", "err"
 	case "reenable":
 		if who != "" {
-			return "冷却/额度重置到期，已恢复启用 " + who + "（状态已重置为正常）", "ok"
+			return "【到期恢复】" + who + " 冷却时间到，已重新启用（状态恢复为正常）", "ok"
 		}
-		return "冷却/额度重置到期，已恢复启用（状态已重置为正常）", "ok"
+		return "【到期恢复】冷却时间到，已重新启用", "ok"
 	case "reenable_failed":
 		if who != "" && why != "" {
-			return "恢复启用 " + who + " 失败：" + why, level
+			return "【恢复失败】" + who + "：" + why, level
 		}
 		if who != "" {
-			return "恢复启用 " + who + " 失败", level
+			return "【恢复失败】" + who, level
 		}
-		return "恢复启用失败", level
+		return "【恢复失败】", level
 	case "candidate":
 		if who != "" && why != "" {
-			return "因" + why + "，已将 " + who + " 移入候选", level
+			return "【候删】" + who + " · 原因：" + why, level
 		}
 		if who != "" {
-			return "已将 " + who + " 移入候选", level
+			return "【候删】" + who, level
 		}
-		return "账号已移入候选", level
+		return "【候删】已执行", level
 	case "trash", "delete":
 		if who != "" && why != "" {
-			return "因" + why + "，已将 " + who + " 移入垃圾箱", level
+			return "【垃圾箱】" + who + " · 原因：" + why, level
 		}
 		if who != "" {
-			return "已将 " + who + " 移入垃圾箱", level
+			return "【垃圾箱】" + who, level
 		}
-		return "账号已移入垃圾箱", level
+		return "【垃圾箱】已移入", level
 	case "file_disabled_sync":
 		if who != "" {
-			return "维护发现 CPA 凭证文件已禁用，已将 " + who + " 标记为「CPA已禁用」（不是你在面板点的禁用）", "warn"
+			return "【CPA对齐】" + who + " 的凭证文件已禁用 → 标为「CPA已禁用」（不是面板点的永久禁用）", "warn"
 		}
-		return "维护发现 CPA 凭证文件已禁用（不是面板手动禁用）", "warn"
+		return "【CPA对齐】凭证文件已禁用（非面板永久禁用）", "warn"
+	case "reopen_foreign":
+		if who != "" {
+			return "【自愈打开】" + who + " 属于非自有禁用 → 已打开；下次真实报错再判定是否冷却", "ok"
+		}
+		return "【自愈打开】非自有禁用已打开，等待下次真实报错", "ok"
+	case "reopen_foreign_failed":
+		if who != "" && why != "" {
+			return "【自愈打开失败】" + who + "：" + why, "err"
+		}
+		return "【自愈打开失败】", "err"
+	case "clear_cpa_disabled_tag":
+		if who != "" {
+			return "【清标记】" + who + " 文件已是启用状态 → 去掉粘滞的「CPA已禁用」标签", "ok"
+		}
+		return "【清标记】去掉粘滞的「CPA已禁用」", "ok"
+	case "repair_cooldown_state":
+		if who != "" {
+			return "【修复冷却】" + who + " 显示正常但仍有未到期冷却 → 已改回冷却态", "warn"
+		}
+		return "【修复冷却】半脏正常态已改回冷却", "warn"
+	case "scrub_active":
+		if who != "" {
+			return "【清理】" + who + " 去掉半恢复残留字段", "info"
+		}
+		return "【清理】半恢复残留", "info"
 	case "manual_disable":
+
 		if who != "" {
 			return "已永久禁用 " + who, level
 		}
@@ -1332,24 +1380,32 @@ func logActionZH(a string) string {
 		return "冷却"
 	case "cooldown_failed":
 		return "冷却失败"
+	case "cooldown_reassert":
+		return "冷却补关"
+	case "cooldown_reassert_failed":
+		return "冷却补关失败"
 	case "reenable":
-		return "恢复启用"
+		return "到期恢复"
 	case "reenable_failed":
 		return "恢复失败"
 	case "sync_disabled_failed":
-		return "同步禁用失败"
+		return "同步失败"
 	case "candidate":
 		return "进候选"
 	case "manual_disable":
-		return "手动禁用"
+		return "永久禁用"
 	case "file_disabled_sync":
-		return "CPA文件禁用对齐"
+		return "CPA禁用对齐"
 	case "reopen_foreign":
-		return "打开非自有禁用"
-	case "scrub_active":
-		return "清理脏正常态"
+		return "自愈打开"
 	case "reopen_foreign_failed":
-		return "打开非自有禁用失败"
+		return "自愈打开失败"
+	case "clear_cpa_disabled_tag":
+		return "清除禁用标记"
+	case "repair_cooldown_state":
+		return "修复冷却态"
+	case "scrub_active":
+		return "清理残留"
 	case "manual_enable":
 		return "手动启用"
 	case "backfill", "auto_backfill":
@@ -1362,6 +1418,10 @@ func logActionZH(a string) string {
 		return "彻底清除"
 	case "observe":
 		return "仅观察"
+	case "patrol_start":
+		return "巡检开始"
+	case "patrol_done":
+		return "巡检完成"
 	default:
 		if a == "" {
 			return "—"
@@ -1379,7 +1439,7 @@ func logSignalZH(s string) string {
 	case "auth_401":
 		return "凭证失效"
 	case "permission_403":
-		return "权限拒绝"
+		return "权限拒绝(403)"
 	default:
 		return s
 	}

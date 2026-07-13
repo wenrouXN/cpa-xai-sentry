@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.4
+
+### Action log readability
+- Human labels: 冷却补关 / 到期恢复 / 自愈打开 / CPA禁用对齐 …
+- Full sentences with 【标签】prefix for key events.
+- `owned_disable_was_enabled` → 「自有冷却期间文件被打开，已重新关闭」.
+- `permission_denied` → 「权限拒绝(403)」; `recover_at` → 「冷却到期自动恢复」.
+
+
 ## 1.1.3
 
 ### Foreign-disable scan only on manual maintenance
@@ -124,6 +133,15 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.4
+
+### Action log readability
+- Human labels: 冷却补关 / 到期恢复 / 自愈打开 / CPA禁用对齐 …
+- Full sentences with 【标签】prefix for key events.
+- `owned_disable_was_enabled` → 「自有冷却期间文件被打开，已重新关闭」.
+- `permission_denied` → 「权限拒绝(403)」; `recover_at` → 「冷却到期自动恢复」.
+
 
 ## 1.1.3
 
