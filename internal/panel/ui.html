@@ -88,8 +88,19 @@ tr:hover td{background:#f5f9ff}
 .tabs button.active{background:var(--accent);border-color:#337ecc;color:#fff}
 .help{background:#f5f9ff;border:1px solid #b3d8ff;border-radius:10px;padding:8px 10px;color:#337ecc;font-size:11.5px;line-height:1.5;margin-bottom:8px}
 .toast{position:fixed;right:12px;top:12px;background:#fff;border:1px solid var(--border);padding:8px 12px;border-radius:10px;display:none;box-shadow:0 8px 24px #0f172a1a;z-index:20;max-width:420px}
-.logbox{max-height:min(65vh,640px);overflow:auto;background:#0b1220;color:#dbe7ff;border-radius:10px;padding:8px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.45}
-.logbox .l-act{color:#79bbff}.logbox .l-sig{color:#fbbf24}.logbox .l-err{color:#f87171}
+.logbox{max-height:min(65vh,640px);overflow:auto;background:#0b1220;color:#e8eefc;border-radius:10px;padding:8px 10px;font-family:var(--font);font-size:12px;line-height:1.55}
+.logbox .ll{display:grid;grid-template-columns:58px 56px 1fr;gap:8px;align-items:start;padding:6px 2px;border-bottom:1px solid #ffffff0f}
+.logbox .ll:last-child{border-bottom:0}
+.logbox .lt{color:#93a4c3;font-variant-numeric:tabular-nums;font-size:11.5px;padding-top:2px}
+.logbox .lb{display:inline-flex;align-items:center;justify-content:center;min-width:48px;padding:1px 6px;border-radius:999px;font-size:10.5px;font-weight:700;line-height:1.4}
+.logbox .lb.ok{background:#12351f;color:#86efac}
+.logbox .lb.warn{background:#3a2a10;color:#fbbf24}
+.logbox .lb.err{background:#3f1515;color:#fca5a5}
+.logbox .lb.info{background:#13233d;color:#93c5fd}
+.logbox .lm{color:#e8eefc;word-break:break-word}
+.logbox .lm .who{color:#bfdbfe}
+.logbox .lm .why{color:#fde68a}
+.logbox .empty{color:#93a4c3;padding:12px 4px;text-align:center}
 /* real sliding switches */
 .swbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:8px}
 .sw{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:999px;padding:5px 10px 5px 8px;background:#fff;user-select:none}
@@ -142,7 +153,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.4.5</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.4.7</span> <span id="modeBadge" class="badge">模式</span></h1>
     </div>
     <div class="row" style="align-items:center">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -575,16 +586,43 @@ function renderLogs(logs){
   const box=document.getElementById('logbox');
   if(!box) return;
   const lines=LAST_LOGS.slice().reverse().slice(0,300).map(e=>{
-    const act=e.action_label||ACT_ZH[e.action]||e.action||'—';
-    const sig=e.signal_label||SIG_ZH[e.signal]||e.signal||'';
-    const who=dispAuth(e.auth_label||e.auth||'');
-    const text=act+(sig?(' · '+sig):'')+(who?(' · '+who):'');
-    const cls=String(e.action||'').includes('fail')||String(e.action||'').includes('error')?'l-err':'l-act';
-    return '<div><span class="muted">'+esc(e.at||'')+'</span> <span class="'+cls+'">'+esc(text)+'</span></div>';
+    const level=e.level || (String(e.action||'').includes('fail')||String(e.action||'').includes('error')?'err'
+      :(e.action==='cooldown'||e.action==='candidate'||e.action==='trash'||e.action==='delete'||e.action==='manual_disable'?'warn'
+      :(e.action==='reenable'||e.action==='manual_enable'||e.action==='backfill'||e.action==='auto_backfill'?'ok':'info')));
+    const badge=e.action_label||ACT_ZH[e.action]||e.action||'事件';
+    // prefer backend narrative text; fallback compose
+    let text=e.text || '';
+    if(!text || text.indexOf(' · ')>=0 && text.split(' · ').length>=3 && !/因|已将|已恢复|失败/.test(text)){
+      // old-style "冷却 · 免费额度用尽 · mail" → rewrite client-side too
+      text=composeLogClient(e);
+    }
+    // light emphasis: email-like token
+    const htmlText=esc(text).replace(/([a-z0-9._%+\-*]+@[a-z0-9.\-*]+\.[a-z*]{2,})/ig,'<span class="who">$1</span>');
+    return '<div class="ll">'+
+      '<div class="lt">'+esc(e.at||'')+'</div>'+
+      '<div><span class="lb '+level+'">'+esc(badge)+'</span></div>'+
+      '<div class="lm">'+htmlText+'</div>'+
+    '</div>';
   });
-  box.innerHTML=lines.join('')||'暂无日志';
+  box.innerHTML=lines.join('')||'<div class="empty">暂无动作日志</div>';
   const meta=document.getElementById('logMeta');
   if(meta) meta.textContent=(LAST_LOGS.length||0)+' 条'+(MASKED?' · 脱敏':'');
+}
+function composeLogClient(e){
+  const act=e.action||'';
+  const who=dispAuth(e.auth_label||e.auth||'');
+  const why=e.reason||e.signal_label||SIG_ZH[e.signal]||e.signal||'';
+  if(act==='cooldown') return why?('因'+why+'，已将 '+(who||'账号')+' 转入冷却'):('已将 '+(who||'账号')+' 转入冷却');
+  if(act==='reenable') return why?(why+'，已恢复启用 '+(who||'账号')):('已恢复启用 '+(who||'账号'));
+  if(act==='candidate') return why?('因'+why+'，已将 '+(who||'账号')+' 移入候选'):('已将 '+(who||'账号')+' 移入候选');
+  if(act==='trash'||act==='delete') return why?('因'+why+'，已将 '+(who||'账号')+' 移入垃圾箱'):('已将 '+(who||'账号')+' 移入垃圾箱');
+  if(act==='manual_disable') return '已在面板手动禁用 '+(who||'账号');
+  if(act==='manual_enable') return '已在面板手动启用 '+(who||'账号');
+  if(act==='cooldown_failed') return '冷却 '+(who||'账号')+' 失败'+(why?('：'+why):'');
+  if(act==='reenable_failed') return '恢复启用 '+(who||'账号')+' 失败'+(why?('：'+why):'');
+  if(act==='backfill'||act==='auto_backfill') return why||'已回补今日用量数据';
+  const actL=e.action_label||ACT_ZH[act]||act||'事件';
+  return [actL, who, why].filter(Boolean).join(' · ');
 }
 async function refreshTrashOnly(){
   try{
@@ -607,7 +645,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.4.5');
+    document.getElementById('ver').textContent='v'+(st.version||'0.4.7');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};

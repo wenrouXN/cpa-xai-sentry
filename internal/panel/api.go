@@ -239,9 +239,17 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		DaySuccess      int64          `json:"day_success,omitempty"`
 		DayInputTokens  int64          `json:"day_input_tokens,omitempty"`
 		DayOutputTokens int64          `json:"day_output_tokens,omitempty"`
+		TotalCalls      int64          `json:"total_calls,omitempty"`
+		TotalSuccess    int64          `json:"total_success,omitempty"`
+		TotalFailure    int64          `json:"total_failure,omitempty"`
+		TotalTokens     int64          `json:"total_tokens,omitempty"`
+		// Recent15: last 15 request outcomes, oldest→newest; true=success false=fail
+		Recent15        []bool         `json:"recent15,omitempty"`
 		QuotaText       string         `json:"quota_text,omitempty"`
 		UsageSource     string         `json:"usage_source,omitempty"`
-		SuccessRate     float64        `json:"success_rate,omitempty"`
+		SuccessRate     float64        `json:"success_rate,omitempty"` // total success rate
+		DaySuccessRate  float64        `json:"day_success_rate,omitempty"`
+		QuotaRatioText  string         `json:"quota_ratio_text,omitempty"` // 今日/24h额度
 		SortMS          int64          `json:"-"`
 	}
 	summary := map[string]int{
@@ -255,10 +263,12 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	var cpampTokSum, cpampCallSum int64
 	rows := make([]row, 0, len(accs))
 	for _, acc := range accs {
-		// prefer CPAMP usage.sqlite per-auth day stats (display-only; no state mutation on read)
+		// prefer CPAMP usage.sqlite per-auth stats (display-only; no state mutation on read)
 		usageSrc := "local"
 		dayC, dayF, dayT := acc.DayCalls, acc.DayFailCalls, acc.DayTokens
 		var dayS, dayIn, dayOut int64
+		var totC, totS, totF, totT int64
+		var recent15 []bool
 		var lastReqMS int64
 		var cuOK cpamp.AccountDay
 		var hasCU bool
@@ -266,6 +276,8 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			usageSrc = "cpamp"
 			dayC, dayS, dayF = cu.Calls, cu.Success, cu.Failure
 			dayT, dayIn, dayOut = cu.Tokens, cu.InputTokens, cu.OutputTokens
+			totC, totS, totF, totT = cu.TotalCalls, cu.TotalSuccess, cu.TotalFailure, cu.TotalTokens
+			recent15 = cu.Recent15
 			lastReqMS = cu.LastMS
 			cuOK, hasCU = cu, true
 		} else if acc.Email != "" {
@@ -273,6 +285,8 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 				usageSrc = "cpamp"
 				dayC, dayS, dayF = cu.Calls, cu.Success, cu.Failure
 				dayT, dayIn, dayOut = cu.Tokens, cu.InputTokens, cu.OutputTokens
+				totC, totS, totF, totT = cu.TotalCalls, cu.TotalSuccess, cu.TotalFailure, cu.TotalTokens
+				recent15 = cu.Recent15
 				lastReqMS = cu.LastMS
 				cuOK, hasCU = cu, true
 			}
@@ -286,6 +300,12 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		// if still no success count, derive
 		if dayS == 0 && dayC >= dayF {
 			dayS = dayC - dayF
+		}
+		if totC == 0 {
+			totC, totS, totF, totT = dayC, dayS, dayF, dayT
+		}
+		if totS == 0 && totC >= totF {
+			totS = totC - totF
 		}
 
 		summary["total"]++
@@ -402,9 +422,34 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 				qSrc = usageSrc
 			}
 		}
+		// total success rate (primary) + day success rate
 		rate := 0.0
+		if totC > 0 {
+			rate = float64(totS) / float64(totC) * 100
+		}
+		dayRate := 0.0
 		if dayC > 0 {
-			rate = float64(dayS) / float64(dayC) * 100
+			dayRate = float64(dayS) / float64(dayC) * 100
+		}
+		// free-tier 24h quota: prefer real limit from error body, else 2M estimate
+		quota24 := qLimit
+		if quota24 <= 0 {
+			quota24 = quota.FreeQuotaPerAccount
+		}
+		ratioText := ""
+		if dayT > 0 || qUsed > 0 {
+			// 今日用量 / 24小时额度
+			ratioText = formatTokens(dayT) + " / " + formatTokens(quota24)
+		}
+		// usage display: 总计 · 今日 · 今日/24h额度
+		usageMain := ""
+		if totT > 0 || dayT > 0 {
+			usageMain = formatTokens(totT) + " · " + formatTokens(dayT)
+			if ratioText != "" {
+				usageMain += " · " + ratioText
+			}
+		} else if qText != "" {
+			usageMain = qText
 		}
 		rows = append(rows, row{
 			AuthIndex: acc.AuthIndex, FileName: acc.FileName, Email: acc.Email, DisplayName: display,
@@ -414,7 +459,10 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			QuotaLimit: qLimit, QuotaUsed: qUsed, QuotaRemaining: qRem,
 			QuotaSource: qSrc, DayCalls: dayC, DayFailCalls: dayF,
 			DayTokens: dayT, DaySuccess: dayS, DayInputTokens: dayIn, DayOutputTokens: dayOut,
-			QuotaText: qText, UsageSource: usageSrc, SuccessRate: rate,
+			TotalCalls: totC, TotalSuccess: totS, TotalFailure: totF, TotalTokens: totT,
+			Recent15: recent15,
+			QuotaText: usageMain, UsageSource: usageSrc, SuccessRate: rate, DaySuccessRate: dayRate,
+			QuotaRatioText: ratioText,
 			SortMS: lastReqMS,
 		})
 	}
@@ -493,7 +541,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":         "cpa-xai-sentry",
-		"version":        "0.4.5",
+		"version":        "0.4.7",
 		"mode":           modeOf(*a.Cfg),
 		"mode_label":     modeLabel(modeOf(*a.Cfg)),
 		"summary":        summary,
@@ -661,12 +709,14 @@ func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) {
 		Auth        string `json:"auth"`
 		AuthLabel   string `json:"auth_label"`
 		Source      string `json:"source"`
+		SourceLabel string `json:"source_label"`
 		Signal      string `json:"signal"`
 		SignalLabel string `json:"signal_label"`
 		Action      string `json:"action"`
 		ActionLabel string `json:"action_label"`
 		Reason      string `json:"reason"`
 		Text        string `json:"text"`
+		Level       string `json:"level"` // ok|warn|err|info
 	}
 	out := make([]L, 0)
 	for _, e := range a.State.SnapshotLogs() {
@@ -676,31 +726,168 @@ func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) {
 		}
 		actL := logActionZH(e.Action)
 		sigL := logSignalZH(e.Signal)
-		reason := e.Reason
-		if reason == "free_usage" || reason == "bulk_suggested_cooldown" {
-			reason = "免费额度用尽"
-		}
-		if reason == "recover_at" {
-			reason = "到期恢复"
-		}
-		text := actL
-		if sigL != "" {
-			text += " · " + sigL
-		}
-		if label != "" {
-			text += " · " + label
-		}
-		if reason != "" && reason != sigL && reason != e.Action {
-			text += " · " + reason
-		}
+		srcL := logSourceZH(e.Source)
+		reason := humanizeReason(e.Reason, sigL, e.Action)
+		text, level := composeLogText(actL, e.Action, sigL, e.Signal, label, reason, srcL, e.Source)
 		out = append(out, L{
 			At: e.At.In(time.FixedZone("CST", 8*3600)).Format("15:04:05"),
-			Auth: e.Auth, AuthLabel: label, Source: e.Source,
+			Auth: e.Auth, AuthLabel: label, Source: e.Source, SourceLabel: srcL,
 			Signal: e.Signal, SignalLabel: sigL,
-			Action: e.Action, ActionLabel: actL, Reason: reason, Text: text,
+			Action: e.Action, ActionLabel: actL, Reason: reason, Text: text, Level: level,
 		})
 	}
 	writeJSON(w, 200, map[string]any{"logs": out})
+}
+
+func humanizeReason(reason, sigL, action string) string {
+	r := strings.TrimSpace(reason)
+	switch r {
+	case "", "free_usage", "bulk_suggested_cooldown":
+		if sigL != "" {
+			return sigL
+		}
+		if r == "bulk_suggested_cooldown" {
+			return "批量按建议冷却"
+		}
+		return ""
+	case "recover_at":
+		return "冷却到期，自动恢复"
+	case "panel bulk/manual":
+		return "面板批量操作"
+	case "今日用量自动回补", "今日用量回补":
+		return r
+	}
+	// already chinese / readable
+	if strings.ContainsAny(r, "冷却恢复候选垃圾箱额度权限凭证") {
+		return r
+	}
+	// map common english leftovers
+	switch r {
+	case "free_usage_exhausted", "subscription:free-usage-exhausted":
+		return "免费额度用尽"
+	}
+	if sigL != "" && (r == action || r == sigL) {
+		return sigL
+	}
+	return r
+}
+
+func composeLogText(actL, action, sigL, signal, who, reason, srcL, source string) (string, string) {
+	level := "info"
+	switch action {
+	case "cooldown_failed", "reenable_failed":
+		level = "err"
+	case "cooldown", "candidate", "trash", "delete", "manual_disable":
+		level = "warn"
+	case "reenable", "manual_enable", "backfill", "auto_backfill", "restore":
+		level = "ok"
+	}
+	who = strings.TrimSpace(who)
+	reason = strings.TrimSpace(reason)
+	sigL = strings.TrimSpace(sigL)
+	// prefer reason over signal if more informative
+	why := reason
+	if why == "" {
+		why = sigL
+	} else if sigL != "" && why != sigL && !strings.Contains(why, sigL) {
+		// keep compact: if reason already covers, skip
+	}
+	// narrative templates
+	switch action {
+	case "cooldown":
+		if who != "" && why != "" {
+			return "因" + why + "，已将 " + who + " 转入冷却", level
+		}
+		if who != "" {
+			return "已将 " + who + " 转入冷却", level
+		}
+		return "已执行冷却", level
+	case "cooldown_failed":
+		if who != "" && why != "" {
+			return "冷却 " + who + " 失败：" + why, level
+		}
+		if who != "" {
+			return "冷却 " + who + " 失败", level
+		}
+		return "冷却失败", level
+	case "reenable":
+		if who != "" && why != "" {
+			return why + "，已恢复启用 " + who, level
+		}
+		if who != "" {
+			return "已恢复启用 " + who, level
+		}
+		return "已恢复启用账号", level
+	case "reenable_failed":
+		if who != "" && why != "" {
+			return "恢复启用 " + who + " 失败：" + why, level
+		}
+		if who != "" {
+			return "恢复启用 " + who + " 失败", level
+		}
+		return "恢复启用失败", level
+	case "candidate":
+		if who != "" && why != "" {
+			return "因" + why + "，已将 " + who + " 移入候选", level
+		}
+		if who != "" {
+			return "已将 " + who + " 移入候选", level
+		}
+		return "账号已移入候选", level
+	case "trash", "delete":
+		if who != "" && why != "" {
+			return "因" + why + "，已将 " + who + " 移入垃圾箱", level
+		}
+		if who != "" {
+			return "已将 " + who + " 移入垃圾箱", level
+		}
+		return "账号已移入垃圾箱", level
+	case "manual_disable":
+		if who != "" {
+			return "已在面板手动禁用 " + who, level
+		}
+		return "已手动禁用账号", level
+	case "manual_enable":
+		if who != "" {
+			return "已在面板手动启用 " + who, level
+		}
+		return "已手动启用账号", level
+	case "backfill", "auto_backfill":
+		if why != "" {
+			return why, "ok"
+		}
+		return "已回补今日用量数据", "ok"
+	case "restore", "restore_enable":
+		if who != "" {
+			return "已从垃圾箱恢复 " + who, "ok"
+		}
+		return "已从垃圾箱恢复账号", "ok"
+	case "purge":
+		if who != "" {
+			return "已彻底清除 " + who, "warn"
+		}
+		return "已彻底清除垃圾箱条目", "warn"
+	case "observe":
+		if who != "" && why != "" {
+			return "观察到 " + who + " 出现" + why + "（仅记录，未处置）", "info"
+		}
+		return "记录到异常信号（仅观察）", "info"
+	}
+	// generic fluent fallback
+	parts := make([]string, 0, 4)
+	if actL != "" && actL != "—" {
+		parts = append(parts, actL)
+	}
+	if who != "" {
+		parts = append(parts, who)
+	}
+	if why != "" && why != actL {
+		parts = append(parts, "原因："+why)
+	}
+	if len(parts) == 0 {
+		return "系统事件", level
+	}
+	return strings.Join(parts, " · "), level
 }
 
 func logActionZH(a string) string {
@@ -719,10 +906,16 @@ func logActionZH(a string) string {
 		return "手动禁用"
 	case "manual_enable":
 		return "手动启用"
-	case "backfill":
+	case "backfill", "auto_backfill":
 		return "用量回补"
 	case "trash", "delete":
 		return "进垃圾箱"
+	case "restore", "restore_enable":
+		return "恢复"
+	case "purge":
+		return "彻底清除"
+	case "observe":
+		return "仅观察"
 	default:
 		if a == "" {
 			return "—"
@@ -742,6 +935,28 @@ func logSignalZH(s string) string {
 	case "permission_403":
 		return "权限拒绝"
 	default:
+		return s
+	}
+}
+
+func logSourceZH(s string) string {
+	switch s {
+	case "usage":
+		return "请求监控"
+	case "panel":
+		return "面板"
+	case "patrol":
+		return "巡查"
+	case "cpamp":
+		return "用量回补"
+	case "tick", "sentry":
+		return "哨兵"
+	case "trash":
+		return "垃圾箱"
+	default:
+		if s == "" {
+			return ""
+		}
 		return s
 	}
 }
@@ -844,7 +1059,7 @@ func (a *API) handleRunTick(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.4.4",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.4.7",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 		"cooldown_stats": a.State.CooldownStats(time.Now()),
 	})
