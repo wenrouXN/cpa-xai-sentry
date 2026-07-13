@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"html"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -241,6 +242,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		QuotaText       string         `json:"quota_text,omitempty"`
 		UsageSource     string         `json:"usage_source,omitempty"`
 		SuccessRate     float64        `json:"success_rate,omitempty"`
+		SortMS          int64          `json:"-"`
 	}
 	summary := map[string]int{
 		"total": 0, "active": 0, "cooldown": 0, "candidate": 0,
@@ -413,8 +415,21 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			QuotaSource: qSrc, DayCalls: dayC, DayFailCalls: dayF,
 			DayTokens: dayT, DaySuccess: dayS, DayInputTokens: dayIn, DayOutputTokens: dayOut,
 			QuotaText: qText, UsageSource: usageSrc, SuccessRate: rate,
+			SortMS: lastReqMS,
 		})
 	}
+	// newest request first (CPAMP last_ms); fallback UpdatedAt string desc
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].SortMS != rows[j].SortMS {
+			return rows[i].SortMS > rows[j].SortMS
+		}
+		si, _ := rows[i].UpdatedAt.(string)
+		sj, _ := rows[j].UpdatedAt.(string)
+		if si != sj {
+			return si > sj
+		}
+		return rows[i].DisplayName < rows[j].DisplayName
+	})
 	// if local day tokens empty, use cpamp sum for pool used
 	if dayTokens == 0 && cpampTokSum > 0 {
 		dayTokens = cpampTokSum
@@ -478,7 +493,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":         "cpa-xai-sentry",
-		"version":        "0.4.4",
+		"version":        "0.4.5",
 		"mode":           modeOf(*a.Cfg),
 		"mode_label":     modeLabel(modeOf(*a.Cfg)),
 		"summary":        summary,
