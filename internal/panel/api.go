@@ -173,7 +173,8 @@ func dedupeAccountsForPanel(accs []*state.Account) []*state.Account {
 		if k == "" {
 			continue
 		}
-		if cur, ok := best[k]; !ok {
+		cur, ok := best[k]
+		if !ok {
 			cp := *a
 			best[k] = &cp
 			order = append(order, k)
