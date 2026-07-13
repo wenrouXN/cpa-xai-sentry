@@ -333,7 +333,7 @@ func (g *Guard) applyTrash(ctx context.Context, ev UsageEvent, res match.Result,
 	})
 }
 
-// Tick recovers cooldowns, refreshes identity metadata, and auto-purges trash.
+// Tick recovers cooldowns, syncs CPA disabled status, refreshes identity metadata, and auto-purges trash.
 func (g *Guard) Tick(ctx context.Context) error {
 	if !g.Cfg.Enabled || !g.Cfg.SentryEnabled {
 		return nil
@@ -347,6 +347,14 @@ func (g *Guard) Tick(ctx context.Context) error {
 				g.State.UpdateMeta(acc.AuthIndex, id.FileName, id.Email, "")
 			}
 		}
+	}
+	// Align sentry state with CPA auth-file disabled flags (no network probe, no quota cost).
+	// Covers cases where file was disabled outside sentry (manual / other tools) or usage callback missed.
+	synced, syncErr := g.syncDisabledFromCPA(ctx, now)
+	_ = synced
+	if syncErr != nil {
+		// non-fatal: still continue recover/purge
+		g.State.Log(state.ActionLog{Source: "tick", Action: "sync_disabled_failed", Reason: syncErr.Error()})
 	}
 	for _, acc := range g.State.AccountsSnapshot() {
 		if acc.RecoverAt.IsZero() || acc.RecoverAt.After(now) {
@@ -382,6 +390,92 @@ func (g *Guard) Tick(ctx context.Context) error {
 		}
 	}
 	return g.State.Save()
+}
+
+// clean up verbose comments in sync - simplify the signal stamp block
+func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, error) {
+	if g.CPA == nil {
+		return 0, nil
+	}
+	files, err := g.CPA.ListAuthFiles(ctx)
+	if err != nil {
+		return 0, err
+	}
+	byName := map[string]cpaapi.AuthFile{}
+	byEmail := map[string]cpaapi.AuthFile{}
+	for _, f := range files {
+		name := strings.ToLower(strings.TrimSpace(f.Name))
+		if name != "" {
+			byName[name] = f
+		}
+		em := strings.ToLower(strings.TrimSpace(f.Email))
+		if em != "" {
+			byEmail[em] = f
+		}
+	}
+	n := 0
+	for _, acc := range g.State.AccountsSnapshot() {
+		if acc.State == state.UserManual || acc.State == state.Trashed || acc.State == state.Purged || acc.State == state.CandidateDead {
+			continue
+		}
+		// already cooling with recover_at — skip
+		if (acc.State == state.CooldownQuota || acc.State == state.CooldownSpending || acc.State == state.CooldownPermission) && !acc.RecoverAt.IsZero() {
+			continue
+		}
+		fn := strings.ToLower(strings.TrimSpace(acc.FileName))
+		em := strings.ToLower(strings.TrimSpace(acc.Email))
+		f, ok := byName[fn]
+		if !ok && em != "" {
+			f, ok = byEmail[em]
+		}
+		if !ok && em != "" {
+			f, ok = byName["xai-"+em+".json"]
+		}
+		if !ok || !f.Disabled {
+			continue
+		}
+		isFree := acc.LastSignal == string(match.SignalFreeUsage429) ||
+			strings.Contains(acc.QuotaSource, "free_usage") ||
+			strings.Contains(acc.QuotaSource, "cpamp_fail_body") ||
+			(acc.QuotaLimit > 0 && acc.QuotaUsed >= acc.QuotaLimit)
+		sig := acc.LastSignal
+		reason := "cpa_disabled_sync"
+		if isFree {
+			sig = string(match.SignalFreeUsage429)
+			reason = "cpa_disabled_free_usage_sync"
+		}
+		// mark cooling if still active or cooling without recover_at
+		if acc.State == state.Active || acc.State == "" ||
+			((acc.State == state.CooldownQuota || acc.State == state.CooldownSpending || acc.State == state.CooldownPermission) && acc.RecoverAt.IsZero()) {
+			g.State.SetAccountState(acc.AuthIndex, state.CooldownQuota, "plugin_auto")
+		}
+		if acc.RecoverAt.IsZero() || acc.RecoverAt.Before(now) {
+			rec := now.Add(24 * time.Hour)
+			if g.Cfg.MaxResetSeconds > 0 {
+				maxAt := now.Add(time.Duration(g.Cfg.MaxResetSeconds) * time.Second)
+				if rec.After(maxAt) {
+					rec = maxAt
+				}
+			}
+			g.State.SetRecoverAt(acc.AuthIndex, rec)
+		}
+		if sig != "" {
+			g.stampLastSignal(acc.AuthIndex, sig)
+		}
+		g.State.Log(state.ActionLog{
+			Auth: acc.AuthIndex, Source: "tick", Signal: sig,
+			Action: "cooldown", Reason: reason,
+		})
+		n++
+	}
+	return n, nil
+}
+
+func (g *Guard) stampLastSignal(authIndex, signal string) {
+	if g.State == nil || authIndex == "" || signal == "" {
+		return
+	}
+	g.State.SetLastSignal(authIndex, signal)
 }
 
 func (g *Guard) resolveFileName(ctx context.Context, authIndex, fileName, email string) string {

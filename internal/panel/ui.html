@@ -158,7 +158,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.1</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.2</span> <span id="modeBadge" class="badge">模式</span></h1>
     </div>
     <div class="row" style="align-items:center">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -192,7 +192,7 @@ select.act{min-width:100px}input.num{width:70px}
       <span class="meta" id="cfgLine"></span>
       <button class="xs" onclick="applyPreset('observe')" title="关闭自动冷却/候选/垃圾箱，只记录观察">仅观察</button>
       <button class="xs warn" onclick="applyPreset('safe-guard')" title="打开自动冷却+自动候选；不会自动进垃圾箱">安全防护</button>
-      <button class="xs" onclick="runTick()" title="只恢复到期冷却 + 清理过期垃圾箱（被动维护，不是主动探测）">立即维护</button>
+      <button class="xs" onclick="runTick()" title="被动维护：恢复到期冷却 + 同步 CPA 已禁用账号到哨兵冷却状态 + 清理过期垃圾箱（不主动探测，不消耗额度）">立即维护</button>
     </div>
   </div>
 
@@ -695,7 +695,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.5.1');
+    document.getElementById('ver').textContent='v'+(st.version||'0.5.2');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -881,7 +881,15 @@ async function applyPreset(name){
   if(name==='safe-guard' && !confirm('启用「安全防护」?\n\n将打开:自动冷却 + 自动候选\n不会:自动进垃圾箱\n\n适合日常护航,误删风险低。')) return;
   try{ await j('/preset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}); toast(name==='safe-guard'?'已启用安全防护(冷却+候选)':'已应用仅观察'); await refresh() }catch(e){toast(e.message)}
 }
-async function runTick(){ try{ await j('/run-tick',{method:'POST'}); toast('周期任务已执行'); await refresh() }catch(e){toast(e.message)} }
+async function runTick(){
+  try{
+    const r=await j('/run-tick',{method:'POST'});
+    const c=(r&&r.cooldown_stats)||{};
+    const n=c.cooling!=null?c.cooling:'?';
+    toast('维护完成：已同步 CPA 禁用状态 · 当前冷却 '+n+' 个');
+    await refresh();
+  }catch(e){toast(e.message)}
+}
 async function restore(id,enable){ try{ await j('/trash/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,enable})}); toast(enable?'已恢复并启用':'已恢复(禁用)'); await refresh() }catch(e){toast(e.message)} }
 async function purge(id){ if(!confirm('彻底清除后不可恢复,确认?')) return; try{ await j('/trash/purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,confirm:true})}); toast('已清除'); await refresh() }catch(e){toast(e.message)} }
 async function purgeExpired(){ if(!confirm('清理所有到期垃圾箱项?')) return; try{ await j('/trash/purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({expired:true,confirm:true})}); toast('到期项已清理'); await refresh() }catch(e){toast(e.message)} }

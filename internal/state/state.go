@@ -348,6 +348,21 @@ func (s *Store) SetRecoverAt(authIndex string, at time.Time) {
 	}
 }
 
+// SetLastSignal stamps last_signal without bumping streaks (for maintenance sync).
+func (s *Store) SetLastSignal(authIndex, signal string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	acc := s.Accounts[authIndex]
+	if acc == nil {
+		acc = &Account{AuthIndex: authIndex, State: Active, Streaks: map[string]int{}}
+		s.Accounts[authIndex] = acc
+	}
+	if signal != "" {
+		acc.LastSignal = signal
+	}
+	// do not bump UpdatedAt — maintenance sync is not a request event
+}
+
 func (s *Store) AccountsSnapshot() []*Account {
 	s.mu.Lock()
 	defer s.mu.Unlock()

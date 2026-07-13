@@ -541,7 +541,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":         "cpa-xai-sentry",
-		"version":        "0.5.1",
+		"version":        "0.5.2",
 		"mode":           modeOf(*a.Cfg),
 		"mode_label":     modeLabel(modeOf(*a.Cfg)),
 		"summary":        summary,
@@ -754,6 +754,10 @@ func humanizeReason(reason, sigL, action string) string {
 		return "冷却到期，自动恢复"
 	case "panel bulk/manual":
 		return "面板批量操作"
+	case "cpa_disabled_sync":
+		return "CPA文件已禁用（状态对齐）"
+	case "cpa_disabled_free_usage_sync":
+		return "CPA已禁用且疑似免费额度用尽（状态对齐）"
 	case "今日用量自动回补", "今日用量回补":
 		return r
 	}
@@ -795,6 +799,9 @@ func composeLogText(actL, action, sigL, signal, who, reason, srcL, source string
 	// narrative templates
 	switch action {
 	case "cooldown":
+		if source == "tick" && who != "" {
+			return "维护同步：CPA 已禁用 " + who + "，已对齐为冷却", level
+		}
 		if who != "" && why != "" {
 			return "因" + why + "，已将 " + who + " 转入冷却", level
 		}
@@ -900,6 +907,8 @@ func logActionZH(a string) string {
 		return "恢复启用"
 	case "reenable_failed":
 		return "恢复失败"
+	case "sync_disabled_failed":
+		return "同步禁用失败"
 	case "candidate":
 		return "进候选"
 	case "manual_disable":
@@ -1053,13 +1062,19 @@ func (a *API) handleRunTick(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, 200, map[string]any{"ok": true})
+	// report cooldown count after sync for panel toast/debug
+	cool := a.State.CooldownStats(time.Now())
+	writeJSON(w, 200, map[string]any{
+		"ok": true,
+		"cooldown_stats": cool,
+		"note": "recovered due cooldowns + synced CPA disabled → sentry cooldown + purged trash",
+	})
 }
 
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.1",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.2",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 		"cooldown_stats": a.State.CooldownStats(time.Now()),
 	})
