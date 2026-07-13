@@ -16,13 +16,12 @@ import (
 	"github.com/openclaw-local/cpa-xai-sentry/internal/trash"
 )
 
-func TestTickDoesNotReopenOperatorDisabled(t *testing.T) {
+func TestTickReopensUnownedDisabledSelfHeal(t *testing.T) {
 	dir := t.TempDir()
-	setCalls := 0
+	setToFalse := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v0/management/auth-files" && r.Method == http.MethodGet:
-			// match cpaapi.ListAuthFiles unmarshalling
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"files": []map[string]any{{
 					"name": "xai-op@lovc.eu.cc.json", "email": "op@lovc.eu.cc",
@@ -30,11 +29,14 @@ func TestTickDoesNotReopenOperatorDisabled(t *testing.T) {
 				}},
 			})
 		case r.URL.Path == "/v0/management/auth-files/status":
-			setCalls++
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if d, ok := body["disabled"].(bool); ok && !d {
+				setToFalse++
+			}
 			w.WriteHeader(200)
 			_, _ = w.Write([]byte(`{"ok":true}`))
 		default:
-			// ignore other probes
 			w.WriteHeader(200)
 			_, _ = w.Write([]byte(`{}`))
 		}
@@ -46,11 +48,15 @@ func TestTickDoesNotReopenOperatorDisabled(t *testing.T) {
 	cfg.ManagementURL = srv.URL
 	cfg.ManagementKey = "k"
 	cfg.AuthDir = dir
-	cfg.ReopenForeignDisabled = false
+	// default self-heal
+	if !cfg.ReopenForeignDisabled {
+		t.Fatal("default should reopen unowned disables")
+	}
 	st := state.New(filepath.Join(dir, "s.json"))
 	st.Touch("auth1")
 	st.UpdateMeta("auth1", "xai-op@lovc.eu.cc.json", "op@lovc.eu.cc", "")
-	st.SetAccountState("auth1", state.Active, "")
+	// previously tagged CPA已禁用 or plain active with file disabled
+	st.SetAccountState("auth1", state.UserManual, "cpa_file_disabled")
 	_ = st.Save()
 	ts := trash.New(filepath.Join(dir, "trash"), 7, true, st)
 	cpa := cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, cfg.AuthDir)
@@ -58,15 +64,12 @@ func TestTickDoesNotReopenOperatorDisabled(t *testing.T) {
 	if err := g.Tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	if setToFalse != 1 {
+		t.Fatalf("want reopen once, got %d", setToFalse)
+	}
 	acc := st.Get("auth1")
-	if acc == nil {
-		t.Fatal("missing account")
-	}
-	if acc.State != state.UserManual || acc.DisableSource != "cpa_file_disabled" {
-		t.Fatalf("want cpa_file_disabled lock, got state=%s src=%s", acc.State, acc.DisableSource)
-	}
-	if setCalls != 0 {
-		t.Fatalf("must not call SetDisabled when reopen_foreign_disabled=false, calls=%d", setCalls)
+	if acc.State != state.Active || acc.DisableSource != "" {
+		t.Fatalf("want clean active after self-heal, got state=%s src=%s", acc.State, acc.DisableSource)
 	}
 }
 
@@ -102,7 +105,7 @@ func TestTickProtectsPluginAutoCooldown(t *testing.T) {
 	cfg.ManagementURL = srv.URL
 	cfg.ManagementKey = "k"
 	cfg.AuthDir = dir
-	cfg.ReopenForeignDisabled = true // even if reopen enabled, plugin_auto must be protected
+	cfg.ReopenForeignDisabled = true
 	st := state.New(filepath.Join(dir, "s.json"))
 	st.Touch("auth-cool")
 	st.UpdateMeta("auth-cool", "xai-cool@lovc.eu.cc.json", "cool@lovc.eu.cc", "")
@@ -124,6 +127,56 @@ func TestTickProtectsPluginAutoCooldown(t *testing.T) {
 	}
 }
 
+func TestTickProtectsPanelManualDisable(t *testing.T) {
+	dir := t.TempDir()
+	setToFalse := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v0/management/auth-files" && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"files": []map[string]any{{
+					"name": "xai-m@lovc.eu.cc.json", "email": "m@lovc.eu.cc",
+					"provider": "xai", "type": "xai", "disabled": true,
+				}},
+			})
+		case r.URL.Path == "/v0/management/auth-files/status":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if d, ok := body["disabled"].(bool); ok && !d {
+				setToFalse++
+			}
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		default:
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	defer srv.Close()
+	cfg := sentrycfg.Default()
+	cfg.SentryEnabled = true
+	cfg.ManagementURL = srv.URL
+	cfg.ManagementKey = "k"
+	st := state.New(filepath.Join(dir, "s.json"))
+	st.Touch("m1")
+	st.UpdateMeta("m1", "xai-m@lovc.eu.cc.json", "m@lovc.eu.cc", "")
+	st.SetAccountState("m1", state.UserManual, "user_manual")
+	_ = st.Save()
+	ts := trash.New(filepath.Join(dir, "trash"), 7, true, st)
+	cpa := cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, dir)
+	g := guard.New(cfg, st, ts, cpa)
+	if err := g.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if setToFalse != 0 {
+		t.Fatalf("panel permanent disable must not reopen, opens=%d", setToFalse)
+	}
+	acc := st.Get("m1")
+	if acc.State != state.UserManual || acc.DisableSource != "user_manual" {
+		t.Fatalf("manual lock lost: %+v", acc)
+	}
+}
+
 func TestTickRepairsActiveWithPluginAutoFutureRecover(t *testing.T) {
 	dir := t.TempDir()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -142,7 +195,6 @@ func TestTickRepairsActiveWithPluginAutoFutureRecover(t *testing.T) {
 	st := state.New(filepath.Join(dir, "s.json"))
 	st.Touch("a")
 	st.UpdateMeta("a", "xai-a.json", "a@b.com", "")
-	// dirty: Active but still plugin_auto + future recover (bug state that used to be scrubbed)
 	st.SetAccountState("a", state.Active, "plugin_auto")
 	st.SetLastSignal("a", "permission_403")
 	st.SetRecoverAt("a", time.Now().Add(time.Hour))
@@ -159,5 +211,52 @@ func TestTickRepairsActiveWithPluginAutoFutureRecover(t *testing.T) {
 	}
 	if acc.State != state.CooldownPermission {
 		t.Fatalf("want restored cooldown_permission, got %s", acc.State)
+	}
+}
+
+func TestConservativeModeMarksCPADisabled(t *testing.T) {
+	dir := t.TempDir()
+	setCalls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v0/management/auth-files" && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"files": []map[string]any{{
+					"name": "xai-c@lovc.eu.cc.json", "email": "c@lovc.eu.cc",
+					"provider": "xai", "type": "xai", "disabled": true,
+				}},
+			})
+		case r.URL.Path == "/v0/management/auth-files/status":
+			setCalls++
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		default:
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	defer srv.Close()
+	cfg := sentrycfg.Default()
+	cfg.SentryEnabled = true
+	cfg.ManagementURL = srv.URL
+	cfg.ManagementKey = "k"
+	cfg.ReopenForeignDisabled = false // conservative
+	st := state.New(filepath.Join(dir, "s.json"))
+	st.Touch("c1")
+	st.UpdateMeta("c1", "xai-c@lovc.eu.cc.json", "c@lovc.eu.cc", "")
+	st.SetAccountState("c1", state.Active, "")
+	_ = st.Save()
+	ts := trash.New(filepath.Join(dir, "trash"), 7, true, st)
+	cpa := cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, dir)
+	g := guard.New(cfg, st, ts, cpa)
+	if err := g.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if setCalls != 0 {
+		t.Fatalf("conservative must not SetDisabled, calls=%d", setCalls)
+	}
+	acc := st.Get("c1")
+	if acc.State != state.UserManual || acc.DisableSource != "cpa_file_disabled" {
+		t.Fatalf("want cpa_file_disabled, got %s/%s", acc.State, acc.DisableSource)
 	}
 }

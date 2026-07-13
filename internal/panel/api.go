@@ -1073,8 +1073,8 @@ func humanizeReason(reason, sigL, action string) string {
 		return "面板批量操作"
 	case "cpa_disabled_sync":
 		return "CPA凭证文件已禁用（非面板操作）"
-	case "foreign_or_unknown_disabled", "foreign_disabled_untracked":
-		return "非本哨兵冷却禁用，已重新打开"
+	case "foreign_or_unknown_disabled", "foreign_disabled_untracked", "unowned_disabled_self_heal", "unowned_disabled_untracked_self_heal":
+		return "非自有禁用，已打开等待下次报错纠偏"
 	case "closed_loop_clean":
 		return "闭环清理脏正常态"
 	case "cpa_disabled_free_usage_sync":

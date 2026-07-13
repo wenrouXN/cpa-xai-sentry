@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.4
+
+### Self-heal unowned disables (operator preference)
+- Default `reopen_foreign_disabled=true`: if a CPA file is disabled but sentry cannot prove ownership (`plugin_auto` cool-down / panel `user_manual`), **reopen** it and `ResetToActive`.
+- Next real usage/patrol error re-applies policy and re-stamps ownership (self-heal).
+- Still **protects** real cool-downs, 候删, and panel permanent disables.
+- `cpa_file_disabled` tags are no longer sticky protect — they self-heal on the next tick.
+- Set `reopen_foreign_disabled=false` for the old conservative "keep closed + mark CPA已禁用" mode.
+
+
 ## 1.0.3
 
 ### Auth closed-loop hardening
@@ -27,6 +37,16 @@
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.0.4
+
+### Self-heal unowned disables (operator preference)
+- Default `reopen_foreign_disabled=true`: if a CPA file is disabled but sentry cannot prove ownership (`plugin_auto` cool-down / panel `user_manual`), **reopen** it and `ResetToActive`.
+- Next real usage/patrol error re-applies policy and re-stamps ownership (self-heal).
+- Still **protects** real cool-downs, 候删, and panel permanent disables.
+- `cpa_file_disabled` tags are no longer sticky protect — they self-heal on the next tick.
+- Set `reopen_foreign_disabled=false` for the old conservative "keep closed + mark CPA已禁用" mode.
+
 
 ## 1.0.3
 
