@@ -439,7 +439,12 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		SuggestedAction string         `json:"suggested_action"`
 		Reason          string         `json:"reason"`
 		RecoverAt       any            `json:"recover_at,omitempty"`
-		UpdatedAt       any            `json:"updated_at,omitempty"`
+		UpdatedAt       any            `json:"updated_at,omitempty"` // legacy: same as request_at when present
+		RequestAt       any            `json:"request_at,omitempty"` // last real request (CPAMP)
+		ActionAt        any            `json:"action_at,omitempty"`  // last sentry action log
+		LastAction      string         `json:"last_action,omitempty"`
+		LastActionLabel string         `json:"last_action_label,omitempty"`
+		ActionMS        int64          `json:"-"`
 		QuotaLimit      int64          `json:"quota_limit,omitempty"`
 		QuotaUsed       int64          `json:"quota_used,omitempty"`
 		QuotaRemaining  int64          `json:"quota_remaining,omitempty"`
@@ -614,15 +619,35 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
-		var ra, ua any
+		var ra, ua, reqAt, actAt any
 		if !acc.RecoverAt.IsZero() {
 			ra = acc.RecoverAt.In(time.FixedZone("CST", 8*3600)).Format("01-02 15:04")
 		}
-		// Prefer last real request time from CPAMP usage events (not panel refresh time)
+		loc := time.FixedZone("CST", 8*3600)
+		// request time: CPAMP last request
 		if lastReqMS > 0 {
-			ua = time.UnixMilli(lastReqMS).In(time.FixedZone("CST", 8*3600)).Format("01-02 15:04:05")
-		} else if !acc.UpdatedAt.IsZero() {
-			ua = acc.UpdatedAt.In(time.FixedZone("CST", 8*3600)).Format("01-02 15:04:05")
+			reqAt = time.UnixMilli(lastReqMS).In(loc).Format("01-02 15:04:05")
+		}
+		// action time: last sentry action log on this account
+		var actionMS int64
+		if !acc.LastActionAt.IsZero() {
+			actAt = acc.LastActionAt.In(loc).Format("01-02 15:04:05")
+			actionMS = acc.LastActionAt.UnixMilli()
+		}
+		// legacy updated_at: prefer newer of request vs action for display compat
+		switch {
+		case lastReqMS > 0 && actionMS > 0:
+			if lastReqMS >= actionMS {
+				ua = reqAt
+			} else {
+				ua = actAt
+			}
+		case lastReqMS > 0:
+			ua = reqAt
+		case actionMS > 0:
+			ua = actAt
+		case !acc.UpdatedAt.IsZero():
+			ua = acc.UpdatedAt.In(loc).Format("01-02 15:04:05")
 		}
 		streakSum := ""
 		if len(acc.Streaks) > 0 {
@@ -704,6 +729,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			Tier: acc.Tier, State: string(acc.State), Signal: acc.LastSignal,
 			DisableSource: acc.DisableSource, Streaks: acc.Streaks, StreakSummary: streakSum,
 			SuggestedAction: act, Reason: reason, RecoverAt: ra, UpdatedAt: ua,
+			RequestAt: reqAt, ActionAt: actAt, LastAction: acc.LastAction, LastActionLabel: logActionZH(acc.LastAction),
 			QuotaLimit: qLimit, QuotaUsed: qUsed, QuotaRemaining: qRem,
 			QuotaSource: qSrc, DayCalls: dayC, DayFailCalls: dayF,
 			DayTokens: dayT, DaySuccess: dayS, DayInputTokens: dayIn, DayOutputTokens: dayOut,
@@ -711,13 +737,21 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			Recent15: recent15,
 			QuotaText: usageMain, UsageSource: usageSrc, SuccessRate: rate, DaySuccessRate: dayRate,
 			QuotaRatioText: ratioText,
-			SortMS: lastReqMS,
+			SortMS: lastReqMS, ActionMS: actionMS,
 		})
 	}
-	// newest request first (CPAMP last_ms); fallback UpdatedAt string desc
+	// newest activity first: max(request_ms, action_ms)
 	sort.SliceStable(rows, func(i, j int) bool {
-		if rows[i].SortMS != rows[j].SortMS {
-			return rows[i].SortMS > rows[j].SortMS
+		mi := rows[i].SortMS
+		if rows[i].ActionMS > mi {
+			mi = rows[i].ActionMS
+		}
+		mj := rows[j].SortMS
+		if rows[j].ActionMS > mj {
+			mj = rows[j].ActionMS
+		}
+		if mi != mj {
+			return mi > mj
 		}
 		si, _ := rows[i].UpdatedAt.(string)
 		sj, _ := rows[j].UpdatedAt.(string)
@@ -1104,7 +1138,7 @@ func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) {
 		reason := humanizeReason(e.Reason, sigL, e.Action)
 		text, level := composeLogText(actL, e.Action, sigL, e.Signal, label, reason, srcL, e.Source)
 		out = append(out, L{
-			At: e.At.In(time.FixedZone("CST", 8*3600)).Format("15:04:05"),
+			At: e.At.In(time.FixedZone("CST", 8*3600)).Format("01-02 15:04:05"),
 			Auth: e.Auth, AuthLabel: label, Source: e.Source, SourceLabel: srcL,
 			Signal: e.Signal, SignalLabel: sigL,
 			Action: e.Action, ActionLabel: actL, Reason: reason, Text: text, Level: level,

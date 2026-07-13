@@ -133,7 +133,7 @@ tr:hover td{background:#f5f9ff}
 #patrolStatus{margin:4px 0 6px}
 .toast{position:fixed;right:12px;top:12px;background:#fff;border:1px solid var(--border);padding:8px 12px;border-radius:10px;display:none;box-shadow:0 8px 24px #0f172a1a;z-index:20;max-width:420px}
 .logbox{max-height:min(65vh,640px);overflow:auto;background:#0b1220;color:#e8eefc;border-radius:10px;padding:8px 10px;font-family:var(--font);font-size:12px;line-height:1.55}
-.logbox .ll{display:grid;grid-template-columns:58px 56px 1fr;gap:8px;align-items:start;padding:6px 2px;border-bottom:1px solid #ffffff0f}
+.logbox .ll{display:grid;grid-template-columns:92px 56px 1fr;gap:8px;align-items:start;padding:6px 2px;border-bottom:1px solid #ffffff0f}
 .logbox .ll:last-child{border-bottom:0}
 .logbox .lt{color:#93a4c3;font-variant-numeric:tabular-nums;font-size:11.5px;padding-top:2px}
 .logbox .lb{display:inline-flex;align-items:center;justify-content:center;min-width:48px;padding:1px 6px;border-radius:999px;font-size:10.5px;font-weight:700;line-height:1.4}
@@ -214,7 +214,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v1.0.8</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v1.0.9</span></h1>
     </div>
     <div class="top-actions">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -293,7 +293,8 @@ select.act{min-width:100px}input.num{width:70px}
             <th style="width:72px">总计用量</th>
             <th style="width:72px">今日用量</th>
             <th style="width:72px">额度占用</th>
-            <th style="width:96px">更新时间</th>
+            <th style="width:96px" title="CPAMP 最近一次真实请求时间">最后请求</th>
+            <th style="width:110px" title="哨兵最近一次动作（冷却/打开/启用等）">最后动作</th>
             <th style="width:88px">恢复时间</th>
           </tr>
         </thead>
@@ -664,7 +665,7 @@ function quotaRatioCell(a){
 function renderAccountRows(list, prevSel){
   prevSel=prevSel||new Set();
   const rows=list||[];
-  if(!rows.length) return '<tr><td colspan="11" class="muted">无匹配结果</td></tr>';
+  if(!rows.length) return '<tr><td colspan="12" class="muted">无匹配结果</td></tr>';
   return rows.map(a=>'<tr>'+
     '<td><input type="checkbox" class="rowchk" data-auth="'+esc(a.auth_index)+'"'+(prevSel.has(a.auth_index)?' checked':'')+'/></td>'+
     '<td>'+accountCell(a)+'</td>'+
@@ -675,7 +676,8 @@ function renderAccountRows(list, prevSel){
     '<td>'+totalTokensCell(a)+'</td>'+
     '<td>'+dayTokensCell(a)+'</td>'+
     '<td>'+quotaRatioCell(a)+'</td>'+
-    '<td>'+updatedCell(a.updated_at)+'</td>'+
+    '<td>'+updatedCell(a.request_at||a.updated_at)+'</td>'+
+    '<td>'+actionTimeCell(a)+'</td>'+
     '<td>'+timeCell(a.recover_at)+'</td></tr>').join('');
 }
 function httpCodeOf(sig){
@@ -790,6 +792,14 @@ function timeCell(recover, updated){
 }
 function updatedCell(updated){
   return '<div class="time-main">'+esc(updated||'-')+'</div>';
+}
+function actionTimeCell(a){
+  const t=a.action_at||'';
+  const lab=a.last_action_label||a.last_action||'';
+  if(!t && !lab) return '<div class="time-main">-</div>';
+  const tip=[lab,t].filter(Boolean).join(' · ');
+  return '<div class="time-main" title="'+esc(tip)+'">'+esc(t||'-')+'</div>'+
+    (lab?('<div class="meta" style="font-size:10px;margin-top:2px">'+esc(lab)+'</div>'):'');
 }
 function decodeEntities(s){
   if(!s) return '';
@@ -937,10 +947,17 @@ async function refresh(){
     const stf=document.getElementById('stateFilter').value; if(stf) qs.set('state',stf);
     const sif=document.getElementById('signalFilter').value; if(sif) qs.set('signal',sif);
     const af=document.getElementById('actionFilter').value; if(af) qs.set('action',af);
-    const st=await j('/state?'+qs.toString());
+    // parallel: accounts + logs so both sides stay in sync
+    const qLog=(document.getElementById('q')?.value||'').trim();
+    const logQS=new URLSearchParams({limit:String(LOG_LIMIT||80), offset:'0'});
+    if(qLog) logQS.set('q', qLog);
+    const [st, lg] = await Promise.all([
+      j('/state?'+qs.toString()),
+      j('/logs?'+logQS.toString()).catch(()=>({logs:[],page:{}}))
+    ]);
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'1.0.8');
+    document.getElementById('ver').textContent='v'+(st.version||'1.0.9');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -969,7 +986,15 @@ async function refresh(){
     }
     document.getElementById('accMeta').textContent=(st.account_count||0)+' 行';
     LAST_ACCOUNTS=st.accounts||[];
-    try{ await loadLogs({reset:true}); }catch(e){}
+    // apply logs from parallel fetch
+    try{
+      const page=lg.page||{};
+      LAST_LOGS=lg.logs||[];
+      LOG_TOTAL=page.total||0;
+      LOG_HAS_MORE=!!page.has_more;
+      LOG_OFFSET=page.next_offset!=null?page.next_offset:LAST_LOGS.length;
+      renderLogs(LAST_LOGS);
+    }catch(e){}
     try{
       if(!ERRORS || !ERRORS.length || CURRENT_TAB==='errors'){
         const er=await j('/errors'); ERRORS=er.errors||[];
@@ -1565,7 +1590,7 @@ document.addEventListener('click',function(ev){
 const saved=localStorage.getItem(KEY_LS)||''; if(saved) document.getElementById('cfgKey').value=saved;
 syncMaskBtn();
 syncPatrolPanels();
-refresh(); setInterval(refresh,15000);
+refresh(); setInterval(refresh,8000);
 </script>
 </body>
 </html>

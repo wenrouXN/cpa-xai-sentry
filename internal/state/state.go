@@ -39,6 +39,9 @@ type Account struct {
 	Streaks       map[string]int `json:"streaks"`
 	RecoverAt     time.Time      `json:"recover_at"`
 	UpdatedAt     time.Time      `json:"updated_at"`
+	// LastActionAt/LastAction: last sentry action log on this account (cooldown/reopen/...)
+	LastActionAt  time.Time `json:"last_action_at,omitempty"`
+	LastAction    string    `json:"last_action,omitempty"`
 	// Best-effort quota accounting (from error bodies / CPAMP day floors).
 	QuotaLimit     int64     `json:"quota_limit,omitempty"`
 	QuotaUsed      int64     `json:"quota_used,omitempty"`
@@ -220,7 +223,21 @@ func Load(path string) (*Store, error) {
 		s.Observed = map[string]*ObservedError{}
 	}
 	s.path = path
+	s.backfillLastActionsFromLogs()
 	return s, nil
+}
+
+// backfillLastActionsFromLogs fills LastAction/LastActionAt from retained logs (newest wins).
+func (s *Store) backfillLastActionsFromLogs() {
+	if s == nil || len(s.Logs) == 0 || s.Accounts == nil {
+		return
+	}
+	for _, e := range s.Logs {
+		if e.Auth == "" || e.Action == "" {
+			continue
+		}
+		s.stampLastActionLocked(e)
+	}
 }
 
 func (s *Store) Save() error {
@@ -420,6 +437,8 @@ func (s *Store) Log(entry ActionLog) {
 		entry.At = time.Now()
 	}
 	s.Logs = append(s.Logs, entry)
+	// stamp per-account last action for panel "动作时间" column
+	s.stampLastActionLocked(entry)
 	// keep at most 7 days and hard cap
 	cut := time.Now().Add(-errorHitRetention)
 	kept := s.Logs[:0]
@@ -432,6 +451,51 @@ func (s *Store) Log(entry ActionLog) {
 	if len(s.Logs) > maxLogs {
 		s.Logs = s.Logs[len(s.Logs)-maxLogs:]
 	}
+}
+
+func (s *Store) stampLastActionLocked(entry ActionLog) {
+	if entry.Auth == "" || entry.Action == "" {
+		return
+	}
+	// skip pure noise that is not an account action
+	switch entry.Action {
+	case "scrub_active", "clear_cpa_disabled_tag":
+		// still useful as last touch — keep
+	}
+	acc := s.Accounts[entry.Auth]
+	if acc == nil {
+		// match by filename / email / basename
+		key := strings.ToLower(strings.TrimSpace(entry.Auth))
+		base := key
+		if i := strings.LastIndexAny(base, "/\\"); i >= 0 {
+			base = base[i+1:]
+		}
+		for _, a := range s.Accounts {
+			if a == nil {
+				continue
+			}
+			if strings.EqualFold(strings.TrimSpace(a.AuthIndex), entry.Auth) {
+				acc = a
+				break
+			}
+			fn := strings.ToLower(strings.TrimSpace(a.FileName))
+			if fn != "" && (fn == key || fn == base || strings.HasSuffix(fn, base) || strings.HasSuffix(base, fn)) {
+				acc = a
+				break
+			}
+			if a.Email != "" && strings.EqualFold(a.Email, entry.Auth) {
+				acc = a
+				break
+			}
+		}
+	}
+	if acc == nil {
+		return
+	}
+	acc.LastActionAt = entry.At
+	acc.LastAction = entry.Action
+	// keep UpdatedAt as general mutation time too
+	acc.UpdatedAt = entry.At
 }
 
 func (s *Store) AddTrash(meta TrashMeta) {

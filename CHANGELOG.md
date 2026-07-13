@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.9
+
+### Panel sync: dual time columns + parallel refresh
+- Account table: **最后请求** (CPAMP) and **最后动作** (sentry action log).
+- Stamp `last_action` / `last_action_at` on every action log; backfill from retained logs on load.
+- Sort by max(request, action) activity.
+- Refresh loads `/state` + `/logs` in parallel; interval 8s; log timestamps include date.
+
+
 ## 1.0.8
 
 ### Fixed: unowned reopen despite auth_index cool-down
@@ -60,6 +69,15 @@
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.0.9
+
+### Panel sync: dual time columns + parallel refresh
+- Account table: **最后请求** (CPAMP) and **最后动作** (sentry action log).
+- Stamp `last_action` / `last_action_at` on every action log; backfill from retained logs on load.
+- Sort by max(request, action) activity.
+- Refresh loads `/state` + `/logs` in parallel; interval 8s; log timestamps include date.
+
 
 ## 1.0.8
 
