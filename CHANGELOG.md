@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.10
+
+### Patrol summary: count 401/403 as 权限信号
+- Previously 401/403 were logged but not included in 冷却/异常, so
+  `探测N · 存活A · 冷却0 · 异常0` could leave N-A accounts unaccounted.
+- Summary now: 探测 · 存活 · 冷却信号 · **权限信号** · 异常 (+ 已禁用额度对齐).
+
+
 ## 1.1.9
 
 ### Fix: disabled-quota align actually stamps cool-down
@@ -173,6 +181,14 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.10
+
+### Patrol summary: count 401/403 as 权限信号
+- Previously 401/403 were logged but not included in 冷却/异常, so
+  `探测N · 存活A · 冷却0 · 异常0` could leave N-A accounts unaccounted.
+- Summary now: 探测 · 存活 · 冷却信号 · **权限信号** · 异常 (+ 已禁用额度对齐).
+
 
 ## 1.1.9
 

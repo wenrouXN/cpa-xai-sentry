@@ -159,7 +159,9 @@ func (r *Runner) runJob(ctx context.Context, mode Mode) {
 
 	// run probes (existing Run feeds HandleUsage)
 	results := r.Run(ctx, targets)
-	alive, cool, errs := 0, aligned, 0
+	alive, cool, sig, errs := 0, aligned, 0, 0
+	// cool = free-usage/402 cool-down signals (+ aligned disabled-quota)
+	// sig  = 401/403 auth signals (fed to policy, not "errors")
 	for _, res := range results {
 		label := res.AuthIndex
 		// find target label
@@ -195,7 +197,8 @@ func (r *Runner) runJob(ctx context.Context, mode Mode) {
 			continue
 		}
 		if res.StatusCode == 401 || res.StatusCode == 403 {
-			r.appendLog(res.AuthIndex, label, res.StatusCode, "warn", "探测到权限/凭证异常 HTTP "+itoa(res.StatusCode), "signal")
+			sig++
+			r.appendLog(res.AuthIndex, label, res.StatusCode, "warn", "探测到权限/凭证异常 HTTP "+itoa(res.StatusCode)+"，已交策略处理", "signal")
 			continue
 		}
 		if res.StatusCode >= 400 {
@@ -214,9 +217,16 @@ func (r *Runner) runJob(ctx context.Context, mode Mode) {
 			r.appendLog(res.AuthIndex, label, res.StatusCode, "err", msg, "http_error")
 			continue
 		}
+		// unexpected 3xx etc. — count as other so totals add up
+		errs++
 		r.appendLog(res.AuthIndex, label, res.StatusCode, "info", "探测完成 HTTP "+itoa(res.StatusCode), "done")
 	}
-	msg := "完成：探测" + itoa(len(results)) + " · 存活" + itoa(alive) + " · 冷却信号" + itoa(cool) + " · 异常" + itoa(errs)
+	// probed may be HTTP-only; show aligned separately when >0
+	probeN := len(results)
+	msg := "完成：探测" + itoa(probeN) + " · 存活" + itoa(alive) + " · 冷却信号" + itoa(cool) + " · 权限信号" + itoa(sig) + " · 异常" + itoa(errs)
+	if aligned > 0 {
+		msg += " · 其中已禁用额度对齐" + itoa(aligned)
+	}
 	jobMu.Lock()
 	jobStatus.Probed = len(results)
 	jobStatus.Alive = alive
