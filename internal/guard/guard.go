@@ -356,6 +356,7 @@ func (g *Guard) Tick(ctx context.Context) error {
 		// non-fatal: still continue recover/purge
 		g.State.Log(state.ActionLog{Source: "tick", Action: "sync_disabled_failed", Reason: syncErr.Error()})
 	}
+	g.correctFalseQuotaCooldowns(now)
 	for _, acc := range g.State.AccountsSnapshot() {
 		if acc.RecoverAt.IsZero() || acc.RecoverAt.After(now) {
 			continue
@@ -413,12 +414,13 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 			byEmail[em] = f
 		}
 	}
+	// one sentry account per auth file
+	seenFile := map[string]bool{}
 	n := 0
 	for _, acc := range g.State.AccountsSnapshot() {
 		if acc.State == state.UserManual || acc.State == state.Trashed || acc.State == state.Purged || acc.State == state.CandidateDead {
 			continue
 		}
-		// already cooling with recover_at — skip
 		if (acc.State == state.CooldownQuota || acc.State == state.CooldownSpending || acc.State == state.CooldownPermission) && !acc.RecoverAt.IsZero() {
 			continue
 		}
@@ -434,50 +436,96 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 		if !ok || !f.Disabled {
 			continue
 		}
-		isFree := acc.LastSignal == string(match.SignalFreeUsage429) ||
-			strings.Contains(acc.QuotaSource, "free_usage") ||
-			strings.Contains(acc.QuotaSource, "cpamp_fail_body") ||
-			(acc.QuotaLimit > 0 && acc.QuotaUsed >= acc.QuotaLimit)
-		sig := acc.LastSignal
-		reason := "cpa_disabled_sync"
-		if isFree {
-			sig = string(match.SignalFreeUsage429)
-			reason = "cpa_disabled_free_usage_sync"
+		fileKey := strings.ToLower(strings.TrimSpace(f.Name))
+		if fileKey == "" {
+			fileKey = fn
 		}
-		// mark cooling if still active or cooling without recover_at
-		if acc.State == state.Active || acc.State == "" ||
-			((acc.State == state.CooldownQuota || acc.State == state.CooldownSpending || acc.State == state.CooldownPermission) && acc.RecoverAt.IsZero()) {
-			g.State.SetAccountState(acc.AuthIndex, state.CooldownQuota, "plugin_auto")
+		if fileKey != "" {
+			if seenFile[fileKey] {
+				continue
+			}
+			seenFile[fileKey] = true
 		}
-		if acc.RecoverAt.IsZero() || acc.RecoverAt.Before(now) {
-			rec := now.Add(24 * time.Hour)
-			if g.Cfg.MaxResetSeconds > 0 {
-				maxAt := now.Add(time.Duration(g.Cfg.MaxResetSeconds) * time.Second)
-				if rec.After(maxAt) {
-					rec = maxAt
+		// STRICT free-usage evidence only. Do NOT treat generic disabled / day_tokens as 额度冷却.
+		isFree := acc.LastSignal == string(match.SignalFreeUsage429) || strings.Contains(acc.QuotaSource, "free_usage")
+		if !isFree && acc.QuotaSource == "cpamp_fail_body" && acc.QuotaLimit > 0 && acc.QuotaUsed >= acc.QuotaLimit && acc.LastSignal == string(match.SignalFreeUsage429) {
+			isFree = true
+		}
+		if !isFree {
+			for _, o := range g.State.ListObserved() {
+				if o.Key != "free_usage_429" {
+					continue
+				}
+				if o.LastAuth == acc.AuthIndex || (acc.FileName != "" && o.LastFile == acc.FileName) {
+					isFree = true
+					break
+				}
+				for _, h := range o.Hits {
+					if h.Auth == acc.AuthIndex || (acc.FileName != "" && h.File == acc.FileName) {
+						isFree = true
+						break
+					}
+				}
+				if isFree {
+					break
 				}
 			}
-			g.State.SetRecoverAt(acc.AuthIndex, rec)
 		}
-		if sig != "" {
-			g.stampLastSignal(acc.AuthIndex, sig)
-		}
-		// also record into error catalog so policy page has account rows
-		sample := "CPA auth file disabled; synced by maintenance tick"
 		if isFree {
-			sample = "CPA auth file disabled + free-usage evidence; synced by maintenance tick"
-			g.State.ObserveError("free_usage_429", "免费额度用尽(429)", "free_usage_429", "subscription:free-usage-exhausted", sample, acc.AuthIndex, acc.FileName, "tick", 429)
-		} else {
-			// non-request / maintenance-only signals go into unmatched bucket
-			g.State.ObserveError("unmatched", "未分类错误", "", "cpa_disabled", sample, acc.AuthIndex, acc.FileName, "tick", 0)
+			sig := string(match.SignalFreeUsage429)
+			if acc.State == state.Active || acc.State == "" || ((acc.State == state.CooldownQuota || acc.State == state.CooldownSpending || acc.State == state.CooldownPermission) && acc.RecoverAt.IsZero()) {
+				g.State.SetAccountState(acc.AuthIndex, state.CooldownQuota, "plugin_auto")
+			}
+			if acc.RecoverAt.IsZero() || acc.RecoverAt.Before(now) {
+				rec := now.Add(24 * time.Hour)
+				if g.Cfg.MaxResetSeconds > 0 {
+					maxAt := now.Add(time.Duration(g.Cfg.MaxResetSeconds) * time.Second)
+					if rec.After(maxAt) {
+						rec = maxAt
+					}
+				}
+				g.State.SetRecoverAt(acc.AuthIndex, rec)
+			}
+			g.stampLastSignal(acc.AuthIndex, sig)
+			g.State.ObserveError("free_usage_429", "免费额度用尽(429)", "free_usage_429", "subscription:free-usage-exhausted", "CPA disabled + free-usage evidence; maintenance sync", acc.AuthIndex, acc.FileName, "tick", 429)
+			g.State.Log(state.ActionLog{Auth: acc.AuthIndex, Source: "tick", Signal: sig, Action: "cooldown", Reason: "cpa_disabled_free_usage_sync"})
+			n++
+			continue
 		}
-		g.State.Log(state.ActionLog{
-			Auth: acc.AuthIndex, Source: "tick", Signal: sig,
-			Action: "cooldown", Reason: reason,
-		})
-		n++
+		// Generic CPA disabled, no free-usage proof => manual-disabled, NOT 额度冷却
+		if acc.State == state.Active || acc.State == "" || acc.State == state.CooldownQuota {
+			// if previously false-positive free cooldown without signal, correct it
+			g.State.SetAccountState(acc.AuthIndex, state.UserManual, "cpa_file_disabled")
+			g.State.SetRecoverAt(acc.AuthIndex, time.Time{})
+			g.State.ObserveError("unmatched", "未分类错误", "", "cpa_disabled", "CPA auth file disabled (no free-usage evidence)", acc.AuthIndex, acc.FileName, "tick", 0)
+			g.State.Log(state.ActionLog{Auth: acc.AuthIndex, Source: "tick", Signal: "", Action: "manual_disable", Reason: "cpa_disabled_sync"})
+			n++
+		}
 	}
 	return n, nil
+}
+
+
+// correctFalseQuotaCooldowns demotes cooldown_quota without free-usage evidence.
+func (g *Guard) correctFalseQuotaCooldowns(now time.Time) {
+	if g.State == nil {
+		return
+	}
+	for _, acc := range g.State.AccountsSnapshot() {
+		if acc.State != state.CooldownQuota {
+			continue
+		}
+		if acc.LastSignal == string(match.SignalFreeUsage429) || strings.Contains(acc.QuotaSource, "free_usage") {
+			continue
+		}
+		// keep true free-usage even if last_signal blank but recover_at set from free path? only if source free
+		if acc.DisableSource == "plugin_auto" && acc.LastSignal == "" {
+			// demote to CPA-file-disabled manual if file still disabled, else active
+			g.State.SetAccountState(acc.AuthIndex, state.UserManual, "cpa_file_disabled")
+			g.State.SetRecoverAt(acc.AuthIndex, time.Time{})
+			g.State.Log(state.ActionLog{Auth: acc.AuthIndex, Source: "tick", Action: "manual_disable", Reason: "demote_false_quota_cooldown"})
+		}
+	}
 }
 
 func (g *Guard) stampLastSignal(authIndex, signal string) {

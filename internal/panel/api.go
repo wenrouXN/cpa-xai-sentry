@@ -91,6 +91,84 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 }
 
 
+
+// dedupeAccountsForPanel collapses hash-id + filename-id duplicates of the same xAI account.
+func dedupeAccountsForPanel(accs []*state.Account) []*state.Account {
+	if len(accs) <= 1 {
+		return accs
+	}
+	type key struct{ k string }
+	best := map[string]*state.Account{}
+	order := []string{}
+	score := func(a *state.Account) int {
+		s := 0
+		if a == nil {
+			return -1
+		}
+		// prefer opaque hash auth_index over filename-as-index
+		if a.AuthIndex != "" && !strings.Contains(a.AuthIndex, "@") && !strings.HasSuffix(strings.ToLower(a.AuthIndex), ".json") {
+			s += 50
+		}
+		if a.LastSignal != "" {
+			s += 20
+		}
+		if a.Email != "" {
+			s += 5
+		}
+		if a.FileName != "" {
+			s += 5
+		}
+		if !a.RecoverAt.IsZero() {
+			s += 3
+		}
+		s += int(a.DayCalls)
+		return s
+	}
+	for _, a := range accs {
+		if a == nil {
+			continue
+		}
+		k := strings.ToLower(strings.TrimSpace(a.Email))
+		if k == "" {
+			k = strings.ToLower(strings.TrimSpace(a.FileName))
+		}
+		if k == "" {
+			k = a.AuthIndex
+		}
+		if old, ok := best[k]; !ok {
+			best[k] = a
+			order = append(order, k)
+		} else if score(a) > score(old) {
+			// merge useful fields
+			if old.LastSignal == "" && a.LastSignal != "" {
+				old.LastSignal = a.LastSignal
+			}
+			if old.FileName == "" {
+				old.FileName = a.FileName
+			}
+			if old.Email == "" {
+				old.Email = a.Email
+			}
+			// keep higher-score identity as primary
+			best[k] = a
+			if a.LastSignal == "" && old.LastSignal != "" {
+				a.LastSignal = old.LastSignal
+			}
+			if a.FileName == "" {
+				a.FileName = old.FileName
+			}
+			if a.Email == "" {
+				a.Email = old.Email
+			}
+		}
+	}
+	out := make([]*state.Account, 0, len(order))
+	for _, k := range order {
+		out = append(out, best[k])
+	}
+	return out
+}
+
 func suggestAction(acc *state.Account) (action, reason string) {
 	if acc == nil {
 		return "none", ""
@@ -195,6 +273,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	accs := a.State.AccountsSnapshot()
+	accs = dedupeAccountsForPanel(accs)
 	// rehydrate free-usage actual/limit from observed error samples (does not bump UpdatedAt)
 	for _, o := range a.State.ListObserved() {
 		if o.Sample == "" || o.LastAuth == "" {
@@ -569,7 +648,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":         "cpa-xai-sentry",
-		"version":        "0.5.8",
+		"version":        "0.5.9",
 		"mode":           modeOf(*a.Cfg),
 		"mode_label":     modeLabel(modeOf(*a.Cfg)),
 		"summary":        summary,
@@ -1242,7 +1321,7 @@ func (a *API) handlePatrolStatus(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.8",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.9",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 		"cooldown_stats": a.State.CooldownStats(time.Now()),
 	})

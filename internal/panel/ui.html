@@ -189,15 +189,21 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.8</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.9</span> <span id="modeBadge" class="badge">模式</span></h1>
     </div>
-    <div class="row" style="align-items:center">
+    <div class="row" style="align-items:center;flex-wrap:wrap">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
         <span class="lbl">总开关</span>
         <span class="switch"><input id="swSentry" type="checkbox" onchange="toggle('sentry_enabled',this.checked)"/><span class="slider"></span></span>
       </label>
       <label class="sw" title="额度/消费类错误自动冷却"><span class="lbl">自动冷却</span>
         <span class="switch"><input id="swCool" type="checkbox" onchange="toggle('auto_cooldown',this.checked)"/><span class="slider"></span></span>
+      </label>
+      <label class="sw" title="凭证类错误自动进候选"><span class="lbl">自动候选</span>
+        <span class="switch"><input id="swCand" type="checkbox" onchange="toggle('auto_candidate',this.checked)"/><span class="slider"></span></span>
+      </label>
+      <label class="sw" title="确认后自动进垃圾箱"><span class="lbl">自动垃圾箱</span>
+        <span class="switch danger"><input id="swDel" type="checkbox" onchange="toggle('auto_delete',this.checked)"/><span class="slider"></span></span>
       </label>
       <input id="cfgKey" type="password" placeholder="管理密钥" style="width:130px"/>
       <button class="xs" onclick="saveKey()">保存</button>
@@ -210,12 +216,6 @@ select.act{min-width:100px}input.num{width:70px}
     <h2><span>总览</span><span class="meta" id="updatedAt">-</span></h2>
     <div class="kpis" id="kpis"></div>
     <div class="swbar">
-      <label class="sw"><span class="lbl">自动候选</span>
-        <span class="switch"><input id="swCand" type="checkbox" onchange="toggle('auto_candidate',this.checked)"/><span class="slider"></span></span>
-      </label>
-      <label class="sw"><span class="lbl">自动垃圾箱</span>
-        <span class="switch danger"><input id="swDel" type="checkbox" onchange="toggle('auto_delete',this.checked)"/><span class="slider"></span></span>
-      </label>
       <span class="meta" id="cfgLine"></span>
       <button class="xs" onclick="applyPreset('observe')" title="关闭自动冷却/候选/垃圾箱，只记录观察">仅观察</button>
       <button class="xs warn" onclick="applyPreset('safe-guard')" title="打开自动冷却+自动候选；不会自动进垃圾箱">安全防护</button>
@@ -428,7 +428,9 @@ function modeBadge(mode,label){
 function setSwitch(id,on){const el=document.getElementById(id); if(el) el.checked=!!on}
 function tag(cls,text){return '<span class="tag '+cls+'">'+esc(text)+'</span>'}
 function stateTag(st, a){
-  const zh=STATE_ZH[st]||st;
+  let zh=STATE_ZH[st]||st;
+  // clearer label for file-disabled manual
+  if(st==='user_manual' && a && (a.disable_source==='cpa_file_disabled' || a.disable_source==='cpa_disabled')) zh='CPA已禁用';
   let html='';
   if(st==='active') html=tag('active',zh);
   else if(String(st).startsWith('cooldown')) html=tag('cooldown',zh);
@@ -436,11 +438,14 @@ function stateTag(st, a){
   else if(st==='user_manual') html=tag('manual',zh);
   else if(st==='trashed'||st==='purged') html=tag('trash',zh);
   else html=tag('',zh);
-  // show current error signal under state for transparency
+  // only show real error signal; never invent blank second row
   if(a && a.last_signal){
     const sig=a.last_signal;
     const lab=SIG_ZH[sig]||sig;
     html+='<div class="num-sub" title="'+esc(sig)+'">'+esc(lab)+'</div>';
+  } else if(a && a.reason && String(st).startsWith('cooldown')){
+    // compact reason without looking like a second account row
+    html+='<div class="num-sub" title="'+esc(a.reason)+'">'+esc(String(a.reason).slice(0,18))+'</div>';
   }
   return html;
 }
@@ -809,7 +814,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.5.8');
+    document.getElementById('ver').textContent='v'+(st.version||'0.5.9');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
