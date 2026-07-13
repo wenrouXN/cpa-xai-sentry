@@ -151,7 +151,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.4.0</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.4.1</span> <span id="modeBadge" class="badge">模式</span></h1>
     </div>
     <div class="row" style="align-items:center">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -375,13 +375,14 @@ function fmtTok(n){
 function renderKPIs(s, trashCount, cool, inv, usage){
   s=s||{}; cool=cool||{}; inv=inv||{}; usage=usage||{};
   const cooling=cool.cooling!=null?cool.cooling:(s.cooldown||0);
+  const xai=inv.auth_xai!=null?inv.auth_xai:(inv.auth_total||0);
   const items=[
     ['可接流量', inv.auth_enabled!=null?inv.auth_enabled:0, 'ok', '已开启'],
     ['冷却中', cooling, 'warn', '到期恢复'],
-    ['已关闭', inv.auth_disabled!=null?inv.auth_disabled:0, '', '含冷却'],
-    ['日池剩余', fmtTok(usage.pool_remaining||0), 'ok', '估 开×2M'],
+    ['xAI 总量', xai, '', '含冷却'],
+    ['日池总量', fmtTok(usage.pool_est||0), 'accent', '全量×2M'],
     ['日池已用', fmtTok(usage.pool_used||0), 'warn', (usage.pool_used_pct!=null? (Number(usage.pool_used_pct).toFixed(1)+'%') : '')],
-    ['日池总量', fmtTok(usage.pool_est||0), 'accent', ''],
+    ['日池剩余', fmtTok(usage.pool_remaining||0), 'ok', ''],
   ];
   document.getElementById('kpis').innerHTML=items.map(([l,v,c,sub])=>
     '<div class="kpi '+(c||'')+'"><span>'+l+'</span><b>'+v+'</b>'+(sub?('<span class="subn">'+esc(sub)+'</span>'):'')+'</div>'
@@ -397,16 +398,14 @@ function callsCell(a){
   const req=Number(a.day_calls||0), fail=Number(a.day_fail_calls||0);
   const ok=Math.max(0, req-fail);
   const slots=15;
-  // fill 15 slots: success green first, then fail red (CPAMP request monitor style)
+  // CPAMP request monitor: only 15 vertical slots, green=ok red=fail
   let green=0, red=0;
   if(req<=0 && fail<=0){
     green=0; red=0;
   }else if(req<=slots){
     green=ok; red=Math.min(fail, slots-green);
   }else{
-    // scale into 15 slots by proportion
-    red=Math.max(1, Math.round(fail/req*slots));
-    if(fail<=0) red=0;
+    red=fail>0?Math.max(1, Math.round(fail/req*slots)):0;
     if(red>slots) red=slots;
     green=slots-red;
   }
@@ -415,19 +414,11 @@ function callsCell(a){
     let cls='empty';
     if(i<green) cls='on';
     else if(i<green+red) cls='fail';
-    const click=cls==='fail' ? ' data-auth="'+esc(a.auth_index)+'" onclick="openAccountError(this)"' : '';
-    parts.push('<i class="slot '+cls+'"'+click+'></i>');
+    parts.push('<i class="slot '+cls+'"></i>');
   }
-  const pct = req>0 ? ((ok/req)*100) : (fail>0?0:100);
-  const pctTxt = req>0 || fail>0 ? ('<div class="pct">'+(pct%1?pct.toFixed(1):pct)+'%</div>') : '';
-  const failLab = fail>0 ? ('<div class="fail-label"><span class="rd"></span>失败</div>') : '';
   const clickable = fail>0 ? ' clickable' : '';
   const wrapClick = fail>0 ? ' data-auth="'+esc(a.auth_index)+'" onclick="openAccountError(this)"' : '';
-  return '<div class="reqcell">'+
-    '<div class="nums">'+req+(fail?(' · <span class="failn">'+fail+'</span>'):'')+'</div>'+
-    '<div class="sigbars'+clickable+'"'+wrapClick+' title="'+(fail>0?'点击查看报错详情':'')+'">'+parts.join('')+'</div>'+
-    pctTxt+failLab+
-  '</div>';
+  return '<div class="reqcell"><div class="sigbars'+clickable+'"'+wrapClick+' title="'+(fail>0?'点击红格查看报错':'')+'">'+parts.join('')+'</div></div>';
 }
 function httpCodeOf(sig){
   if(sig==='free_usage_429') return '429';
@@ -533,7 +524,10 @@ document.addEventListener('click',function(ev){
 });
 function quotaCell(a){
   if(a.quota_limit || a.quota_used || a.quota_remaining){
-    return '<div class="quota-main">'+esc(fmtTok(a.quota_used||0)+' / '+fmtTok(a.quota_limit||0)+' 剩 '+fmtTok(a.quota_remaining||0))+'</div>';
+    const main=fmtTok(a.quota_used||0)+' / '+fmtTok(a.quota_limit||0);
+    const rem=a.quota_remaining!=null?(' 剩 '+fmtTok(a.quota_remaining||0)):'';
+    const src=a.quota_source==='free_usage_exhausted'?'报错体':(a.quota_source==='free_usage_exhausted_est'?'估':'');
+    return '<div class="quota-main">'+esc(main+rem)+'</div>'+(src?('<div class="quota-sub">'+esc(src)+'</div>'):'');
   }
   return '<div class="quota-main">'+esc(a.quota_text||'-')+'</div>';
 }
@@ -598,7 +592,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.4.0');
+    document.getElementById('ver').textContent='v'+(st.version||'0.4.1');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};

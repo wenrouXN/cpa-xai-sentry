@@ -187,6 +187,20 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	accs := a.State.AccountsSnapshot()
+	// rehydrate free-usage actual/limit from observed error samples (fix old fake 2M/2M)
+	for _, o := range a.State.ListObserved() {
+		if o.Sample == "" || o.LastAuth == "" {
+			continue
+		}
+		if o.Key != "free_usage_429" && o.Signal != "free_usage_429" && !strings.Contains(o.Sample, "free-usage-exhausted") {
+			continue
+		}
+		qi := quota.FreeUsageExhaustedEstimate(o.Sample, time.Time{})
+		if qi.Used > 0 || qi.Limit > 0 {
+			a.State.UpdateQuota(o.LastAuth, qi.Limit, qi.Used, qi.Remaining, "free_usage_exhausted", qi.ResetAt)
+		}
+	}
+	accs = a.State.AccountsSnapshot()
 	type row struct {
 		AuthIndex       string         `json:"auth_index"`
 		FileName        string         `json:"file_name"`
@@ -294,31 +308,30 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		}
 		qLimit, qUsed, qRem := acc.QuotaLimit, acc.QuotaUsed, acc.QuotaRemaining
 		qSrc := acc.QuotaSource
-		// free-usage exhausted often arrives without numeric fields — show 2M free-tier estimate
+		qText := ""
+		// Prefer real body numbers. If none, show "用尽" without inventing 2M/2M.
 		if (qLimit == 0 && qUsed == 0 && qRem == 0) &&
 			(acc.LastSignal == "free_usage_429" || qSrc == "free_usage_exhausted" ||
 				acc.State == state.CooldownQuota) {
-			qLimit = quota.FreeQuotaPerAccount
-			qUsed = quota.FreeQuotaPerAccount
-			qRem = 0
-			if qSrc == "" {
-				qSrc = "free_usage_exhausted"
+			qText = "用尽"
+			qSrc = "free_usage_exhausted_est"
+		} else {
+			if qLimit > 0 && qUsed > qLimit {
+				qRem = 0
+			} else if qLimit > 0 && qUsed >= 0 && qRem == 0 && qUsed <= qLimit {
+				qRem = qLimit - qUsed
 			}
-		}
-		qText := ""
-		if qLimit > 0 || qUsed > 0 || qRem > 0 {
-			qText = formatTokens(qUsed) + " / " + formatTokens(qLimit) + " 剩 " + formatTokens(qRem)
-			if qSrc == "free_usage_exhausted" {
-				qText += " · 免费额用尽"
-			} else if qSrc != "" && qSrc != "body_field" {
-				qText += " · " + qSrc
-			}
-		} else if acc.DayTokens > 0 {
-			qText = "今日 token " + formatTokens(acc.DayTokens)
-		} else if acc.DayCalls > 0 {
-			qText = "今日调用 " + itoa64(acc.DayCalls)
-			if acc.DayFailCalls > 0 {
-				qText += " · 失败 " + itoa64(acc.DayFailCalls)
+			if qLimit > 0 || qUsed > 0 || qRem > 0 {
+				qText = formatTokens(qUsed) + " / " + formatTokens(qLimit) + " 剩 " + formatTokens(qRem)
+				if qSrc == "free_usage_exhausted" {
+					qText += " · 报错体"
+				} else if qSrc == "free_usage_exhausted_est" {
+					qText += " · 估"
+				} else if qSrc != "" && qSrc != "body_field" {
+					qText += " · " + qSrc
+				}
+			} else if acc.DayTokens > 0 {
+				qText = "今日 token " + formatTokens(acc.DayTokens)
 			}
 		}
 		rows = append(rows, row{
@@ -341,9 +354,15 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		summary["pending_suggest"] = v
 	}
 	inv := a.inventoryFromCPA(r)
+	// pool total uses ALL xAI auths (not only currently enabled), so cooldown
+	// does not shrink the estimated pool capacity.
+	xaiN := asInt(inv["auth_xai"])
+	if xaiN == 0 {
+		xaiN = asInt(inv["auth_total"])
+	}
 	enabledN := asInt(inv["auth_enabled"])
-	poolEst := int64(enabledN) * quota.FreeQuotaPerAccount
-	// used: real usage tokens preferred, else CPAMP floor (same spirit as quota-guard status bar)
+	poolEst := int64(xaiN) * quota.FreeQuotaPerAccount
+	// used: prefer CPAMP/local real token floors; do NOT use invented 2M fills
 	usedTok := dayTokens
 	if usedTok == 0 {
 		usedTok = m.TokensFloor
@@ -366,18 +385,19 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		"cpamp_tokens":   m.TokensFloor,
 		"cpamp_calls":    m.CallsFloor,
 		"cpamp_day":      m.DayKey,
-		// quota-guard style daily pool estimate
-		"pool_est":          poolEst,
-		"pool_per_account":  quota.FreeQuotaPerAccount,
-		"pool_enabled":      enabledN,
-		"pool_used":         usedTok,
-		"pool_remaining":    remainTok,
-		"pool_used_pct":     pct,
-		"pool_source":       "enabled×2M (rolling free-tier est)",
+		// pool = 全量 xAI × 2M；冷却只影响「可接流量」，不影响总量口径
+		"pool_est":         poolEst,
+		"pool_per_account": quota.FreeQuotaPerAccount,
+		"pool_xai_total":   xaiN,
+		"pool_enabled":     enabledN,
+		"pool_used":        usedTok,
+		"pool_remaining":   remainTok,
+		"pool_used_pct":    pct,
+		"pool_source":      "xai_total×2M est; used=CPAMP/local tokens",
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":         "cpa-xai-sentry",
-		"version":        "0.4.0",
+		"version":        "0.4.1",
 		"mode":           modeOf(*a.Cfg),
 		"mode_label":     modeLabel(modeOf(*a.Cfg)),
 		"summary":        summary,
@@ -714,7 +734,7 @@ func (a *API) handleRunTick(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.4.0",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.4.1",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 		"cooldown_stats": a.State.CooldownStats(time.Now()),
 	})

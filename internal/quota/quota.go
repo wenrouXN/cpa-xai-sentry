@@ -135,23 +135,41 @@ func fromMap(m map[string]any) Info {
 	return info
 }
 
-// FreeQuotaPerAccount is the rolling free-tier estimate per enabled xAI account
-// (enabled × 2M tokens / 24h). Used when upstream body has no numbers.
+// FreeQuotaPerAccount is the rolling free-tier estimate per xAI account
+// (× 2M tokens / rolling 24h). Only used when upstream body has no numbers.
 const FreeQuotaPerAccount int64 = 2_000_000
 
+var (
+	reTokensActualLimit = regexp.MustCompile(`(?i)tokens?\s*\(\s*actual\s*/\s*limit\s*\)\s*:\s*(\d+)\s*/\s*(\d+)`)
+)
+
 // FreeUsageExhaustedEstimate marks remaining=0 when free usage exhausted.
-// If the body has no numeric limit/used, fill the 2M free-tier estimate so UI
-// can show 已用/限额/剩余 instead of empty "今日调用N".
+// Prefer parsing actual/limit from xAI error text; only fall back to 2M estimate
+// when the body has no numbers.
 func FreeUsageExhaustedEstimate(body string, recoverAt time.Time) Info {
 	info := Parse(body)
+	// xAI free-usage message often embeds: tokens (actual/limit): 2312448/2000000
+	if m := reTokensActualLimit.FindStringSubmatch(body); len(m) == 3 {
+		if u, err := strconv.ParseInt(m[1], 10, 64); err == nil {
+			info.Used = u
+		}
+		if l, err := strconv.ParseInt(m[2], 10, 64); err == nil {
+			info.Limit = l
+		}
+		if info.Limit > 0 {
+			info.Remaining = info.Limit - info.Used
+			if info.Remaining < 0 {
+				info.Remaining = 0
+			}
+		}
+		info.Source = "free_usage_exhausted"
+	}
 	if info.Limit == 0 && info.Used == 0 && info.Remaining == 0 {
+		// no numbers at all — estimate only
 		info.Limit = FreeQuotaPerAccount
 		info.Used = FreeQuotaPerAccount
 		info.Remaining = 0
-		info.Source = "free_usage_exhausted"
-	} else if info.Remaining == 0 && info.Limit == 0 {
-		info.Remaining = 0
-		info.Source = "free_usage_exhausted"
+		info.Source = "free_usage_exhausted_est"
 	} else if info.Source == "" {
 		info.Source = "free_usage_exhausted"
 	}

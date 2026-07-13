@@ -148,9 +148,10 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 	errKey := errorsig.KeyFromMatch(res, ev.StatusCode)
 	label := errorsig.LabelOf(errKey, res, ev.StatusCode)
 	// always learn/observe errors into dynamic catalog (even unmatched)
+	// keep enough of body to retain tokens (actual/limit) for UI/quota rehydration
 	sample := ev.Body
-	if len(sample) > 240 {
-		sample = sample[:240]
+	if len(sample) > 900 {
+		sample = sample[:900]
 	}
 	g.State.ObserveError(errKey, label, string(res.Signal), res.Code, sample, ev.AuthIndex, ev.FileName, ev.StatusCode)
 
