@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.3
+
+### Auth closed-loop hardening
+- `CanAutoReenable`: `plugin_auto` sufficient; never open manual/CPA-file locks
+- Candidate path also disables CPA file + stamps ownership/recover_at
+- Permanent disable stamps ownership before CPA I/O
+- Duplicate-account prune prefers cool-down/ownership rows over empty Active shells
+- Regression tests for cooldown→recover, manual never auto-open, prune, legacy owner
+
+
 ## 1.0.2
 
 ### Fixed (plugin_auto ownership holes)
@@ -17,6 +27,16 @@
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.0.3
+
+### Auth closed-loop hardening
+- `CanAutoReenable`: `plugin_auto` sufficient; never open manual/CPA-file locks
+- Candidate path also disables CPA file + stamps ownership/recover_at
+- Permanent disable stamps ownership before CPA I/O
+- Duplicate-account prune prefers cool-down/ownership rows over empty Active shells
+- Regression tests for cooldown→recover, manual never auto-open, prune, legacy owner
+
 
 ## 1.0.2
 

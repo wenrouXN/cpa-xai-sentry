@@ -246,6 +246,10 @@ Do not commit live auth tokens, management keys, or production `state.json`.
 `.gitignore` already excludes `bin/`, `*.so`, `data/`.
 
 
+## Auth closed loop
+
+See **[docs/AUTH_CLOSED_LOOP.md](docs/AUTH_CLOSED_LOOP.md)** for the full state machine and invariants.
+
 ## Production readiness (v1.0.0)
 
 - Unit tests + race tests for state/guard/policy/patrol

@@ -385,13 +385,26 @@ func (s *Store) CanAutoReenable(authIndex string) bool {
 	if acc == nil {
 		return false
 	}
-	if acc.DisableSource == "user_manual" || acc.State == UserManual {
+	// never auto-open permanent / operator locks
+	if acc.State == UserManual || acc.DisableSource == "user_manual" ||
+		acc.DisableSource == "cpa_file_disabled" || acc.DisableSource == "cpa_disabled" ||
+		acc.PreDisabled {
 		return false
 	}
-	if acc.PreDisabled {
+	// trash is not re-enabled via recover_at path
+	if acc.State == Trashed || acc.State == Purged {
 		return false
 	}
-	return acc.Owner == Owner && acc.DisableSource == "plugin_auto"
+	// sentry-owned cool-down / 候删: plugin_auto is sufficient (Owner may be empty on legacy rows)
+	if acc.DisableSource == "plugin_auto" {
+		return true
+	}
+	// legacy: cool-down state without source still treated as ours if recover_at set
+	switch acc.State {
+	case CooldownQuota, CooldownSpending, CooldownPermission, CandidateDead:
+		return !acc.RecoverAt.IsZero()
+	}
+	return false
 }
 
 // ClearManualLock clears user_manual / pre_disabled after an explicit panel enable.

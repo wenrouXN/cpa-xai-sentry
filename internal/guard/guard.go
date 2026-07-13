@@ -215,7 +215,36 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 		}
 	}
 	if act.Candidate && !act.Disable {
+		// 候删 must also disable CPA file and stamp ownership (closed loop).
+		// If applyCooldown already ran, this reinforces CandidateDead + plugin_auto.
+		name := ev.FileName
+		if name == "" || cpaapi.LooksLikeOpaqueID(name) {
+			if acc != nil {
+				name = g.resolveFileName(ctx, ev.AuthIndex, acc.FileName, acc.Email)
+			} else {
+				name = g.resolveFileName(ctx, ev.AuthIndex, ev.FileName, ev.Email)
+			}
+		}
 		g.State.SetAccountState(ev.AuthIndex, state.CandidateDead, "plugin_auto")
+		// default 候删 window if no recover_at yet
+		if cur := g.State.Get(ev.AuthIndex); cur != nil && cur.RecoverAt.IsZero() {
+			sec := g.Cfg.Auth401CooldownSec
+			if sec <= 0 {
+				sec = 3600
+			}
+			g.State.SetRecoverAt(ev.AuthIndex, g.Now().Add(time.Duration(sec)*time.Second))
+		}
+		if name != "" && !cpaapi.LooksLikeOpaqueID(name) {
+			g.State.UpdateMeta(ev.AuthIndex, name, ev.Email, "")
+			if g.CPA != nil {
+				if err := g.CPA.SetDisabled(ctx, name, true); err != nil {
+					g.State.Log(state.ActionLog{
+						Auth: ev.AuthIndex, Source: ev.Source, Signal: string(res.Signal),
+						Action: "candidate_disable_failed", Reason: err.Error(),
+					})
+				}
+			}
+		}
 		g.State.Log(state.ActionLog{
 			Auth: ev.AuthIndex, Source: ev.Source, Signal: string(res.Signal),
 			Action: "candidate", Reason: act.Reason,
@@ -661,13 +690,38 @@ func (g *Guard) pruneDuplicateAccounts() {
 	accs := g.State.AccountsSnapshot()
 	best := map[string]string{} // key -> authIndex to keep
 	score := func(a *state.Account) int {
+		if a == nil {
+			return -1
+		}
 		s := 0
-		ai := strings.ToLower(a.AuthIndex)
-		if ai != "" && !strings.Contains(ai, "@") && !strings.HasSuffix(ai, ".json") {
+		// ownership / cool-down ALWAYS beats empty Active shells (closed-loop safety)
+		switch a.State {
+		case state.CooldownQuota, state.CooldownSpending, state.CooldownPermission:
+			s += 1000
+		case state.CandidateDead:
+			s += 900
+		case state.UserManual:
+			s += 950
+		case state.Trashed, state.Purged:
+			s += 800
+		}
+		switch a.DisableSource {
+		case "plugin_auto":
+			s += 500
+		case "user_manual":
+			s += 480
+		case "cpa_file_disabled", "cpa_disabled":
+			s += 450
+		}
+		if !a.RecoverAt.IsZero() {
 			s += 100
 		}
+		ai := strings.ToLower(a.AuthIndex)
+		if ai != "" && !strings.Contains(ai, "@") && !strings.HasSuffix(ai, ".json") {
+			s += 50 // prefer real runtime auth index over filename keys
+		}
 		if a.LastSignal != "" {
-			s += 20
+			s += 10
 		}
 		s += int(a.DayCalls)
 		return s
@@ -762,14 +816,18 @@ func (g *Guard) applyPermanentDisable(ctx context.Context, ev UsageEvent, reason
 			name = g.resolveFileName(ctx, ev.AuthIndex, ev.FileName, ev.Email)
 		}
 	}
+	// ownership first (closed loop), then CPA file
+	g.State.SetAccountState(ev.AuthIndex, state.UserManual, "user_manual")
+	g.State.SetRecoverAt(ev.AuthIndex, time.Time{})
+	if name != "" && !cpaapi.LooksLikeOpaqueID(name) {
+		g.State.UpdateMeta(ev.AuthIndex, name, ev.Email, "")
+	}
 	if g.CPA != nil && name != "" && !cpaapi.LooksLikeOpaqueID(name) {
 		if err := g.CPA.SetDisabled(ctx, name, true); err != nil {
 			g.State.Log(state.ActionLog{Auth: ev.AuthIndex, Source: ev.Source, Action: "manual_disable", Reason: "disable_failed:" + err.Error()})
 			return err
 		}
 	}
-	g.State.SetAccountState(ev.AuthIndex, state.UserManual, "user_manual")
-	g.State.SetRecoverAt(ev.AuthIndex, time.Time{})
 	if reason == "" {
 		reason = "policy_permanent_disable"
 	}
@@ -784,13 +842,17 @@ func (g *Guard) ManualDisable(ctx context.Context, authIndex string) error {
 		acc = g.State.Touch(authIndex)
 	}
 	name := g.resolveFileName(ctx, authIndex, acc.FileName, acc.Email)
+	g.State.SetAccountState(authIndex, state.UserManual, "user_manual")
+	g.State.SetRecoverAt(authIndex, time.Time{})
+	if name != "" && !cpaapi.LooksLikeOpaqueID(name) {
+		g.State.UpdateMeta(authIndex, name, acc.Email, "")
+	}
 	if g.CPA != nil && name != "" && !cpaapi.LooksLikeOpaqueID(name) {
 		if err := g.CPA.SetDisabled(ctx, name, true); err != nil {
+			_ = g.State.Save()
 			return err
 		}
 	}
-	g.State.SetAccountState(authIndex, state.UserManual, "user_manual")
-	g.State.SetRecoverAt(authIndex, time.Time{})
 	g.State.Log(state.ActionLog{Auth: authIndex, Source: "panel", Action: "manual_disable", Reason: "permanent_disable"})
 	return g.State.Save()
 }
