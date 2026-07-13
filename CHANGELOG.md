@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.16
+
+### Persist patrol config + job history across restarts
+- Root cause: `patrol_batch_size` etc. only lived in memory; `runtime-overrides.json` only saved bool switches, so restart reloaded YAML `50`.
+- Root cause: patrol job history was package memory only — docker/plugin restart wiped the 巡查 list.
+- Now: all patrol knobs saved in `runtime-overrides.json` and reapplied on load.
+- Now: finished jobs saved to `patrol-history.json` next to state and reloaded on start.
+
+
 ## 1.1.15
 
 ### Panel layout copy
@@ -224,6 +233,15 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.16
+
+### Persist patrol config + job history across restarts
+- Root cause: `patrol_batch_size` etc. only lived in memory; `runtime-overrides.json` only saved bool switches, so restart reloaded YAML `50`.
+- Root cause: patrol job history was package memory only — docker/plugin restart wiped the 巡查 list.
+- Now: all patrol knobs saved in `runtime-overrides.json` and reapplied on load.
+- Now: finished jobs saved to `patrol-history.json` next to state and reloaded on start.
+
 
 ## 1.1.15
 

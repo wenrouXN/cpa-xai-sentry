@@ -9,20 +9,29 @@ import (
 	"github.com/openclaw-local/cpa-xai-sentry/internal/sentrycfg"
 )
 
-// Overrides are UI/runtime knobs that must survive CPA host reconfigure from YAML.
-// Host YAML is treated as base; these fields win when present.
+// Overrides are UI/runtime knobs that must survive CPA host reconfigure from YAML
+// and plugin process restarts (docker restart / plugin upgrade).
+// Host YAML is base; these fields win when present.
 type Overrides struct {
-	SentryEnabled *bool  `json:"sentry_enabled,omitempty"`
-	AutoCooldown  *bool  `json:"auto_cooldown,omitempty"`
-	AutoCandidate *bool  `json:"auto_candidate,omitempty"`
-	AutoDelete    *bool  `json:"auto_delete,omitempty"`
-	PatrolEnabled *bool  `json:"patrol_enabled,omitempty"`
-	UpdatedAt     string `json:"updated_at,omitempty"`
-	Source        string `json:"source,omitempty"`
+	SentryEnabled *bool `json:"sentry_enabled,omitempty"`
+	AutoCooldown  *bool `json:"auto_cooldown,omitempty"`
+	AutoCandidate *bool `json:"auto_candidate,omitempty"`
+	AutoDelete    *bool `json:"auto_delete,omitempty"`
+
+	PatrolEnabled         *bool   `json:"patrol_enabled,omitempty"`
+	PatrolInterval        *int    `json:"patrol_interval,omitempty"`
+	PatrolTimeout         *int    `json:"patrol_timeout,omitempty"`
+	PatrolConcurrency     *int    `json:"patrol_concurrency,omitempty"`
+	PatrolBatchSize       *int    `json:"patrol_batch_size,omitempty"`
+	PatrolModel           *string `json:"patrol_model,omitempty"`
+	PatrolProxyURL        *string `json:"patrol_proxy_url,omitempty"`
+	PatrolAutoModelSwitch *bool   `json:"patrol_auto_model_switch,omitempty"`
+
+	UpdatedAt string `json:"updated_at,omitempty"`
+	Source    string `json:"source,omitempty"`
 }
 
 func PathFor(cfg sentrycfg.Config) string {
-	// Prefer next to state file.
 	if cfg.StatePath != "" {
 		return filepath.Join(filepath.Dir(cfg.StatePath), "runtime-overrides.json")
 	}
@@ -72,7 +81,6 @@ func Save(path string, o Overrides) error {
 	return os.Rename(tmp, path)
 }
 
-// Apply merges overrides onto cfg (bool pointers only when non-nil).
 func Apply(cfg sentrycfg.Config, o Overrides) sentrycfg.Config {
 	if o.SentryEnabled != nil {
 		cfg.SentryEnabled = *o.SentryEnabled
@@ -89,22 +97,45 @@ func Apply(cfg sentrycfg.Config, o Overrides) sentrycfg.Config {
 	if o.PatrolEnabled != nil {
 		cfg.PatrolEnabled = *o.PatrolEnabled
 	}
+	if o.PatrolInterval != nil && *o.PatrolInterval > 0 {
+		cfg.PatrolInterval = *o.PatrolInterval
+	}
+	if o.PatrolTimeout != nil && *o.PatrolTimeout > 0 {
+		cfg.PatrolTimeout = *o.PatrolTimeout
+	}
+	if o.PatrolConcurrency != nil && *o.PatrolConcurrency > 0 {
+		cfg.PatrolConcurrency = *o.PatrolConcurrency
+	}
+	if o.PatrolBatchSize != nil && *o.PatrolBatchSize >= 0 {
+		cfg.PatrolBatchSize = *o.PatrolBatchSize
+	}
+	if o.PatrolModel != nil && *o.PatrolModel != "" {
+		cfg.PatrolModel = *o.PatrolModel
+	}
+	if o.PatrolProxyURL != nil {
+		cfg.PatrolProxyURL = *o.PatrolProxyURL
+	}
+	if o.PatrolAutoModelSwitch != nil {
+		cfg.PatrolAutoModelSwitch = *o.PatrolAutoModelSwitch
+	}
 	return cfg
 }
 
 func FromConfig(cfg sentrycfg.Config) Overrides {
-	se, ac, cand, del, pat := cfg.SentryEnabled, cfg.AutoCooldown, cfg.AutoCandidate, cfg.AutoDelete, cfg.PatrolEnabled
+	se, ac, cand, del := cfg.SentryEnabled, cfg.AutoCooldown, cfg.AutoCandidate, cfg.AutoDelete
+	pe := cfg.PatrolEnabled
+	pi, pt, pc, pb := cfg.PatrolInterval, cfg.PatrolTimeout, cfg.PatrolConcurrency, cfg.PatrolBatchSize
+	pm, pp := cfg.PatrolModel, cfg.PatrolProxyURL
+	pams := cfg.PatrolAutoModelSwitch
 	return Overrides{
-		SentryEnabled: &se,
-		AutoCooldown:  &ac,
-		AutoCandidate: &cand,
-		AutoDelete:    &del,
-		PatrolEnabled: &pat,
-		Source:        "panel",
+		SentryEnabled: &se, AutoCooldown: &ac, AutoCandidate: &cand, AutoDelete: &del,
+		PatrolEnabled: &pe, PatrolInterval: &pi, PatrolTimeout: &pt,
+		PatrolConcurrency: &pc, PatrolBatchSize: &pb,
+		PatrolModel: &pm, PatrolProxyURL: &pp, PatrolAutoModelSwitch: &pams,
+		Source: "panel",
 	}
 }
 
-// PatchBool updates one switch and returns new overrides.
 func PatchBool(cur Overrides, field string, val bool) Overrides {
 	switch field {
 	case "sentry_enabled":

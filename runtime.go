@@ -129,6 +129,12 @@ func (r *Runtime) rebuild(cfg sentrycfg.Config) error {
 	cpa := cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, cfg.AuthDir)
 	g := guard.New(cfg, st, tr, cpa)
 	p := patrol.New(cfg, g, cpa)
+	// durable patrol job list (survives docker/plugin restart)
+	if cfg.StatePath != "" {
+		patrol.SetHistoryPath(filepath.Join(filepath.Dir(cfg.StatePath), "patrol-history.json"))
+	} else if cfg.AuthDir != "" {
+		patrol.SetHistoryPath(filepath.Join(cfg.AuthDir, "cpa-xai-sentry", "patrol-history.json"))
+	}
 	api := &panel.API{
 		Cfg: &cfg, State: st, Trash: tr, Guard: g, Patrol: p,
 		PersistConfig: func(c sentrycfg.Config) error {
@@ -147,6 +153,10 @@ func (r *Runtime) rebuild(cfg sentrycfg.Config) error {
 			r.Cfg = c
 			if r.Guard != nil {
 				r.Guard.Cfg = c
+			}
+			if r.Patrol != nil {
+				r.Patrol.Cfg = c
+				r.Patrol.Guard = r.Guard
 			}
 			r.mu.Unlock()
 		},

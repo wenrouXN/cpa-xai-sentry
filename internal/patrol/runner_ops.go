@@ -2,6 +2,9 @@ package patrol
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -57,6 +60,70 @@ var (
 )
 
 const maxJobHistory = 30
+
+// historyPath is set once from sentry state dir so job history survives restarts.
+var historyPath string
+
+// SetHistoryPath configures durable patrol job history file (call at runtime rebuild).
+func SetHistoryPath(path string) {
+	jobMu.Lock()
+	defer jobMu.Unlock()
+	historyPath = path
+	if path == "" {
+		return
+	}
+	// load existing history if empty
+	if len(jobHistory) == 0 {
+		if hist, err := loadHistoryFile(path); err == nil && len(hist) > 0 {
+			jobHistory = hist
+			if len(jobHistory) > maxJobHistory {
+				jobHistory = jobHistory[:maxJobHistory]
+			}
+		}
+	}
+}
+
+func historyFilePath() string {
+	return historyPath
+}
+
+func loadHistoryFile(path string) ([]Status, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(b) == 0 {
+		return nil, nil
+	}
+	var hist []Status
+	if err := json.Unmarshal(b, &hist); err != nil {
+		return nil, err
+	}
+	return hist, nil
+}
+
+func saveHistoryLocked() {
+	path := historyPath
+	if path == "" {
+		return
+	}
+	// copy
+	out := make([]Status, len(jobHistory))
+	copy(out, jobHistory)
+	// unlock not held? caller holds jobMu
+	go func(p string, h []Status) {
+		_ = os.MkdirAll(filepath.Dir(p), 0o755)
+		b, err := json.Marshal(h)
+		if err != nil {
+			return
+		}
+		tmp := p + ".tmp"
+		if err := os.WriteFile(tmp, b, 0o600); err != nil {
+			return
+		}
+		_ = os.Rename(tmp, p)
+	}(path, out)
+}
 
 func (r *Runner) Status() Status {
 	jobMu.Lock()
@@ -120,6 +187,7 @@ func (r *Runner) runJob(ctx context.Context, mode Mode) {
 		if len(jobHistory) > maxJobHistory {
 			jobHistory = jobHistory[:maxJobHistory]
 		}
+		saveHistoryLocked()
 		jobMu.Unlock()
 	}()
 
