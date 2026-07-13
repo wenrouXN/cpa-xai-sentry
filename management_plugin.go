@@ -68,6 +68,10 @@ func buildManagementRegistration() managementRegistration {
 			{Method: "GET", Path: "/" + pluginID + "/health", Description: "健康检查"},
 			{Method: "POST", Path: "/" + pluginID + "/toggle", Description: "切换开关"},
 			{Method: "POST", Path: "/" + pluginID + "/preset", Description: "应用预设"},
+			{Method: "GET", Path: "/" + pluginID + "/errors", Description: "动态错误目录"},
+			{Method: "POST", Path: "/" + pluginID + "/errors/policy", Description: "保存单错误策略"},
+			{Method: "POST", Path: "/" + pluginID + "/backfill", Description: "CPAMP今日用量回补"},
+			{Method: "GET", Path: "/" + pluginID + "/metrics", Description: "用量地板/回补指标"},
 		},
 	}
 }

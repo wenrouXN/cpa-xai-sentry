@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/openclaw-local/cpa-xai-sentry/internal/cpaapi"
+	"github.com/openclaw-local/cpa-xai-sentry/internal/errorsig"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/match"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/policy"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/sentrycfg"
@@ -24,7 +25,19 @@ type Guard struct {
 }
 
 func New(cfg sentrycfg.Config, st *state.Store, tr *trash.Store, cpa *cpaapi.Client) *Guard {
-	return &Guard{Cfg: cfg.Validate(), State: st, Trash: tr, CPA: cpa, Now: time.Now}
+	g := &Guard{Cfg: cfg.Validate(), State: st, Trash: tr, CPA: cpa, Now: time.Now}
+	if st != nil {
+		builtins := map[string]state.ErrorPolicy{}
+		for k, p := range errorsig.BuiltinDefaults() {
+			builtins[k] = state.ErrorPolicy{
+				Key: p.Key, Label: p.Label, Enabled: p.Enabled, Action: string(p.Action),
+				Threshold: p.Threshold, CooldownSec: p.CooldownSec, NeverTrash: p.NeverTrash,
+				Note: p.Note, Source: p.Source,
+			}
+		}
+		st.EnsureBuiltinPolicies(builtins)
+	}
+	return g
 }
 
 func IsXAI(provider, fileName string) bool {
@@ -70,24 +83,62 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 	}
 
 	res := match.Classify(ev.StatusCode, ev.Body)
+	errKey := errorsig.KeyFromMatch(res, ev.StatusCode)
+	label := errorsig.LabelOf(errKey, res, ev.StatusCode)
+	// always learn/observe errors into dynamic catalog (even unmatched)
+	sample := ev.Body
+	if len(sample) > 240 {
+		sample = sample[:240]
+	}
+	g.State.ObserveError(errKey, label, string(res.Signal), res.Code, sample, ev.AuthIndex, ev.FileName, ev.StatusCode)
+
+	// seed policy entry for newly learned errors (default observe)
+	if _, ok := g.State.GetErrorPolicy(errKey); !ok {
+		act := "observe"
+		th := 1
+		cd := 0
+		never := errorsig.HardNeverTrash(errKey)
+		if res.Signal != match.SignalNone {
+			if p0, ok := errorsig.BuiltinDefaults()[string(res.Signal)]; ok {
+				act = string(p0.Action)
+				th = p0.Threshold
+				cd = p0.CooldownSec
+				never = p0.NeverTrash || never
+				label = p0.Label
+			}
+		}
+		g.State.UpsertErrorPolicy(state.ErrorPolicy{
+			Key: errKey, Label: label, Enabled: true, Action: act,
+			Threshold: th, CooldownSec: cd, NeverTrash: never,
+			Note: "动态采集", Source: "learned",
+		})
+	}
+
 	if res.Signal == match.SignalNone {
-		// quota success-ish signals that prove auth still works
+		// unmatched: cataloged only
+		_ = g.State.Save()
 		return nil
 	}
-	// quota signals also clear dead streaks
 	if res.Kind == match.KindQuota {
 		g.State.ClearAuthStreaks(ev.AuthIndex)
 	}
 
-	streak := g.State.IncStreak(ev.AuthIndex, string(res.Signal))
+	streakKey := errKey
+	if res.Signal != match.SignalNone {
+		streakKey = string(res.Signal)
+	}
+	streak := g.State.IncStreak(ev.AuthIndex, streakKey)
+	var polPtr *state.ErrorPolicy
+	if p, ok := g.State.GetErrorPolicy(errKey); ok {
+		polPtr = &p
+	}
 	act := policy.Decide(g.Cfg, policy.Input{
-		Signal: res.Signal,
-		Streak: streak,
-		Tier:   tier.Tier(acc.Tier),
+		Signal: res.Signal, ErrorKey: errKey, Streak: streak,
+		Tier: tier.Tier(acc.Tier), Policy: polPtr,
 	})
 
 	if act.Cooldown {
-		if err := g.applyCooldown(ctx, ev, res, acc); err != nil {
+		if err := g.applyCooldown(ctx, ev, res, acc, polPtr); err != nil {
 			return err
 		}
 	}
@@ -105,7 +156,7 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 	return nil
 }
 
-func (g *Guard) applyCooldown(ctx context.Context, ev UsageEvent, res match.Result, acc *state.Account) error {
+func (g *Guard) applyCooldown(ctx context.Context, ev UsageEvent, res match.Result, acc *state.Account, pol *state.ErrorPolicy) error {
 	st := state.CooldownQuota
 	switch res.Signal {
 	case match.SignalSpendingLimit402:
@@ -117,13 +168,17 @@ func (g *Guard) applyCooldown(ctx context.Context, ev UsageEvent, res match.Resu
 	}
 	recoverAt := res.RecoverAt
 	if recoverAt.IsZero() {
-		switch res.Signal {
-		case match.SignalPermission403:
-			recoverAt = g.Now().Add(time.Duration(g.Cfg.PermissionCooldownSec) * time.Second)
-		case match.SignalAuth401:
-			recoverAt = g.Now().Add(time.Duration(g.Cfg.Auth401CooldownSec) * time.Second)
-		default:
-			recoverAt = g.Now().Add(24 * time.Hour)
+		if pol != nil && pol.CooldownSec > 0 {
+			recoverAt = g.Now().Add(time.Duration(pol.CooldownSec) * time.Second)
+		} else {
+			switch res.Signal {
+			case match.SignalPermission403:
+				recoverAt = g.Now().Add(time.Duration(g.Cfg.PermissionCooldownSec) * time.Second)
+			case match.SignalAuth401:
+				recoverAt = g.Now().Add(time.Duration(g.Cfg.Auth401CooldownSec) * time.Second)
+			default:
+				recoverAt = g.Now().Add(24 * time.Hour)
+			}
 		}
 	}
 	if g.Cfg.MaxResetSeconds > 0 {

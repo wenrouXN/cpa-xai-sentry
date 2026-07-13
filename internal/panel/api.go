@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openclaw-local/cpa-xai-sentry/internal/cpamp"
+	"github.com/openclaw-local/cpa-xai-sentry/internal/errorsig"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/guard"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/patrol"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/sentrycfg"
@@ -34,6 +36,10 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/toggle", a.handleToggle)
 	mux.HandleFunc("/preset", a.handlePreset)
 	mux.HandleFunc("/health", a.handleHealth)
+	mux.HandleFunc("/errors", a.handleErrors)
+	mux.HandleFunc("/errors/policy", a.handleErrorPolicy)
+	mux.HandleFunc("/backfill", a.handleBackfill)
+	mux.HandleFunc("/metrics", a.handleMetrics)
 	mux.HandleFunc("/ui", a.handleUI)
 	mux.HandleFunc("/", a.handleUI)
 	return mux
@@ -188,17 +194,23 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			SuggestedAction: act, Reason: reason, RecoverAt: ra, UpdatedAt: ua,
 		})
 	}
+	m := a.State.MetricsSnapshot()
 	writeJSON(w, 200, map[string]any{
-		"plugin":        "cpa-xai-sentry",
-		"version":       "0.1.1",
-		"mode":          modeOf(*a.Cfg),
-		"summary":       summary,
-		"signal_counts": signalCounts,
-		"accounts":      rows,
-		"account_count": len(rows),
-		"trash_count":   len(a.State.ListTrash()),
-		"config":        a.Cfg.Redact(),
-		"updated_at":    time.Now().UTC().Format(time.RFC3339),
+		"plugin":          "cpa-xai-sentry",
+		"version":         "0.2.0",
+		"mode":            modeOf(*a.Cfg),
+		"mode_label":      modeLabel(modeOf(*a.Cfg)),
+		"summary":         summary,
+		"signal_counts":   signalCounts,
+		"accounts":        rows,
+		"account_count":   len(rows),
+		"trash_count":     len(a.State.ListTrash()),
+		"error_count":     len(a.State.ListObserved()),
+		"policy_count":    len(a.State.ListErrorPolicies()),
+		"metrics":         m,
+		"config":          a.Cfg.Redact(),
+		"updated_at":      time.Now().UTC().Format(time.RFC3339),
+		"tick_help":       "周期任务：到期自动恢复冷却账号，并清理过期垃圾箱。不是巡检。",
 	})
 }
 
@@ -231,6 +243,23 @@ func modeOf(c sentrycfg.Config) string {
 		return "safe-guard"
 	}
 	return "cooldown"
+}
+
+func modeLabel(mode string) string {
+	switch mode {
+	case "off":
+		return "已关闭"
+	case "observe":
+		return "仅观察"
+	case "safe-guard":
+		return "安全防护"
+	case "cooldown":
+		return "自动冷却"
+	case "auto_trash":
+		return "自动垃圾箱"
+	default:
+		return mode
+	}
 }
 
 func (a *API) handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -379,8 +408,8 @@ func (a *API) handleRunTick(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.1.0",
-		"mode": modeOf(*a.Cfg), "config": a.Cfg.Redact(),
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.2.0",
+		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 	})
 }
 
@@ -452,7 +481,7 @@ func (a *API) handlePreset(w http.ResponseWriter, r *http.Request) {
 	case "off":
 		a.Cfg.SentryEnabled = false
 	default:
-		writeJSON(w, 400, map[string]string{"error": "unknown preset; use observe|safe-guard|off"})
+		writeJSON(w, 400, map[string]string{"error": "未知预设，可用：observe|safe-guard|off"})
 		return
 	}
 	*a.Cfg = a.Cfg.Validate()
@@ -461,6 +490,166 @@ func (a *API) handlePreset(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"ok": true, "mode": modeOf(*a.Cfg), "config": a.Cfg.Redact()})
 }
+
+
+func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
+	// ensure builtins
+	if a.Guard != nil {
+		// Guard.New already seeds; re-seed safe
+		builtins := map[string]state.ErrorPolicy{}
+		for k, p := range errorsig.BuiltinDefaults() {
+			builtins[k] = state.ErrorPolicy{
+				Key: p.Key, Label: p.Label, Enabled: p.Enabled, Action: string(p.Action),
+				Threshold: p.Threshold, CooldownSec: p.CooldownSec, NeverTrash: p.NeverTrash,
+				Note: p.Note, Source: p.Source,
+			}
+		}
+		a.State.EnsureBuiltinPolicies(builtins)
+	}
+	obs := a.State.ListObserved()
+	pols := a.State.ListErrorPolicies()
+	// join: every observed + every policy
+	type row struct {
+		Key         string `json:"key"`
+		Label       string `json:"label"`
+		Enabled     bool   `json:"enabled"`
+		Action      string `json:"action"`
+		ActionLabel string `json:"action_label"`
+		Threshold   int    `json:"threshold"`
+		CooldownSec int    `json:"cooldown_seconds"`
+		NeverTrash  bool   `json:"never_trash"`
+		Note        string `json:"note"`
+		Source      string `json:"source"`
+		Count       int64  `json:"count"`
+		LastAt      string `json:"last_at,omitempty"`
+		Sample      string `json:"sample,omitempty"`
+		StatusCode  int    `json:"status_code,omitempty"`
+		Code        string `json:"code,omitempty"`
+	}
+	byKey := map[string]row{}
+	for _, p := range pols {
+		byKey[p.Key] = row{
+			Key: p.Key, Label: p.Label, Enabled: p.Enabled, Action: p.Action,
+			ActionLabel: actionLabel(p.Action), Threshold: p.Threshold, CooldownSec: p.CooldownSec,
+			NeverTrash: p.NeverTrash, Note: p.Note, Source: p.Source,
+		}
+	}
+	for _, o := range obs {
+		r0, ok := byKey[o.Key]
+		if !ok {
+			r0 = row{Key: o.Key, Label: o.Label, Enabled: true, Action: "observe", ActionLabel: actionLabel("observe"), Threshold: 1, Source: "learned"}
+		}
+		if r0.Label == "" {
+			r0.Label = o.Label
+		}
+		r0.Count = o.Count
+		if !o.LastAt.IsZero() {
+			r0.LastAt = o.LastAt.UTC().Format(time.RFC3339)
+		}
+		r0.Sample = o.Sample
+		r0.StatusCode = o.StatusCode
+		r0.Code = o.Code
+		byKey[o.Key] = r0
+	}
+	out := make([]row, 0, len(byKey))
+	for _, r0 := range byKey {
+		out = append(out, r0)
+	}
+	writeJSON(w, 200, map[string]any{"errors": out, "count": len(out)})
+}
+
+func actionLabel(a string) string {
+	switch a {
+	case "observe":
+		return "仅观察"
+	case "cooldown":
+		return "冷却"
+	case "candidate":
+		return "进候选"
+	case "trash":
+		return "进垃圾箱"
+	default:
+		return a
+	}
+}
+
+func (a *API) handleErrorPolicy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(405)
+		return
+	}
+	var in state.ErrorPolicy
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	in.Key = strings.TrimSpace(in.Key)
+	if in.Key == "" {
+		writeJSON(w, 400, map[string]string{"error": "key 必填"})
+		return
+	}
+	if in.Action == "" {
+		in.Action = "observe"
+	}
+	if in.Threshold <= 0 {
+		in.Threshold = 1
+	}
+	if errorsig.HardNeverTrash(in.Key) {
+		in.NeverTrash = true
+		if in.Action == "trash" {
+			in.Action = "cooldown"
+		}
+	}
+	if in.Label == "" {
+		in.Label = in.Key
+	}
+	if in.Source == "" {
+		in.Source = "user"
+	}
+	a.State.UpsertErrorPolicy(in)
+	_ = a.State.Save()
+	writeJSON(w, 200, map[string]any{"ok": true, "policy": in})
+}
+
+func (a *API) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, map[string]any{"metrics": a.State.MetricsSnapshot(), "cpamp_configured": a.Cfg.CPAMPURL != "" && a.Cfg.CPAMPAdminKey != ""})
+}
+
+func (a *API) handleBackfill(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(405)
+		return
+	}
+	if a.Cfg.CPAMPURL == "" || a.Cfg.CPAMPAdminKey == "" {
+		writeJSON(w, 400, map[string]string{"error": "未配置 CPAMP 地址/密钥"})
+		return
+	}
+	cli := cpamp.New(a.Cfg.CPAMPURL, a.Cfg.CPAMPAdminKey)
+	from, to := cpamp.DayRangeShanghai(time.Now())
+	sum, err := cli.FetchXAISummary(r.Context(), from, to)
+	if err != nil {
+		writeJSON(w, 502, map[string]string{"error": "CPAMP 回补失败: " + err.Error()})
+		return
+	}
+	// day key shanghai
+	loc, _ := time.LoadLocation("Asia/Shanghai")
+	if loc == nil {
+		loc = time.FixedZone("CST", 8*3600)
+	}
+	day := time.Now().In(loc).Format("2006-01-02")
+	m := a.State.ApplyCPAMPBackfill(day, sum.TotalTokens, sum.TotalCalls, sum.SuccessCalls, sum.FailureCalls, "cpamp_analytics")
+	_ = a.State.Save()
+	a.State.Log(state.ActionLog{Source: "cpamp", Action: "backfill", Reason: "今日用量回补"})
+	_ = a.State.Save()
+	writeJSON(w, 200, map[string]any{
+		"ok": true,
+		"day": day,
+		"cpamp": sum,
+		"metrics": m,
+		"help": "从 CPAMP 监控分析拉取今日 xAI 汇总，写入用量地板（只升不降），用于对照插件观察数据。",
+	})
+}
+
 
 func (a *API) handleUI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

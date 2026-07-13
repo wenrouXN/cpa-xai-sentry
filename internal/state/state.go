@@ -60,23 +60,67 @@ type TrashMeta struct {
 }
 
 type Store struct {
-	Version  string              `json:"version"`
-	Accounts map[string]*Account `json:"accounts"`
-	Logs     []ActionLog         `json:"logs"`
-	Trash    []TrashMeta         `json:"trash"`
-	mu       sync.Mutex
-	path     string
+	Version       string                    `json:"version"`
+	Accounts      map[string]*Account       `json:"accounts"`
+	Logs          []ActionLog               `json:"logs"`
+	Trash         []TrashMeta               `json:"trash"`
+	ErrorPolicies map[string]ErrorPolicy    `json:"error_policies"`
+	Observed      map[string]*ObservedError `json:"observed_errors"`
+	Metrics       MetricsFloor              `json:"metrics"`
+	mu            sync.Mutex
+	path          string
+}
+
+// ErrorPolicy is persisted per-error control (dynamic catalog).
+type ErrorPolicy struct {
+	Key         string `json:"key"`
+	Label       string `json:"label"`
+	Enabled     bool   `json:"enabled"`
+	Action      string `json:"action"` // observe|cooldown|candidate|trash
+	Threshold   int    `json:"threshold"`
+	CooldownSec int    `json:"cooldown_seconds"`
+	NeverTrash  bool   `json:"never_trash"`
+	Note        string `json:"note"`
+	Source      string `json:"source"`
+	UpdatedAt   string `json:"updated_at,omitempty"`
+}
+
+type ObservedError struct {
+	Key        string    `json:"key"`
+	Label      string    `json:"label"`
+	Signal     string    `json:"signal"`
+	Code       string    `json:"code"`
+	StatusCode int       `json:"status_code"`
+	Count      int64     `json:"count"`
+	LastAt     time.Time `json:"last_at"`
+	Sample     string    `json:"sample"`
+	LastAuth   string    `json:"last_auth"`
+	LastFile   string    `json:"last_file"`
+}
+
+type MetricsFloor struct {
+	DayKey              string `json:"day_key"`
+	TokensFloor         int64  `json:"tokens_floor"`
+	CallsFloor          int64  `json:"calls_floor"`
+	BackfillSource      string `json:"backfill_source,omitempty"`
+	BackfillAt          string `json:"backfill_at,omitempty"`
+	LastCPAMPTokens     int64  `json:"last_cpamp_tokens,omitempty"`
+	LastCPAMPCalls      int64  `json:"last_cpamp_calls,omitempty"`
+	LastCPAMPSuccess    int64  `json:"last_cpamp_success,omitempty"`
+	LastCPAMPFailure    int64  `json:"last_cpamp_failure,omitempty"`
 }
 
 const maxLogs = 1000
 
 func New(path string) *Store {
 	return &Store{
-		Version:  "1",
-		Accounts: map[string]*Account{},
-		Logs:     nil,
-		Trash:    nil,
-		path:     path,
+		Version:       "1",
+		Accounts:      map[string]*Account{},
+		Logs:          nil,
+		Trash:         nil,
+		ErrorPolicies: map[string]ErrorPolicy{},
+		Observed:      map[string]*ObservedError{},
+		path:          path,
 	}
 }
 
@@ -97,6 +141,12 @@ func Load(path string) (*Store, error) {
 	}
 	if s.Accounts == nil {
 		s.Accounts = map[string]*Account{}
+	}
+	if s.ErrorPolicies == nil {
+		s.ErrorPolicies = map[string]ErrorPolicy{}
+	}
+	if s.Observed == nil {
+		s.Observed = map[string]*ObservedError{}
 	}
 	s.path = path
 	return s, nil
@@ -309,4 +359,113 @@ func (s *Store) SnapshotLogs() []ActionLog {
 	out := make([]ActionLog, len(s.Logs))
 	copy(out, s.Logs)
 	return out
+}
+
+
+func (s *Store) ObserveError(key, label, signal, code, sample, auth, file string, status int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Observed == nil {
+		s.Observed = map[string]*ObservedError{}
+	}
+	o := s.Observed[key]
+	if o == nil {
+		o = &ObservedError{Key: key, Label: label}
+		s.Observed[key] = o
+	}
+	if label != "" {
+		o.Label = label
+	}
+	o.Signal = signal
+	o.Code = code
+	o.StatusCode = status
+	o.Count++
+	o.LastAt = time.Now()
+	if sample != "" {
+		if len(sample) > 240 {
+			sample = sample[:240]
+		}
+		o.Sample = sample
+	}
+	o.LastAuth = auth
+	o.LastFile = file
+}
+
+func (s *Store) ListObserved() []ObservedError {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]ObservedError, 0, len(s.Observed))
+	for _, o := range s.Observed {
+		if o != nil {
+			out = append(out, *o)
+		}
+	}
+	return out
+}
+
+func (s *Store) EnsureBuiltinPolicies(builtins map[string]ErrorPolicy) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ErrorPolicies == nil {
+		s.ErrorPolicies = map[string]ErrorPolicy{}
+	}
+	for k, p := range builtins {
+		if _, ok := s.ErrorPolicies[k]; !ok {
+			s.ErrorPolicies[k] = p
+		}
+	}
+}
+
+func (s *Store) GetErrorPolicy(key string) (ErrorPolicy, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.ErrorPolicies[key]
+	return p, ok
+}
+
+func (s *Store) UpsertErrorPolicy(p ErrorPolicy) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ErrorPolicies == nil {
+		s.ErrorPolicies = map[string]ErrorPolicy{}
+	}
+	p.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	s.ErrorPolicies[p.Key] = p
+}
+
+func (s *Store) ListErrorPolicies() []ErrorPolicy {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]ErrorPolicy, 0, len(s.ErrorPolicies))
+	for _, p := range s.ErrorPolicies {
+		out = append(out, p)
+	}
+	return out
+}
+
+func (s *Store) ApplyCPAMPBackfill(dayKey string, tokens, calls, success, failure int64, source string) MetricsFloor {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Metrics.DayKey != dayKey {
+		s.Metrics = MetricsFloor{DayKey: dayKey}
+	}
+	if tokens > s.Metrics.TokensFloor {
+		s.Metrics.TokensFloor = tokens
+	}
+	if calls > s.Metrics.CallsFloor {
+		s.Metrics.CallsFloor = calls
+	}
+	s.Metrics.BackfillSource = source
+	s.Metrics.BackfillAt = time.Now().UTC().Format(time.RFC3339)
+	s.Metrics.LastCPAMPTokens = tokens
+	s.Metrics.LastCPAMPCalls = calls
+	s.Metrics.LastCPAMPSuccess = success
+	s.Metrics.LastCPAMPFailure = failure
+	return s.Metrics
+}
+
+func (s *Store) MetricsSnapshot() MetricsFloor {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Metrics
 }
