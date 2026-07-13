@@ -359,3 +359,61 @@ func TestTickMatchesEmailFromFilenameWhenListEmailEmpty(t *testing.T) {
 		t.Fatalf("path+empty-email list must still protect cool-down, opens=%d", setToFalse)
 	}
 }
+
+func TestTickProtectsCooldownMatchedByAuthIndex(t *testing.T) {
+	// CPA list includes auth_index (real API); must protect even if name slightly differs
+	dir := t.TempDir()
+	setToFalse := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v0/management/auth-files" && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"files": []map[string]any{{
+					"name": "xai-63p73ccpdz@lovc.eu.cc.json",
+					"id": "xai-63p73ccpdz@lovc.eu.cc.json",
+					"path": "/root/.cli-proxy-api/xai-63p73ccpdz@lovc.eu.cc.json",
+					"auth_index": "25a0202c2ec35d69",
+					"email": "63p73ccpdz@lovc.eu.cc",
+					"account": "63p73ccpdz@lovc.eu.cc",
+					"provider": "xai", "type": "xai", "disabled": true,
+				}},
+			})
+		case r.URL.Path == "/v0/management/auth-files/status":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if d, ok := body["disabled"].(bool); ok && !d {
+				setToFalse++
+			}
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		default:
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	defer srv.Close()
+	cfg := sentrycfg.Default()
+	cfg.SentryEnabled = true
+	cfg.ManagementURL = srv.URL
+	cfg.ManagementKey = "k"
+	cfg.ReopenForeignDisabled = true
+	st := state.New(filepath.Join(dir, "s.json"))
+	st.Touch("25a0202c2ec35d69")
+	st.UpdateMeta("25a0202c2ec35d69", "xai-63p73ccpdz@lovc.eu.cc.json", "63p73ccpdz@lovc.eu.cc", "")
+	st.SetAccountState("25a0202c2ec35d69", state.CooldownQuota, "plugin_auto")
+	st.SetRecoverAt("25a0202c2ec35d69", time.Now().Add(24*time.Hour))
+	st.SetLastSignal("25a0202c2ec35d69", "free_usage_429")
+	_ = st.Save()
+	ts := trash.New(filepath.Join(dir, "trash"), 7, true, st)
+	g := guard.New(cfg, st, ts, cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, dir))
+	if err := g.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if setToFalse != 0 {
+		t.Fatalf("auth_index-matched 429 cool-down must not reopen, opens=%d", setToFalse)
+	}
+	acc := st.Get("25a0202c2ec35d69")
+	if acc.State != state.CooldownQuota || acc.DisableSource != "plugin_auto" {
+		t.Fatalf("state corrupted: %+v", acc)
+	}
+}

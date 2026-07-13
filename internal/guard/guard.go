@@ -488,19 +488,21 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 	if err != nil {
 		return 0, err
 	}
-	// index sentry accounts by file basename / email (CPA list name may be path or bare)
+	// index sentry accounts by auth_index / file basename / email
+	byAuth := map[string]*state.Account{}
 	byFile := map[string]*state.Account{}
 	byEmail := map[string]*state.Account{}
 	for _, acc := range g.State.AccountsSnapshot() {
+		if acc.AuthIndex != "" {
+			byAuth[strings.ToLower(strings.TrimSpace(acc.AuthIndex))] = acc
+		}
 		if acc.FileName != "" {
 			byFile[authFileBase(acc.FileName)] = acc
-			// also raw lower for safety
 			byFile[strings.ToLower(strings.TrimSpace(acc.FileName))] = acc
 		}
 		if acc.Email != "" {
 			byEmail[strings.ToLower(strings.TrimSpace(acc.Email))] = acc
 		}
-		// filename-derived email when meta.email empty
 		if em := emailFromXAIFile(acc.FileName); em != "" {
 			if _, ok := byEmail[em]; !ok {
 				byEmail[em] = acc
@@ -585,19 +587,45 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 		if name == "" || !cpaapi.IsXAIName(name, prov) {
 			continue
 		}
+		// CPA list fields (name/id/path/auth_index/email/account)
 		base := authFileBase(name)
+		if base == "" {
+			base = authFileBase(f.ID)
+		}
+		if base == "" {
+			base = authFileBase(f.Path)
+		}
 		em := strings.ToLower(strings.TrimSpace(f.Email))
+		if em == "" {
+			em = strings.ToLower(strings.TrimSpace(f.Account))
+		}
 		if em == "" {
 			em = emailFromXAIFile(name)
 		}
-		// gather all candidates (map last-write is lossy; also scan snapshot)
+		if em == "" {
+			em = emailFromXAIFile(f.ID)
+		}
+		if em == "" {
+			em = emailFromXAIFile(f.Path)
+		}
+		ai := strings.ToLower(strings.TrimSpace(f.AuthIndex))
 		var cands []*state.Account
-		if a := byFile[base]; a != nil {
-			cands = append(cands, a)
+		// 1) strongest: auth_index from CPA runtime
+		if ai != "" {
+			if a := byAuth[ai]; a != nil {
+				cands = append(cands, a)
+			}
 		}
-		if a := byFile[strings.ToLower(strings.TrimSpace(name))]; a != nil {
-			cands = append(cands, a)
+		// 2) file basename / id / path
+		for _, key := range []string{base, authFileBase(f.ID), authFileBase(f.Path), strings.ToLower(strings.TrimSpace(name))} {
+			if key == "" {
+				continue
+			}
+			if a := byFile[key]; a != nil {
+				cands = append(cands, a)
+			}
 		}
+		// 3) email
 		if em != "" {
 			if a := byEmail[em]; a != nil {
 				cands = append(cands, a)
@@ -606,13 +634,14 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 				cands = append(cands, a)
 			}
 		}
+		// 4) full scan fallback
 		for _, acc := range g.State.AccountsSnapshot() {
-			af := authFileBase(acc.FileName)
-			if af != "" && (af == base || strings.EqualFold(strings.TrimSpace(acc.FileName), name)) {
+			if ai != "" && strings.EqualFold(strings.TrimSpace(acc.AuthIndex), ai) {
 				cands = append(cands, acc)
 				continue
 			}
-			if strings.EqualFold(strings.TrimSpace(acc.AuthIndex), name) || strings.EqualFold(authFileBase(acc.AuthIndex), base) {
+			af := authFileBase(acc.FileName)
+			if af != "" && (af == base || af == authFileBase(f.ID) || af == authFileBase(f.Path)) {
 				cands = append(cands, acc)
 				continue
 			}
@@ -648,7 +677,26 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 					Reason: "unowned_disabled_self_heal",
 				})
 			} else {
-				// untracked file: just open; first usage creates state
+				// last chance: any owned cool-down with same email/file must NOT reopen
+				var owned *state.Account
+				for _, a := range g.State.AccountsSnapshot() {
+					if !protect(a) {
+						continue
+					}
+					af := authFileBase(a.FileName)
+					if (base != "" && af == base) || (em != "" && (strings.EqualFold(a.Email, em) || emailFromXAIFile(a.FileName) == em)) || (ai != "" && strings.EqualFold(a.AuthIndex, ai)) {
+						owned = a
+						break
+					}
+				}
+				if owned != nil {
+					// matched late — leave disabled, fix meta if needed
+					if name != "" {
+						g.State.UpdateMeta(owned.AuthIndex, authFileBase(name), em, "")
+					}
+					continue
+				}
+				// truly untracked: open; first usage creates state
 				g.State.Log(state.ActionLog{
 					Auth: name, Source: "tick", Action: "reopen_foreign",
 					Reason: "unowned_disabled_untracked_self_heal",

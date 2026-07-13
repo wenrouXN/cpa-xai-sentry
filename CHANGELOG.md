@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.8
+
+### Fixed: unowned reopen despite auth_index cool-down
+- Parse CPA auth-files `auth_index` / `id` / `path` / `account`.
+- Match disabled files to sentry cool-downs by **auth_index first**, then file/email.
+- Last-chance guard: never reopen if any owned cool-down shares email/file/auth_index.
+
+
 ## 1.0.7
 
 ### Action log pagination
@@ -52,6 +60,14 @@
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.0.8
+
+### Fixed: unowned reopen despite auth_index cool-down
+- Parse CPA auth-files `auth_index` / `id` / `path` / `account`.
+- Match disabled files to sentry cool-downs by **auth_index first**, then file/email.
+- Last-chance guard: never reopen if any owned cool-down shares email/file/auth_index.
+
 
 ## 1.0.7
 

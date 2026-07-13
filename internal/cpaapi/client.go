@@ -21,11 +21,15 @@ type Client struct {
 }
 
 type AuthFile struct {
-	Name     string `json:"name"`
-	Provider string `json:"provider"`
-	Disabled bool   `json:"disabled"`
-	Email    string `json:"email"`
-	Type     string `json:"type"`
+	Name      string `json:"name"`
+	ID        string `json:"id"`
+	Path      string `json:"path"`
+	AuthIndex string `json:"auth_index"`
+	Provider  string `json:"provider"`
+	Disabled  bool   `json:"disabled"`
+	Email     string `json:"email"`
+	Type      string `json:"type"`
+	Account   string `json:"account"`
 }
 
 func New(baseURL, key, authDir string) *Client {
