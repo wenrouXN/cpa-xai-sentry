@@ -92,7 +92,29 @@ tr:hover td{background:#409eff0c}
 .acc-file{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10.5px;color:#64748b;margin-top:2px;word-break:break-all}
 .sig-main{font-weight:700;font-size:12px}
 .sig-sub{color:var(--muted);font-size:10.5px;margin-top:2px}
-.tip{cursor:help}
+.reqcell{display:flex;flex-direction:column;gap:4px;align-items:flex-start}
+.reqcell .nums{font-variant-numeric:tabular-nums;font-weight:700;font-size:12.5px}
+.reqchip{display:inline-flex;align-items:center;gap:5px;border-radius:8px;padding:3px 8px;font-size:11px;font-weight:700;border:1px solid var(--border);cursor:pointer;background:#fff}
+.reqchip:hover{border-color:#409eff;box-shadow:0 0 0 2px #409eff22}
+.reqchip.fail{background:#fef0f0;border-color:#fbc4c4;color:#c45656}
+.reqchip.ok{background:#f0f9eb;border-color:#c2e7b0;color:#529b2e}
+.reqchip .http{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px}
+.reqchip .dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+.err-pop{position:fixed;z-index:50;display:none;width:min(520px,calc(100vw - 24px));max-height:min(70vh,520px);overflow:auto;background:#fff;border:1px solid #0f172a22;border-radius:12px;box-shadow:0 16px 48px #0f172a33;padding:12px 14px}
+.err-pop.open{display:block}
+.err-pop .ep-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;margin-bottom:8px}
+.err-pop .ep-code{font-size:16px;font-weight:800;color:#c45656}
+.err-pop .ep-sub{color:var(--muted);font-size:12px;margin-top:2px}
+.err-pop .ep-close{border:0;background:#f4f4f5;border-radius:8px;width:28px;height:28px;cursor:pointer;font-size:16px;line-height:1}
+.err-pop .ep-kv{display:grid;grid-template-columns:72px 1fr;gap:4px 8px;font-size:12px;margin:8px 0}
+.err-pop .ep-kv b{color:var(--muted);font-weight:600}
+.err-pop .ep-json{background:#0b1220;color:#e2e8f0;border-radius:10px;padding:10px 12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
+.err-pop .ep-msg{color:#fbbf24;font-weight:600;margin-bottom:6px}
+.policy-log{margin-top:8px;max-height:180px;overflow:auto;background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:0}
+.policy-log table{width:100%;border-collapse:collapse;font-size:11.5px}
+.policy-log th,.policy-log td{padding:6px 8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
+.policy-log th{position:sticky;top:0;background:#f1f5f9;color:var(--muted);font-weight:700}
+.policy-log .pl-empty{color:#94a3b8;padding:12px;text-align:center}
 .tag.danger{background:#fef0f0;color:#c45656;border-color:#fbc4c4}
 .tag.ok{background:#f0f9eb;color:#529b2e;border-color:#c2e7b0}
 .quota-main{font-variant-numeric:tabular-nums;font-weight:600}
@@ -102,18 +124,11 @@ tr:hover td{background:#409eff0c}
 .err-card{border:1px solid var(--border);border-radius:12px;background:#fff;padding:10px 12px;margin-bottom:8px}
 .err-head{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start}
 .err-title{font-size:13.5px;font-weight:700}
-.err-key{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;color:var(--muted);margin-top:2px}
 .err-meta{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
-.err-controls{display:grid;grid-template-columns:repeat(5,minmax(0,1fr)) auto;gap:8px;align-items:end;margin-top:10px}
+.err-controls{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) auto;gap:8px;align-items:end;margin-top:10px}
 @media(max-width:900px){.err-controls{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .err-controls label{display:flex;flex-direction:column;gap:4px;font-size:10.5px;color:var(--muted);font-weight:700}
-.err-sample{margin-top:10px;background:#0b1220;color:#e2e8f0;border-radius:10px;padding:10px 12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.45;white-space:pre-wrap;word-break:break-word;max-height:120px;overflow:auto}
-.err-sample .msg{color:#fbbf24;font-weight:600;margin-bottom:6px;white-space:normal}
 .err-empty{color:var(--muted);padding:16px;text-align:center}
-.policy-log{margin-top:8px;max-height:140px;overflow:auto;background:#0b1220;color:#dbe7ff;border-radius:8px;padding:8px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.4}
-.policy-log .pl-line{padding:1px 0;border-bottom:1px solid #ffffff0d}
-.policy-log .pl-line:last-child{border-bottom:0}
-.policy-log .pl-empty{color:#94a3b8}
 .table-wrap.accounts{max-height:min(62vh,680px)}
 .table-wrap.accounts th,.table-wrap.accounts td{padding:8px 8px}
 .table-wrap.accounts tr td:nth-child(2){min-width:210px}
@@ -126,7 +141,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.3.7</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.3.8</span> <span id="modeBadge" class="badge">模式</span></h1>
     </div>
     <div class="row" style="align-items:center">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -237,8 +252,9 @@ select.act{min-width:100px}input.num{width:70px}
   </div><!-- main-grid -->
 </div>
 <div class="toast" id="toast"></div>
+<div class="err-pop" id="errPop" role="dialog" aria-modal="true"></div>
 <script>
-let CFG={}, timer=null, LAST_LOGS=[], ERRORS=[], CURRENT_TAB='accounts';
+let CFG={}, timer=null, LAST_LOGS=[], LAST_ACCOUNTS=[], ERRORS=[], CURRENT_TAB='accounts';
 let ERR_RENDERED=false, ERR_SNAPSHOT='';
 const SIG_ZH={free_usage_429:'免费额度用尽',spending_limit_402:'消费限额',auth_401:'凭证失效',permission_403:'权限拒绝'};
 const API="/v0/management/cpa-xai-sentry";
@@ -317,48 +333,111 @@ function accountCell(a){
   return '<div class="acc-name">'+esc(name)+'</div>'+(tier?('<div class="acc-sub">'+esc(tier)+'</div>'):'');
 }
 function callsCell(a){
-  const ok=a.day_calls||0, fail=a.day_fail_calls||0;
-  const tip=accountErrorTip(a);
-  const badge=fail>0
-    ? '<span class="tag danger tip" title="'+esc(tip)+'">报错 '+fail+'</span>'
-    : '<span class="tag ok">0</span>';
-  const sig=a.last_signal?('<div class="sig-sub tip" title="'+esc(tip)+'">'+esc(shortSignal(a.last_signal))+'</div>'):'';
-  return '<div class="quota-main tip" title="'+esc(tip)+'">'+ok+' / '+fail+'</div>'+badge+sig;
+  const req=a.day_calls||0, fail=a.day_fail_calls||0;
+  const http=httpCodeOf(a.last_signal);
+  const chip=fail>0
+    ? '<button type="button" class="reqchip fail" data-auth="'+esc(a.auth_index)+'" onclick="openAccountError(this)"><span class="dot"></span><span class="http">HTTP '+(http||'ERR')+'</span><span>报错 '+fail+'</span></button>'
+    : '<span class="reqchip ok"><span class="dot"></span>正常</span>';
+  return '<div class="reqcell"><div class="nums">'+req+' / '+fail+'</div>'+chip+'</div>';
 }
-function shortSignal(sig){
-  if(!sig) return '';
+function httpCodeOf(sig){
   if(sig==='free_usage_429') return '429';
   if(sig==='spending_limit_402') return '402';
   if(sig==='auth_401') return '401';
   if(sig==='permission_403') return '403';
-  return sig.length>12?sig.slice(0,12)+'…':sig;
+  return '';
 }
-function accountErrorTip(a){
-  const lines=[];
+function shortSignal(sig){
+  return httpCodeOf(sig) || (sig && sig.length>12?sig.slice(0,12)+'…':(sig||''));
+}
+function cleanSample(raw){
+  let s=decodeEntities(raw||'').trim();
+  // sometimes double-encoded or quoted
+  if((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))){
+    try{s=JSON.parse(s)}catch(e){s=s.slice(1,-1)}
+  }
+  s=decodeEntities(String(s||''));
+  return s;
+}
+function parseErrorBody(raw){
+  const s=cleanSample(raw);
+  const out={code:'', message:'', tokens:'', pretty:s, http:''};
+  if(!s) return out;
+  try{
+    const obj=JSON.parse(s);
+    out.pretty=JSON.stringify(obj,null,2);
+    out.code=obj.code||(obj.error&&obj.error.code)||'';
+    out.message=obj.error||obj.message||(obj.error&&obj.error.message)||'';
+    if(typeof out.message==='object') out.message=out.message.message||JSON.stringify(out.message);
+    // tokens actual/limit from message text
+    const m=String(out.message||s).match(/tokens?\s*\(actual\/limit\):\s*(\d+)\s*\/\s*(\d+)/i);
+    if(m) out.tokens=m[1]+' / '+m[2];
+    return out;
+  }catch(e){}
+  const m=s.match(/tokens?\s*\(actual\/limit\):\s*(\d+)\s*\/\s*(\d+)/i);
+  if(m) out.tokens=m[1]+' / '+m[2];
+  out.message=s.split(/[\n\r]/)[0].slice(0,200);
+  out.pretty=s;
+  return out;
+}
+function findAccountByAuth(auth){
+  // recover from last rendered state via data attrs if needed
+  return (LAST_ACCOUNTS||[]).find(a=>a.auth_index===auth) || null;
+}
+function openAccountError(btn){
+  const auth=btn.getAttribute('data-auth');
+  const a=findAccountByAuth(auth);
+  if(!a){ toast('找不到账号详情'); return; }
   const sig=a.last_signal||'';
-  if(sig) lines.push((SIG_ZH[sig]||sig)+'  ['+sig+']');
-  if(a.reason) lines.push('说明: '+a.reason);
-  if(a.state) lines.push('状态: '+(STATE_ZH[a.state]||a.state));
-  if(a.day_calls||a.day_fail_calls) lines.push('今日请求 '+(a.day_calls||0)+' · 报错 '+(a.day_fail_calls||0));
-  // recent action logs for this account
-  const logs=(LAST_LOGS||[]).filter(l=>{
-    return l.auth===a.auth_index || l.auth_label===a.display_name || l.auth_label===a.email || l.auth===a.email;
-  }).slice().reverse().slice(0,8);
+  const http=httpCodeOf(sig)||'ERR';
+  const err=(ERRORS||[]).find(e=>e.key===sig) || {};
+  const body=parseErrorBody(err.sample||err.sample_pretty||'');
+  const title='HTTP '+http;
+  const sub=(SIG_ZH[sig]||sig||'错误')+(sig?(' · '+sig):'');
+  let html='<div class="ep-head"><div><div class="ep-code">'+esc(title)+'</div><div class="ep-sub">'+esc(sub)+'</div></div><button class="ep-close" onclick="closeErrPop()">×</button></div>';
+  html+='<div class="ep-kv">'+
+    '<b>账号</b><span>'+esc(a.display_name||a.email||a.auth_index||'-')+'</span>'+
+    '<b>状态</b><span>'+esc(STATE_ZH[a.state]||a.state||'-')+'</span>'+
+    '<b>今日</b><span>请求 '+(a.day_calls||0)+' · 报错 '+(a.day_fail_calls||0)+'</span>'+
+    (body.code?('<b>code</b><span class="mono">'+esc(body.code)+'</span>'):'')+
+    (body.tokens?('<b>tokens</b><span>'+esc(body.tokens)+'</span>'):'')+
+    (a.recover_at?('<b>恢复</b><span>'+esc(a.recover_at)+'</span>'):'')+
+  '</div>';
+  if(body.message) html+='<div class="ep-json"><div class="ep-msg">'+esc(body.message)+'</div>'+esc(body.pretty||'')+'</div>';
+  else if(body.pretty) html+='<div class="ep-json">'+esc(body.pretty)+'</div>';
+  else html+='<div class="muted">暂无完整错误体样本；已根据信号/计数汇总。</div>';
+  // recent related logs compact
+  const logs=(LAST_LOGS||[]).filter(l=>l.auth===a.auth_index || l.auth_label===a.display_name || l.auth_label===a.email).slice().reverse().slice(0,5);
   if(logs.length){
-    lines.push('—— 最近动作 ——');
-    logs.forEach(l=>{
-      lines.push((l.at||'')+' '+(l.text||((l.action_label||l.action||'')+' · '+(l.reason||l.signal_label||l.signal||''))));
-    });
+    html+='<div class="meta" style="margin:10px 0 4px">最近相关</div><div class="policy-log"><table><thead><tr><th>时间</th><th>账号</th><th>信息</th></tr></thead><tbody>'+
+      logs.map(l=>'<tr><td class="mono">'+esc(l.at||'')+'</td><td>'+esc(l.auth_label||l.auth||'')+'</td><td>'+esc(l.reason||l.signal_label||l.text||'')+'</td></tr>').join('')+
+    '</tbody></table></div>';
   }
-  // sample from error policy catalog
-  const err=(ERRORS||[]).find(e=>e.key===sig);
-  if(err && (err.sample||err.sample_pretty||err.sample_msg)){
-    lines.push('—— 错误样本 ——');
-    lines.push(err.sample_msg||err.sample||err.sample_pretty);
-    if(err.sample_pretty && err.sample_pretty!==err.sample) lines.push(String(err.sample_pretty).slice(0,500));
-  }
-  return lines.join('\n') || '暂无报错详情';
+  showErrPop(html, btn);
 }
+function showErrPop(html, anchor){
+  const pop=document.getElementById('errPop');
+  pop.innerHTML=html;
+  pop.classList.add('open');
+  const r=anchor.getBoundingClientRect();
+  const w=pop.offsetWidth||480, h=pop.offsetHeight||280;
+  let left=Math.min(window.innerWidth-w-12, Math.max(12, r.left));
+  let top=r.bottom+8;
+  if(top+h>window.innerHeight-8) top=Math.max(12, r.top-h-8);
+  pop.style.left=left+'px';
+  pop.style.top=top+'px';
+}
+function closeErrPop(){
+  const pop=document.getElementById('errPop');
+  if(pop){ pop.classList.remove('open'); pop.innerHTML=''; }
+}
+document.addEventListener('click',function(ev){
+  const pop=document.getElementById('errPop');
+  if(!pop || !pop.classList.contains('open')) return;
+  if(pop.contains(ev.target)) return;
+  if(ev.target.closest && ev.target.closest('.reqchip')) return;
+  closeErrPop();
+});
 function quotaCell(a){
   if(a.quota_limit || a.quota_used || a.quota_remaining){
     return '<div class="quota-main">'+esc(fmtTok(a.quota_used||0)+' / '+fmtTok(a.quota_limit||0)+' 剩 '+fmtTok(a.quota_remaining||0))+'</div>';
@@ -426,7 +505,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.3.7');
+    document.getElementById('ver').textContent='v'+(st.version||'0.3.8');
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
     const inv=st.inventory||{};
@@ -449,7 +528,7 @@ async function refresh(){
       coolLine.textContent=t;
     }
     document.getElementById('accMeta').textContent=(st.account_count||0)+' 行';
-    // load logs + error samples for hover tips
+    LAST_ACCOUNTS=st.accounts||[];
     try{
       const lg=await j('/logs'); LAST_LOGS=lg.logs||[];
       renderLogs(LAST_LOGS);
@@ -460,7 +539,7 @@ async function refresh(){
       }
     }catch(e){}
     const prevSel=new Set(selectedAuths());
-    document.getElementById('accBody').innerHTML=(st.accounts||[]).map(a=>'<tr>'+
+    document.getElementById('accBody').innerHTML=(LAST_ACCOUNTS||[]).map(a=>'<tr>'+
       '<td><input type="checkbox" class="rowchk" data-auth="'+esc(a.auth_index)+'"'+(prevSel.has(a.auth_index)?' checked':'')+'/></td>'+
       '<td>'+accountCell(a)+'</td>'+
       '<td>'+stateTag(a.state)+'</td>'+
@@ -473,27 +552,59 @@ async function refresh(){
     if(CURRENT_TAB==='errors') await loadErrors(false);
   }catch(e){ toast('刷新失败:'+e.message); console.error(e) }
 }
-function policyLogsHTML(key){
-  const rows=logsForPolicy(key);
-  if(!rows.length) return '<div class="pl-empty">暂无该策略相关动作日志</div>';
-  return rows.map(e=>{
-    const who=e.auth_label||e.auth||'';
-    const act=e.action_label||ACT_ZH[e.action]||e.action||'—';
-    const why=e.reason||e.signal_label||'';
-    return '<div class="pl-line"><span class="muted">'+esc(e.at||'')+'</span> '+esc(act)+(why?(' · '+esc(why)):'')+(who?(' · '+esc(who)):'')+'</div>';
-  }).join('');
-}
-function logsForPolicy(key){
-  // unmatched: no known builtin signal
+function policyErrorRows(key){
+  // build per-account error summary for this signal
   const known=new Set(Object.keys(SIG_ZH));
-  return (LAST_LOGS||[]).filter(l=>{
+  const logs=(LAST_LOGS||[]).filter(l=>{
     const sig=l.signal||'';
     if(key==='unmatched') return !sig || !known.has(sig);
     return sig===key;
-  }).slice().reverse().slice(0,40);
+  });
+  // group by account
+  const by={};
+  logs.forEach(l=>{
+    const id=l.auth||l.auth_label||'unknown';
+    if(!by[id]) by[id]={auth:id, label:l.auth_label||l.auth||id, lastAt:l.at||'', reason:l.reason||l.signal_label||l.text||'', hits:0};
+    by[id].hits++;
+    if((l.at||'') >= (by[id].lastAt||'')) {
+      by[id].lastAt=l.at||by[id].lastAt;
+      by[id].reason=l.reason||l.signal_label||l.text||by[id].reason;
+    }
+  });
+  // enrich with account day stats
+  Object.values(by).forEach(r=>{
+    const acc=(LAST_ACCOUNTS||[]).find(a=>a.auth_index===r.auth || a.email===r.label || a.display_name===r.label);
+    if(acc){
+      r.label=acc.display_name||acc.email||r.label;
+      r.req=acc.day_calls||0;
+      r.fail=acc.day_fail_calls||0;
+    }else{
+      r.req=r.hits; r.fail=r.hits;
+    }
+  });
+  // if no logs, still list accounts currently having this signal
+  if(!Object.keys(by).length){
+    (LAST_ACCOUNTS||[]).filter(a=>a.last_signal===key).forEach(a=>{
+      by[a.auth_index]={auth:a.auth_index,label:a.display_name||a.email,lastAt:a.updated_at||'',reason:a.reason||(SIG_ZH[key]||key),req:a.day_calls||0,fail:a.day_fail_calls||0,hits:a.day_fail_calls||0};
+    });
+  }
+  return Object.values(by).sort((a,b)=>(b.lastAt||'').localeCompare(a.lastAt||'')).slice(0,50);
 }
+function policyLogsHTML(key){
+  const rows=policyErrorRows(key);
+  if(!rows.length) return '<div class="pl-empty">暂无该策略相关报错</div>';
+  const err=(ERRORS||[]).find(e=>e.key===key)||{};
+  const sample=err.sample?parseErrorBody(err.sample):null;
+  return '<table><thead><tr><th style="width:70px">时间</th><th>账号</th><th>错误信息</th><th style="width:70px">请求</th><th style="width:70px">报错</th></tr></thead><tbody>'+
+    rows.map(r=>{
+      const msg=cleanSample(r.reason||'') || (sample&&sample.message) || (SIG_ZH[key]||key);
+      return '<tr><td class="mono">'+esc(r.lastAt||'')+'</td><td>'+esc(r.label||r.auth)+'</td><td title="'+esc(sample&&sample.pretty?sample.pretty:msg)+'">'+esc(String(msg).slice(0,120))+'</td><td>'+(r.req||0)+'</td><td>'+(r.fail||0)+'</td></tr>';
+    }).join('')+
+  '</tbody></table>';
+}
+function logsForPolicy(key){ return policyErrorRows(key); }
 function errorStructureKey(list){
-  return (list||[]).map(e=>e.key+'|'+(e.enabled?1:0)+'|'+(e.action||'')+'|'+(e.threshold||0)+'|'+(e.cooldown_seconds||0)+'|'+(e.never_trash?1:0)+'|'+(e.note||'')+'|'+(e.sample||'').slice(0,40)+'|'+logsForPolicy(e.key).length).sort().join(';');
+  return (list||[]).map(e=>e.key+'|'+(e.enabled?1:0)+'|'+(e.action||'')+'|'+(e.threshold||0)+'|'+(e.cooldown_seconds||0)+'|'+(e.never_trash?1:0)+'|'+policyErrorRows(e.key).length).sort().join(';');
 }
 function renderErrorCards(list, force){
   const snap=errorStructureKey(list);
@@ -510,19 +621,19 @@ function renderErrorCards(list, force){
   ERR_SNAPSHOT=snap; ERR_RENDERED=true;
   const box=document.getElementById('errBody');
   if(!(list||[]).length){ box.innerHTML='<div class="err-empty">还没有采集到错误。</div>'; return; }
-  box.innerHTML=list.slice().sort((a,b)=>(b.count||0)-(a.count||0)).map((e,i)=>{
-    const sample=e.sample?formatErrorSample(e.sample):null;
+  box.innerHTML=list.slice().sort((a,b)=>(b.count||0)-(a.count||0)).map((e)=>{
     const last=(e.last_at||'').replace('T',' ').replace('Z','')||'—';
     const act=ACT_ZH[e.action]||e.action||'-';
+    const http=httpCodeOf(e.key);
     return '<div class="err-card" data-key="'+esc(e.key)+'">'+
       '<div class="err-head"><div>'+
-        '<div class="err-title">'+esc(e.label||e.key)+'</div>'+
+        '<div class="err-title">'+esc(e.label||e.key)+(http?(' · HTTP '+http):'')+'</div>'+
         '<div class="err-meta">'+
           '<span class="tag">'+(e.source==='builtin'?'内置':'动态')+'</span>'+
           (e.never_trash?'<span class="tag danger">禁删</span>':'')+
           '<span class="tag">命中 <b data-f="count">'+(e.count||0)+'</b></span>'+
           '<span class="tag muted">最近 <span data-f="last">'+esc(last)+'</span></span>'+
-          '<span class="tag">当前动作: '+esc(act)+'</span>'+
+          '<span class="tag">动作: '+esc(act)+'</span>'+
         '</div></div></div>'+
       '<div class="err-controls">'+
         '<label>启用<select class="en"><option value="1"'+(e.enabled?' selected':'')+'>开</option><option value="0"'+(!e.enabled?' selected':'')+'>关</option></select></label>'+
@@ -531,8 +642,7 @@ function renderErrorCards(list, force){
         '<label>冷却秒<input class="num cd" type="number" min="0" value="'+(e.cooldown_seconds||0)+'"/></label>'+
         '<button class="xs primary" data-key="'+esc(e.key)+'" onclick="saveErrorKey(this.getAttribute(\'data-key\'))">保存</button>'+
       '</div>'+
-      (sample && sample.pretty ? ('<div class="err-sample"><div class="msg">最近样本</div>'+esc((sample.pretty||'').slice(0,280))+'</div>') : '')+
-      '<div class="meta" style="margin-top:8px">本策略动作日志</div>'+
+      '<div class="meta" style="margin-top:8px">报错日志</div>'+
       '<div class="policy-log" data-f="plog">'+policyLogsHTML(e.key)+'</div>'+
     '</div>';
   }).join('');

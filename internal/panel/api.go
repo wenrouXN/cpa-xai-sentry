@@ -2,6 +2,7 @@ package panel
 
 import (
 	"encoding/json"
+	"html"
 	"net/http"
 	"strings"
 	"sync"
@@ -376,7 +377,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":         "cpa-xai-sentry",
-		"version":        "0.3.7",
+		"version":        "0.3.8",
 		"mode":           modeOf(*a.Cfg),
 		"mode_label":     modeLabel(modeOf(*a.Cfg)),
 		"summary":        summary,
@@ -713,7 +714,7 @@ func (a *API) handleRunTick(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.3.7",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.3.8",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 		"cooldown_stats": a.State.CooldownStats(time.Now()),
 	})
@@ -913,7 +914,7 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 		if !o.LastAt.IsZero() {
 			r0.LastAt = o.LastAt.UTC().Format(time.RFC3339)
 		}
-		r0.Sample = o.Sample
+		r0.Sample = html.UnescapeString(o.Sample)
 		r0.StatusCode = o.StatusCode
 		r0.Code = o.Code
 		byKey[o.Key] = r0
