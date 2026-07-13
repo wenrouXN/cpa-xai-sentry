@@ -189,7 +189,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.12</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.13</span> <span id="modeBadge" class="badge">模式</span></h1>
     </div>
     <div class="row" style="align-items:center;flex-wrap:wrap">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -791,6 +791,7 @@ function composeLogClient(e){
   if(act==='reenable') return why?(why+'，已恢复启用 '+(who||'账号')):('已恢复启用 '+(who||'账号'));
   if(act==='candidate') return why?('因'+why+'，已将 '+(who||'账号')+' 移入候选'):('已将 '+(who||'账号')+' 移入候选');
   if(act==='trash'||act==='delete') return why?('因'+why+'，已将 '+(who||'账号')+' 移入垃圾箱'):('已将 '+(who||'账号')+' 移入垃圾箱');
+  if(act==='reopen_foreign') return '维护发现非本哨兵冷却禁用，已重新打开 '+(who||'账号')+'，等待下次真实报错';
   if(act==='file_disabled_sync') return '维护发现 CPA 凭证文件已禁用，已将 '+(who||'账号')+' 标记为「CPA已禁用」（不是你点的）';
   if(act==='manual_disable') return '已在面板手动禁用 '+(who||'账号');
   if(act==='manual_enable') return '已在面板手动启用 '+(who||'账号');
@@ -821,7 +822,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.5.12');
+    document.getElementById('ver').textContent='v'+(st.version||'0.5.13');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};

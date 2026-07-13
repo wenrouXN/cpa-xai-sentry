@@ -348,15 +348,13 @@ func (g *Guard) Tick(ctx context.Context) error {
 			}
 		}
 	}
-	// One-shot import: Active in sentry but CPA file already disabled (outside sentry).
-	// Does NOT re-touch accounts already cooling — avoids cooldown↔sync loop.
-	synced, syncErr := g.syncDisabledFromCPA(ctx, now)
-	_ = synced
-	if syncErr != nil {
-		// non-fatal: still continue recover/purge
-		g.State.Log(state.ActionLog{Source: "tick", Action: "sync_disabled_failed", Reason: syncErr.Error()})
+	// Re-open CPA files disabled by non-sentry causes; leave our plugin_auto cool-downs alone.
+	// Wait for next real usage/patrol error instead of inventing cooldown from file flags.
+	reopened, reopenErr := g.reopenForeignDisabled(ctx, now)
+	_ = reopened
+	if reopenErr != nil {
+		g.State.Log(state.ActionLog{Source: "tick", Action: "reopen_foreign_failed", Reason: reopenErr.Error()})
 	}
-	g.correctFalseQuotaCooldowns(now)
 	g.pruneDuplicateAccounts()
 	for _, acc := range g.State.AccountsSnapshot() {
 		if acc.RecoverAt.IsZero() || acc.RecoverAt.After(now) {
@@ -394,12 +392,11 @@ func (g *Guard) Tick(ctx context.Context) error {
 	return g.State.Save()
 }
 
-// clean up verbose comments in sync - simplify the signal stamp block
-// syncDisabledFromCPA is a ONE-WAY import for "CPA file disabled but sentry still Active".
-// It must NOT re-process accounts already in cooldown/candidate/manual/trash — that creates
-// a feedback loop: usage cools account → disables file → every tick re-logs "aligned to cooldown".
-// Real 429/401/403 cool-downs come from usage/patrol HandleUsage, not from this sync.
-func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, error) {
+// reopenForeignDisabled re-enables CPA auth files that are disabled but NOT owned by
+// this sentry's intentional cool-down / 候删 / panel-manual lock.
+// Policy: if we didn't put it into plugin_auto cooldown/candidate, open it and wait
+// for the next real error signal from usage/patrol.
+func (g *Guard) reopenForeignDisabled(ctx context.Context, now time.Time) (int, error) {
 	if g.CPA == nil {
 		return 0, nil
 	}
@@ -407,100 +404,99 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 	if err != nil {
 		return 0, err
 	}
-	byName := map[string]cpaapi.AuthFile{}
-	byEmail := map[string]cpaapi.AuthFile{}
-	for _, f := range files {
-		name := strings.ToLower(strings.TrimSpace(f.Name))
-		if name != "" {
-			byName[name] = f
+	// index sentry accounts by file/email for ownership checks
+	byFile := map[string]*state.Account{}
+	byEmail := map[string]*state.Account{}
+	for _, acc := range g.State.AccountsSnapshot() {
+		if acc.FileName != "" {
+			byFile[strings.ToLower(strings.TrimSpace(acc.FileName))] = acc
 		}
-		em := strings.ToLower(strings.TrimSpace(f.Email))
-		if em != "" {
-			byEmail[em] = f
+		if acc.Email != "" {
+			byEmail[strings.ToLower(strings.TrimSpace(acc.Email))] = acc
 		}
 	}
-	// mark files already owned by a non-active sentry account so we don't re-import
-	handledFile := map[string]bool{}
-	for _, acc := range g.State.AccountsSnapshot() {
-		if acc.State == state.Active || acc.State == "" {
-			continue
+	// protect=true means DO NOT auto-reopen (leave disabled)
+	protect := func(acc *state.Account) bool {
+		if acc == nil {
+			return false // untracked disabled file → reopen
 		}
-		// already cooling / candidate / manual / trash => file disabled is expected, do nothing
-		fn := strings.ToLower(strings.TrimSpace(acc.FileName))
-		em := strings.ToLower(strings.TrimSpace(acc.Email))
-		if fn != "" {
-			handledFile[fn] = true
+		// trash stays
+		if acc.State == state.Trashed || acc.State == state.Purged {
+			return true
 		}
-		if em != "" {
-			handledFile["xai-"+em+".json"] = true
-			handledFile[em] = true
+		// panel manual lock
+		if acc.DisableSource == "user_manual" || acc.PreDisabled {
+			return true
 		}
-	}
-	n := 0
-	seen := map[string]bool{}
-	for _, acc := range g.State.AccountsSnapshot() {
-		// ONLY import into still-active accounts. Never touch cooling/候删/manual again.
-		if acc.State != state.Active && acc.State != "" {
-			continue
-		}
-		fn := strings.ToLower(strings.TrimSpace(acc.FileName))
-		em := strings.ToLower(strings.TrimSpace(acc.Email))
-		f, ok := byName[fn]
-		if !ok && em != "" {
-			f, ok = byEmail[em]
-		}
-		if !ok && em != "" {
-			f, ok = byName["xai-"+em+".json"]
-		}
-		if !ok || !f.Disabled {
-			continue
-		}
-		fileKey := strings.ToLower(strings.TrimSpace(f.Name))
-		if fileKey == "" {
-			fileKey = fn
-		}
-		if fileKey != "" {
-			if seen[fileKey] || handledFile[fileKey] {
-				continue
+		// our auto cool-down / 候删
+		if acc.DisableSource == "plugin_auto" {
+			switch acc.State {
+			case state.CooldownQuota, state.CooldownSpending, state.CooldownPermission, state.CandidateDead:
+				return true
 			}
-			seen[fileKey] = true
 		}
-		// Sentry still thinks Active, but CPA file is disabled outside our cooldown path.
-		// Do NOT invent 额度冷却 here — that belongs to real 429 usage/patrol.
-		// Just mark as CPA-file-disabled so panel shows "CPA已禁用" once.
-		g.State.SetAccountState(acc.AuthIndex, state.UserManual, "cpa_file_disabled")
-		g.State.SetRecoverAt(acc.AuthIndex, time.Time{})
-		g.State.Log(state.ActionLog{
-			Auth: acc.AuthIndex, Source: "tick", Signal: "",
-			Action: "file_disabled_sync", Reason: "cpa_disabled_sync",
-		})
+		// cpa_file_disabled / foreign / active+file disabled / empty → reopen
+		return false
+	}
+
+	n := 0
+	for _, f := range files {
+		if !f.Disabled {
+			continue
+		}
+		name := strings.TrimSpace(f.Name)
+		prov := f.Provider
+		if prov == "" {
+			prov = f.Type
+		}
+		if name == "" || !cpaapi.IsXAIName(name, prov) {
+			continue
+		}
+		low := strings.ToLower(name)
+		em := strings.ToLower(strings.TrimSpace(f.Email))
+		acc := byFile[low]
+		if acc == nil && em != "" {
+			acc = byEmail[em]
+		}
+		if acc == nil && em != "" {
+			acc = byFile["xai-"+em+".json"]
+		}
+		// if we intentionally disabled it for cool-down/候删/manual — skip
+		if protect(acc) {
+			continue
+		}
+		// foreign / unknown / cpa_file_disabled / empty ownership → re-open file
+		if err := g.CPA.SetDisabled(ctx, name, false); err != nil {
+			g.State.Log(state.ActionLog{
+				Auth: func() string {
+					if acc != nil {
+						return acc.AuthIndex
+					}
+					return name
+				}(),
+				Source: "tick", Action: "reopen_foreign_failed", Reason: err.Error(),
+			})
+			continue
+		}
+		// clear sentry sticky state if any
+		if acc != nil {
+			g.State.ClearManualLock(acc.AuthIndex)
+			// also clear last_signal? keep for history; recover cleared by ClearManualLock
+			g.State.Log(state.ActionLog{
+				Auth: acc.AuthIndex, Source: "tick", Action: "reopen_foreign",
+				Reason: "foreign_or_unknown_disabled",
+			})
+		} else {
+			// file not tracked yet — just open, next usage will create state
+			g.State.Log(state.ActionLog{
+				Auth: name, Source: "tick", Action: "reopen_foreign",
+				Reason: "foreign_disabled_untracked",
+			})
+		}
 		n++
 	}
 	return n, nil
 }
-
-// correctFalseQuotaCooldowns demotes cooldown_quota without free-usage evidence.
-func (g *Guard) correctFalseQuotaCooldowns(now time.Time) {
-	if g.State == nil {
-		return
-	}
-	for _, acc := range g.State.AccountsSnapshot() {
-		if acc.State != state.CooldownQuota {
-			continue
-		}
-		if acc.LastSignal == string(match.SignalFreeUsage429) || strings.Contains(acc.QuotaSource, "free_usage") {
-			continue
-		}
-		// keep true free-usage even if last_signal blank but recover_at set from free path? only if source free
-		if acc.DisableSource == "plugin_auto" && acc.LastSignal == "" {
-			// demote to CPA-file-disabled manual if file still disabled, else active
-			g.State.SetAccountState(acc.AuthIndex, state.UserManual, "cpa_file_disabled")
-			g.State.SetRecoverAt(acc.AuthIndex, time.Time{})
-			g.State.Log(state.ActionLog{Auth: acc.AuthIndex, Source: "tick", Action: "file_disabled_sync", Reason: "demote_false_quota_cooldown"})
-		}
-	}
-}
-
 
 // pruneDuplicateAccounts keeps one state entry per email/file (prefer hash auth_index).
 func (g *Guard) pruneDuplicateAccounts() {

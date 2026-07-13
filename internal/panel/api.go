@@ -678,7 +678,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":         "cpa-xai-sentry",
-		"version":        "0.5.12",
+		"version":        "0.5.13",
 		"mode":           modeOf(*a.Cfg),
 		"mode_label":     modeLabel(modeOf(*a.Cfg)),
 		"summary":        summary,
@@ -951,6 +951,8 @@ func humanizeReason(reason, sigL, action string) string {
 		return "面板批量操作"
 	case "cpa_disabled_sync":
 		return "CPA凭证文件已禁用（非面板操作）"
+	case "foreign_or_unknown_disabled", "foreign_disabled_untracked":
+		return "非本哨兵冷却禁用，已重新打开"
 	case "cpa_disabled_free_usage_sync":
 		return "CPA已禁用且有免费额度证据（状态对齐）"
 	case "demote_false_quota_cooldown":
@@ -1121,6 +1123,10 @@ func logActionZH(a string) string {
 		return "手动禁用"
 	case "file_disabled_sync":
 		return "CPA文件禁用对齐"
+	case "reopen_foreign":
+		return "打开非自有禁用"
+	case "reopen_foreign_failed":
+		return "打开非自有禁用失败"
 	case "manual_enable":
 		return "手动启用"
 	case "backfill", "auto_backfill":
@@ -1360,7 +1366,7 @@ func (a *API) handlePatrolStatus(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.12",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.13",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 		"cooldown_stats": a.State.CooldownStats(time.Now()),
 	})
