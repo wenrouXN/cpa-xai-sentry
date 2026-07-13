@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.6
+
+### Fix: patrol all accounts HTTP 400
+- Root cause: probe body sent `max_tokens` to `/v1/responses`, which rejects it.
+- Use endpoint-specific payloads (`chat/completions` → `max_tokens`; `responses` → `max_output_tokens` only).
+- Prefer `/chat/completions` first; on shape-related 400, fall through to the other path.
+- Do not treat request-shape 400 as account death.
+
+
 ## 1.1.5
 
 ### Fix: permission_403 streak stuck at 3
@@ -142,6 +151,15 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.6
+
+### Fix: patrol all accounts HTTP 400
+- Root cause: probe body sent `max_tokens` to `/v1/responses`, which rejects it.
+- Use endpoint-specific payloads (`chat/completions` → `max_tokens`; `responses` → `max_output_tokens` only).
+- Prefer `/chat/completions` first; on shape-related 400, fall through to the other path.
+- Do not treat request-shape 400 as account death.
+
 
 ## 1.1.5
 

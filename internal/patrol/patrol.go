@@ -124,17 +124,19 @@ func (r *Runner) probeOne(ctx context.Context, t Target) Result {
 	// Prefer CPA/xAI executor path POST /responses first (Grok CLI chat-proxy + api.x.ai),
 	// then chat/completions fallback.
 	var paths []string
+	// Prefer chat/completions first (stable max_tokens). /responses is fallback
+	// with max_output_tokens-only body (max_tokens is rejected there → HTTP 400).
 	if strings.HasSuffix(strings.ToLower(base), "/v1") {
-		paths = []string{"/responses", "/chat/completions"}
+		paths = []string{"/chat/completions", "/responses"}
 	} else {
-		paths = []string{"/v1/responses", "/v1/chat/completions"}
+		paths = []string{"/v1/chat/completions", "/v1/responses"}
 	}
 	var lastErr error
 	var lastCode int
 	var lastBody string
 	for attempt := 0; attempt < 3; attempt++ {
-		for _, p := range paths {
-			code, body, err := r.postProbe(ctx, base+p, model, t.Token)
+		for _, pth := range paths {
+			code, body, err := r.postProbe(ctx, base+pth, pth, model, t.Token)
 			if err != nil {
 				lastErr = err
 				// network: retry
@@ -150,7 +152,13 @@ func (r *Runner) probeOne(ctx context.Context, t Target) Result {
 			}
 			// 404 on a path: try next path shape (not necessarily dead account)
 			if code == 404 {
-				lastErr = fmt.Errorf("http 404 on %s", p)
+				lastErr = fmt.Errorf("http 404 on %s", pth)
+				continue
+			}
+			// 400 due to wrong request shape for this path: try alternate endpoint
+			// e.g. /v1/responses rejects max_tokens — not an account failure.
+			if code == 400 && IsProbeShapeError(body) {
+				lastErr = fmt.Errorf("http 400 shape on %s", pth)
 				continue
 			}
 			res.SignalPath = true
@@ -178,19 +186,47 @@ func (r *Runner) probeOne(ctx context.Context, t Target) Result {
 	return res
 }
 
-func (r *Runner) postProbe(ctx context.Context, url, model, token string) (int, string, error) {
-	// Prefer chat/completions-compatible payload; /v1/responses may ignore extra fields or require max_output_tokens.
-	payload := map[string]any{
-		"model": model,
-		"messages": []map[string]string{
-			{"role": "user", "content": "ping"},
-		},
-		"max_tokens":        1,
-		"max_output_tokens": 1,
-		"stream":            false,
+func IsProbeShapeError(body string) bool {
+	low := strings.ToLower(body)
+	// CPA/xAI: wrong field for endpoint — not auth death
+	if strings.Contains(low, "max_tokens") && strings.Contains(low, "not supported") {
+		return true
 	}
-	// responses-style field (harmless on chat endpoints that ignore unknown keys)
-	payload["input"] = "ping"
+	if strings.Contains(low, "max_output_tokens") && strings.Contains(low, "not supported") {
+		return true
+	}
+	if strings.Contains(low, "unknown field") || strings.Contains(low, "unsupported") {
+		// only treat as shape if mentions token limits / responses
+		if strings.Contains(low, "token") || strings.Contains(low, "responses") || strings.Contains(low, "messages") || strings.Contains(low, "input") {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Runner) postProbe(ctx context.Context, url, pathHint, model, token string) (int, string, error) {
+	// Endpoint-specific payload:
+	//  - /responses: OpenAI-style responses API — max_output_tokens + input (NO max_tokens)
+	//  - /chat/completions: max_tokens + messages
+	lowPath := strings.ToLower(pathHint)
+	var payload map[string]any
+	if strings.Contains(lowPath, "responses") {
+		payload = map[string]any{
+			"model":             model,
+			"input":             "ping",
+			"max_output_tokens": 1,
+			"stream":            false,
+		}
+	} else {
+		payload = map[string]any{
+			"model": model,
+			"messages": []map[string]string{
+				{"role": "user", "content": "ping"},
+			},
+			"max_tokens": 1,
+			"stream":     false,
+		}
+	}
 	b, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
 	if err != nil {
