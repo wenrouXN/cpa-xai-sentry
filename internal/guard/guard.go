@@ -626,6 +626,43 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 		})
 		n++
 	}
+
+	// Clear sticky cpa_file_disabled when the CPA file is already enabled
+	// (self-heal already opened it, or operator enabled outside).
+	disabledSet := map[string]bool{}
+	for _, f := range files {
+		if !f.Disabled {
+			continue
+		}
+		nm := strings.ToLower(strings.TrimSpace(f.Name))
+		if nm != "" {
+			disabledSet[nm] = true
+		}
+		em := strings.ToLower(strings.TrimSpace(f.Email))
+		if em != "" {
+			disabledSet["email:"+em] = true
+		}
+	}
+	for _, acc := range g.State.AccountsSnapshot() {
+		if acc.DisableSource != "cpa_file_disabled" && acc.DisableSource != "cpa_disabled" {
+			continue
+		}
+		fn := strings.ToLower(strings.TrimSpace(acc.FileName))
+		em := strings.ToLower(strings.TrimSpace(acc.Email))
+		still := (fn != "" && disabledSet[fn]) || (em != "" && disabledSet["email:"+em])
+		if still {
+			// file still disabled: if self-heal on, reopen path above should have handled;
+			// if conservative, keep tag.
+			continue
+		}
+		// file not disabled anymore → drop sticky tag
+		g.State.ResetToActive(acc.AuthIndex)
+		g.State.Log(state.ActionLog{
+			Auth: acc.AuthIndex, Source: "tick", Action: "clear_cpa_disabled_tag",
+			Reason: "file_already_enabled",
+		})
+		n++
+	}
 	return n, nil
 }
 
