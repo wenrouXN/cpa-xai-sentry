@@ -12,7 +12,11 @@
 }
 *{box-sizing:border-box}
 body{margin:0;font-family:var(--font);color:var(--text);background:linear-gradient(120deg,#f0f7ff,#e7f2ff 50%,#edf7ff);font-size:12.5px}
-.wrap{max-width:1480px;margin:0 auto;padding:12px 14px 24px}
+.wrap{max-width:1680px;margin:0 auto;padding:12px 14px 24px}
+.main-grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:10px;align-items:start}
+@media(max-width:1100px){.main-grid{grid-template-columns:1fr}}
+.side-log{position:sticky;top:10px;max-height:calc(100vh - 20px);display:flex;flex-direction:column;margin:0}
+.side-log .logbox{flex:1;min-height:280px;max-height:calc(100vh - 110px)}
 .top{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start;margin-bottom:10px}
 h1{font-size:16px;margin:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .eyebrow{font-size:11px;color:var(--accent);font-weight:700;letter-spacing:.04em}
@@ -137,11 +141,12 @@ select.act{min-width:100px}input.num{width:70px}
     <div class="preset-hint" id="metricsLine">CPAMP：—</div>
   </div>
 
+  <div class="main-grid">
+  <div class="main-left">
   <div class="tabs" role="tablist">
     <button type="button" class="active" data-tab="accounts" onclick="switchTab('accounts')">账号结果</button>
     <button type="button" data-tab="errors" onclick="switchTab('errors')">错误策略</button>
     <button type="button" data-tab="trash" onclick="switchTab('trash')">垃圾箱</button>
-    <button type="button" data-tab="logs" onclick="switchTab('logs')">动作日志</button>
   </div>
 
   <div id="tab-accounts" class="tabpanel card" style="margin:0">
@@ -232,10 +237,13 @@ select.act{min-width:100px}input.num{width:70px}
     </div>
   </div>
 
-  <div id="tab-logs" class="tabpanel card" hidden>
-    <h2><span>动作日志</span><span class="meta">仅此一份</span></h2>
+  </div><!-- main-left -->
+
+  <div class="card side-log" id="sideLogCard">
+    <h2><span>动作日志</span><span class="meta" id="logMeta">实时</span></h2>
     <div id="logbox" class="logbox">—</div>
   </div>
+  </div><!-- main-grid -->
 </div>
 <div class="toast" id="toast"></div>
 <script>
@@ -279,13 +287,14 @@ function actionTag(a){const cls=({cooldown:'cooldown',candidate:'candidate',tras
 function switchTab(name){
   CURRENT_TAB=name;
   document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
-  ['accounts','errors','trash','logs'].forEach(n=>{
+  ['accounts','errors','trash'].forEach(n=>{
     const el=document.getElementById('tab-'+n);
     if(el) el.hidden=(n!==name);
   });
   if(name==='errors') loadErrors();
-  if(name==='logs') renderLogs(LAST_LOGS);
   if(name==='trash') refreshTrashOnly();
+  // logs always visible on the right
+  renderLogs(LAST_LOGS);
 }
 function debouncedRefresh(){clearTimeout(timer); timer=setTimeout(refresh,220)}
 function renderKPIs(s, trashCount, cool){
@@ -327,6 +336,8 @@ function renderLogs(logs){
     return '<div><span class="muted">'+esc((e.at||'').replace('T',' ').replace('Z',''))+'</span> <span class="'+cls+'">'+esc(e.action)+'</span> <span class="l-sig">'+esc(e.signal||'-')+'</span> <span>'+esc(e.auth||'')+'</span> <span class="muted">'+esc(e.reason||'')+'</span></div>';
   });
   box.innerHTML=lines.join('')||'暂无日志';
+  const meta=document.getElementById('logMeta');
+  if(meta) meta.textContent=(LAST_LOGS.length||0)+' 条 · 右侧常驻';
 }
 async function refreshTrashOnly(){
   try{
