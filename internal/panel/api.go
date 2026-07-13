@@ -177,7 +177,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	stateFilter := strings.TrimSpace(r.URL.Query().Get("state"))
 	signalFilter := strings.TrimSpace(r.URL.Query().Get("signal"))
 	actionFilter := strings.TrimSpace(r.URL.Query().Get("action"))
-	// Best-effort resolve identities for display.
+	// Best-effort resolve identities for display (read-only; UpdateMeta no longer bumps UpdatedAt).
 	if a.Guard != nil && a.Guard.Resolver != nil {
 		_ = a.Guard.Resolver.Ensure(r.Context())
 		for _, acc := range a.State.AccountsSnapshot() {
@@ -187,7 +187,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	accs := a.State.AccountsSnapshot()
-	// rehydrate free-usage actual/limit from observed error samples (fix old fake 2M/2M)
+	// rehydrate free-usage actual/limit from observed error samples (does not bump UpdatedAt)
 	for _, o := range a.State.ListObserved() {
 		if o.Sample == "" || o.LastAuth == "" {
 			continue
@@ -197,7 +197,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		}
 		qi := quota.FreeUsageExhaustedEstimate(o.Sample, time.Time{})
 		if qi.Used > 0 || qi.Limit > 0 {
-			a.State.UpdateQuota(o.LastAuth, qi.Limit, qi.Used, qi.Remaining, "free_usage_exhausted", qi.ResetAt)
+			a.State.UpdateQuotaQuiet(o.LastAuth, qi.Limit, qi.Used, qi.Remaining, "free_usage_exhausted", qi.ResetAt)
 		}
 	}
 	accs = a.State.AccountsSnapshot()
@@ -253,33 +253,33 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	var cpampTokSum, cpampCallSum int64
 	rows := make([]row, 0, len(accs))
 	for _, acc := range accs {
-		// prefer CPAMP usage.sqlite per-auth day stats
+		// prefer CPAMP usage.sqlite per-auth day stats (display-only; no state mutation on read)
 		usageSrc := "local"
 		dayC, dayF, dayT := acc.DayCalls, acc.DayFailCalls, acc.DayTokens
 		var dayS, dayIn, dayOut int64
+		var lastReqMS int64
+		var cuOK cpamp.AccountDay
+		var hasCU bool
 		if cu, ok := cpampByAuth[acc.AuthIndex]; ok {
 			usageSrc = "cpamp"
 			dayC, dayS, dayF = cu.Calls, cu.Success, cu.Failure
 			dayT, dayIn, dayOut = cu.Tokens, cu.InputTokens, cu.OutputTokens
-			if cu.Actual > 0 || cu.Limit > 0 {
-				// write real free-usage actual/limit into account quota
-				a.State.UpdateQuota(acc.AuthIndex, cu.Limit, cu.Actual, max64(0, cu.Limit-cu.Actual), "cpamp_fail_body", time.Time{})
-				acc.QuotaLimit, acc.QuotaUsed = cu.Limit, cu.Actual
-				acc.QuotaRemaining = max64(0, cu.Limit-cu.Actual)
-				acc.QuotaSource = "cpamp_fail_body"
-			}
+			lastReqMS = cu.LastMS
+			cuOK, hasCU = cu, true
 		} else if acc.Email != "" {
 			if cu, ok := cpampByEmail[strings.ToLower(acc.Email)]; ok {
 				usageSrc = "cpamp"
 				dayC, dayS, dayF = cu.Calls, cu.Success, cu.Failure
 				dayT, dayIn, dayOut = cu.Tokens, cu.InputTokens, cu.OutputTokens
-				if cu.Actual > 0 || cu.Limit > 0 {
-					a.State.UpdateQuota(acc.AuthIndex, cu.Limit, cu.Actual, max64(0, cu.Limit-cu.Actual), "cpamp_fail_body", time.Time{})
-					acc.QuotaLimit, acc.QuotaUsed = cu.Limit, cu.Actual
-					acc.QuotaRemaining = max64(0, cu.Limit-cu.Actual)
-					acc.QuotaSource = "cpamp_fail_body"
-				}
+				lastReqMS = cu.LastMS
+				cuOK, hasCU = cu, true
 			}
+		}
+		// apply actual/limit for THIS response only (do not mutate store on /state read)
+		if hasCU && (cuOK.Actual > 0 || cuOK.Limit > 0) {
+			acc.QuotaLimit, acc.QuotaUsed = cuOK.Limit, cuOK.Actual
+			acc.QuotaRemaining = max64(0, cuOK.Limit-cuOK.Actual)
+			acc.QuotaSource = "cpamp_fail_body"
 		}
 		// if still no success count, derive
 		if dayS == 0 && dayC >= dayF {
@@ -348,7 +348,10 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		if !acc.RecoverAt.IsZero() {
 			ra = acc.RecoverAt.In(time.FixedZone("CST", 8*3600)).Format("01-02 15:04")
 		}
-		if !acc.UpdatedAt.IsZero() {
+		// Prefer last real request time from CPAMP usage events (not panel refresh time)
+		if lastReqMS > 0 {
+			ua = time.UnixMilli(lastReqMS).In(time.FixedZone("CST", 8*3600)).Format("01-02 15:04:05")
+		} else if !acc.UpdatedAt.IsZero() {
 			ua = acc.UpdatedAt.In(time.FixedZone("CST", 8*3600)).Format("01-02 15:04:05")
 		}
 		streakSum := ""
@@ -475,7 +478,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":         "cpa-xai-sentry",
-		"version":        "0.4.3",
+		"version":        "0.4.4",
 		"mode":           modeOf(*a.Cfg),
 		"mode_label":     modeLabel(modeOf(*a.Cfg)),
 		"summary":        summary,
@@ -826,7 +829,7 @@ func (a *API) handleRunTick(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.4.3",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.4.4",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 		"cooldown_stats": a.State.CooldownStats(time.Now()),
 	})

@@ -369,20 +369,28 @@ func (s *Store) UpdateMeta(authIndex, fileName, email, tierName string) {
 		s.Accounts[authIndex] = acc
 	}
 	// Prefer human-readable filename/email over opaque hash placeholders.
+	changed := false
 	if fileName != "" {
 		if acc.FileName == "" || isOpaqueMeta(acc.FileName) || (!isOpaqueMeta(fileName) && acc.FileName != fileName && strings.Contains(fileName, "@")) {
-			acc.FileName = fileName
+			if acc.FileName != fileName {
+				acc.FileName = fileName
+				changed = true
+			}
 		} else if acc.FileName == authIndex && fileName != authIndex {
 			acc.FileName = fileName
+			changed = true
 		}
 	}
-	if email != "" {
+	if email != "" && acc.Email != email {
 		acc.Email = email
+		changed = true
 	}
 	if tierName != "" && (acc.Tier == "" || acc.Tier == "unknown") {
 		acc.Tier = tierName
+		changed = true
 	}
-	acc.UpdatedAt = time.Now()
+	// Do NOT bump UpdatedAt here — metadata refresh is not a real request event.
+	_ = changed
 }
 
 func isOpaqueMeta(s string) bool {
@@ -519,7 +527,17 @@ func (s *Store) MetricsSnapshot() MetricsFloor {
 }
 
 // UpdateQuota writes best-effort per-account quota numbers.
+// touchUpdated=false keeps UpdatedAt untouched (for background/display rehydrate).
 func (s *Store) UpdateQuota(authIndex string, limit, used, remaining int64, source string, resetAt time.Time) {
+	s.updateQuota(authIndex, limit, used, remaining, source, resetAt, true)
+}
+
+// UpdateQuotaQuiet updates quota fields without treating it as a request event.
+func (s *Store) UpdateQuotaQuiet(authIndex string, limit, used, remaining int64, source string, resetAt time.Time) {
+	s.updateQuota(authIndex, limit, used, remaining, source, resetAt, false)
+}
+
+func (s *Store) updateQuota(authIndex string, limit, used, remaining int64, source string, resetAt time.Time, touchUpdated bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	acc := s.Accounts[authIndex]
@@ -546,7 +564,9 @@ func (s *Store) UpdateQuota(authIndex string, limit, used, remaining int64, sour
 			acc.RecoverAt = resetAt
 		}
 	}
-	acc.UpdatedAt = time.Now()
+	if touchUpdated {
+		acc.UpdatedAt = time.Now()
+	}
 }
 
 // IncDayUsage bumps local day counters for an account (Shanghai day key expected).
