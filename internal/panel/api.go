@@ -13,6 +13,7 @@ import (
 	"github.com/openclaw-local/cpa-xai-sentry/internal/cpamp"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/errorsig"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/guard"
+	"github.com/openclaw-local/cpa-xai-sentry/internal/match"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/patrol"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/quota"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/sentrycfg"
@@ -682,7 +683,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":         "cpa-xai-sentry",
-		"version":        "0.5.15",
+		"version":        "0.5.16",
 		"mode":           modeOf(*a.Cfg),
 		"mode_label":     modeLabel(modeOf(*a.Cfg)),
 		"summary":        summary,
@@ -1371,7 +1372,7 @@ func (a *API) handlePatrolStatus(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.15",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.16",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 		"cooldown_stats": a.State.CooldownStats(time.Now()),
 	})
@@ -1527,6 +1528,15 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 		}
 		a.State.EnsureBuiltinPolicies(builtins)
 	}
+	// collapse legacy duplicate keys into builtins
+	for _, pair := range [][3]string{
+		{"http_401", "auth_401", "401·凭证失效"},
+		{"http_0_disabled", "unmatched", "未分类错误"},
+	} {
+		if err := a.State.ReclassifyErrorKey(pair[0], pair[1], pair[2]); err == nil {
+			_ = a.State.Save()
+		}
+	}
 	obs := a.State.ListObserved()
 	pols := a.State.ListErrorPolicies()
 	// join: every observed + every policy
@@ -1552,6 +1562,7 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 		LastFile     string         `json:"last_file,omitempty"`
 		// AccountHits for policy page table (time/account/error/streak/ops)
 		AccountHits  []map[string]any `json:"account_hits,omitempty"`
+		Shapes       []map[string]any `json:"shapes,omitempty"` // unmatched split candidates
 	}
 	byKey := map[string]row{}
 	for _, p := range pols {
@@ -1574,22 +1585,12 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			r0 = row{Key: o.Key, Label: o.Label, Enabled: true, Action: "observe", ActionLabel: actionLabel("observe"), Threshold: 1, Source: "learned"}
 		}
-		// normalize free-usage label
-		if o.Key == "free_usage_429" || r0.Key == "free_usage_429" {
-			r0.Label = "免费额度用尽(429)"
-		}
-		if r0.Label == "" || r0.Label == "免费额度耗尽(429)" {
+		// normalize labels to short Chinese
+		r0.Label = errorsig.LabelOf(o.Key, match.Result{Code: o.Code, Signal: match.Signal(o.Signal)}, o.StatusCode)
+		if r0.Label == "" {
 			r0.Label = o.Label
-			if r0.Label == "免费额度耗尽(429)" {
-				r0.Label = "免费额度用尽(429)"
-			}
 		}
-		if o.Key == "code:invalid-argument" {
-			r0.Label = "参数无效/上下文过长(invalid-argument)"
-		}
-		if o.Key == "http_404" {
-			r0.Label = "HTTP 404（路径/网关）"
-		}
+		r0.SampleMsg = errorsig.HumanMsg(o.Key, o.Sample, o.StatusCode)
 		r0.Count = o.Count
 		if !o.LastAt.IsZero() {
 			r0.LastAt = o.LastAt.In(time.FixedZone("CST", 8*3600)).Format("01-02 15:04:05")
@@ -1663,31 +1664,18 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 			if srcZH == "" {
 				srcZH = src
 			}
-			msg := strings.TrimSpace(html.UnescapeString(a0.Sample))
-			if len(msg) > 160 {
-				msg = msg[:160]
+			msg := errorsig.HumanMsg(o.Key, a0.Sample, a0.Status)
+			if msg == "" {
+				msg = r0.Label
 			}
-			// humanize common samples
-			low := strings.ToLower(msg)
-			if strings.Contains(low, "free-usage") || strings.Contains(low, "free_usage") {
-				msg = "免费额度用尽"
-			} else if strings.Contains(low, "invalid-argument") && strings.Contains(low, "maximum prompt") {
-				msg = "上下文过长/参数无效"
-			} else if strings.Contains(low, "<html") || strings.Contains(low, "404 not found") {
-				msg = "路径/网关 404"
-			} else if strings.Contains(low, "unexpected eof") {
-				msg = "连接中断 unexpected EOF"
-			}
-			if msg != "" {
-				msg = msg + "（" + srcZH + "）"
-			} else {
-				msg = r0.Label + "（" + srcZH + "）"
-			}
+			msg = msg + "（" + srcZH + "）"
+			shape, shapeLabel, suggestKey := errorsig.ShapeOf(a0.Sample, a0.Status)
 			hits = append(hits, map[string]any{
 				"auth": a0.Auth, "label": label, "file": a0.File,
 				"source": src, "source_label": srcZH,
 				"hits": a0.Hits, "streak": streak,
 				"status": a0.Status,
+				"shape": shape, "shape_label": shapeLabel, "suggest_key": suggestKey,
 				"last_at": func() string {
 					if a0.LastAt.IsZero() {
 						return ""
@@ -1708,13 +1696,34 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 			hits = hits[:50]
 		}
 		r0.AccountHits = hits
+		if o.Key == "unmatched" {
+			shCount := map[string]map[string]any{}
+			for _, h := range hits {
+				sh, _ := h["shape"].(string)
+				if sh == "" {
+					continue
+				}
+				cur := shCount[sh]
+				if cur == nil {
+					cur = map[string]any{"shape": sh, "label": h["shape_label"], "suggest_key": h["suggest_key"], "count": 0, "sample": h["message"]}
+					shCount[sh] = cur
+				}
+				cur["count"] = asInt(cur["count"]) + asInt(h["hits"])
+			}
+			shapes := make([]map[string]any, 0, len(shCount))
+			for _, v := range shCount {
+				shapes = append(shapes, v)
+			}
+			sort.SliceStable(shapes, func(i, j int) bool { return asInt(shapes[i]["count"]) > asInt(shapes[j]["count"]) })
+			r0.Shapes = shapes
+		}
 		byKey[o.Key] = r0
 	}
 	out := make([]row, 0, len(byKey))
 	for _, r0 := range byKey {
 		// final label normalize
 		if r0.Key == "free_usage_429" {
-			r0.Label = "免费额度用尽(429)"
+			r0.Label = "429·免费额度用尽"
 		}
 		out = append(out, r0)
 	}
@@ -1745,6 +1754,7 @@ func (a *API) handleErrorReclassify(w http.ResponseWriter, r *http.Request) {
 		From  string `json:"from"`
 		To    string `json:"to"`
 		Label string `json:"label"`
+		Shape string `json:"shape"` // if set, split only this error shape from from(default unmatched)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
@@ -1752,11 +1762,25 @@ func (a *API) handleErrorReclassify(w http.ResponseWriter, r *http.Request) {
 	}
 	in.From = strings.TrimSpace(in.From)
 	in.To = strings.TrimSpace(in.To)
+	in.Shape = strings.TrimSpace(in.Shape)
+	if in.From == "" {
+		in.From = "unmatched"
+	}
 	if in.To == "" {
 		in.To = "unmatched"
 	}
 	if in.Label == "" && in.To == "unmatched" {
 		in.Label = "未分类错误"
+	}
+	if in.Shape != "" {
+		n, err := a.State.SplitObservedByShape(in.From, in.To, in.Label, in.Shape)
+		if err != nil {
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
+			return
+		}
+		_ = a.State.Save()
+		writeJSON(w, 200, map[string]any{"ok": true, "from": in.From, "to": in.To, "shape": in.Shape, "moved": n})
+		return
 	}
 	if err := a.State.ReclassifyErrorKey(in.From, in.To, in.Label); err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})

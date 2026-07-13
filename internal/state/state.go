@@ -583,6 +583,168 @@ func (s *Store) ReclassifyErrorKey(from, to, newLabel string) error {
 	return nil
 }
 
+// SplitObservedByShape moves hits matching shape from unmatched (or from) into a new/existing key.
+// Returns moved hit count.
+func (s *Store) SplitObservedByShape(from, to, newLabel, shape string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	from = strings.TrimSpace(from)
+	to = strings.TrimSpace(to)
+	shape = strings.TrimSpace(shape)
+	if from == "" {
+		from = "unmatched"
+	}
+	if to == "" || shape == "" {
+		return 0, fmt.Errorf("to/shape required")
+	}
+	if s.Observed == nil {
+		return 0, fmt.Errorf("no observed errors")
+	}
+	src := s.Observed[from]
+	if src == nil {
+		return 0, fmt.Errorf("source key not found")
+	}
+	// partition hits
+	keep := src.Hits[:0]
+	moved := make([]ErrorHit, 0)
+	for _, h := range src.Hits {
+		sh, _, _ := shapeOfLocked(h.Sample, h.Status)
+		// also allow match by human message equality as shape key msg:...
+		if sh == shape || strings.Contains(strings.ToLower(h.Sample), strings.ToLower(strings.TrimPrefix(shape, "msg:"))) {
+			moved = append(moved, h)
+		} else {
+			keep = append(keep, h)
+		}
+	}
+	// if no hits ring, fall back to whole key move when sample matches
+	if len(src.Hits) == 0 {
+		sh, _, _ := shapeOfLocked(src.Sample, src.StatusCode)
+		if sh != shape {
+			return 0, fmt.Errorf("no matching hits for this error shape")
+		}
+		// whole-key move under same lock
+		dst := s.Observed[to]
+		if dst == nil {
+			dst = &ObservedError{Key: to, Label: newLabel}
+			s.Observed[to] = dst
+		}
+		if newLabel != "" {
+			dst.Label = newLabel
+		}
+		n := int(src.Count)
+		dst.Count += src.Count
+		dst.Hits = append(dst.Hits, src.Hits...)
+		if src.LastAt.After(dst.LastAt) {
+			dst.LastAt, dst.Sample, dst.LastAuth, dst.LastFile, dst.StatusCode = src.LastAt, src.Sample, src.LastAuth, src.LastFile, src.StatusCode
+		}
+		delete(s.Observed, from)
+		if s.ErrorPolicies != nil {
+			if p, ok := s.ErrorPolicies[from]; ok {
+				p.Key = to
+				if newLabel != "" { p.Label = newLabel }
+				if _, exists := s.ErrorPolicies[to]; !exists { s.ErrorPolicies[to] = p }
+				delete(s.ErrorPolicies, from)
+			}
+		}
+		if s.ErrorPolicies == nil { s.ErrorPolicies = map[string]ErrorPolicy{} }
+		if _, ok := s.ErrorPolicies[to]; !ok {
+			s.ErrorPolicies[to] = ErrorPolicy{Key: to, Label: newLabel, Enabled: true, Action: "observe", Threshold: 1, Source: "split", Note: "从错误形态拆分"}
+		}
+		return n, nil
+	}
+	if len(moved) == 0 {
+		return 0, fmt.Errorf("no matching hits for this error shape")
+	}
+	dst := s.Observed[to]
+	if dst == nil {
+		dst = &ObservedError{Key: to, Label: newLabel}
+		s.Observed[to] = dst
+	}
+	if newLabel != "" {
+		dst.Label = newLabel
+	}
+	if dst.Label == "" {
+		dst.Label = newLabel
+	}
+	dst.Hits = append(dst.Hits, moved...)
+	if len(dst.Hits) > maxErrorHits {
+		dst.Hits = dst.Hits[len(dst.Hits)-maxErrorHits:]
+	}
+	// recount
+	dst.Count += int64(len(moved))
+	// update last from moved
+	last := moved[len(moved)-1]
+	if last.At.After(dst.LastAt) {
+		dst.LastAt = last.At
+		dst.Sample = last.Sample
+		dst.LastAuth = last.Auth
+		dst.LastFile = last.File
+		dst.StatusCode = last.Status
+	}
+	src.Hits = keep
+	src.Count -= int64(len(moved))
+	if src.Count < 0 {
+		src.Count = int64(len(keep))
+	}
+	if len(keep) == 0 {
+		// keep key with zero? delete empty unmatched clutter only if count<=0
+		if src.Count <= 0 {
+			delete(s.Observed, from)
+		} else {
+			src.Sample = ""
+			src.LastAuth = ""
+		}
+	} else {
+		// refresh last from keep
+		lastK := keep[len(keep)-1]
+		src.LastAt = lastK.At
+		src.Sample = lastK.Sample
+		src.LastAuth = lastK.Auth
+		src.LastFile = lastK.File
+		src.StatusCode = lastK.Status
+	}
+	// ensure policy for target
+	if s.ErrorPolicies == nil {
+		s.ErrorPolicies = map[string]ErrorPolicy{}
+	}
+	if _, ok := s.ErrorPolicies[to]; !ok {
+		s.ErrorPolicies[to] = ErrorPolicy{
+			Key: to, Label: newLabel, Enabled: true, Action: "observe",
+			Threshold: 1, Source: "split", Note: "从错误形态拆分",
+		}
+	}
+	return len(moved), nil
+}
+
+// shape helper without importing errorsig (avoid cycle) — duplicate minimal logic
+func shapeOfLocked(sample string, status int) (shape, label, key string) {
+	low := strings.ToLower(sample)
+	switch {
+	case strings.Contains(low, "eof"):
+		return "net_eof", "连接中断", "reason:net_eof"
+	case strings.Contains(low, "timeout"):
+		return "net_timeout", "请求超时", "reason:net_timeout"
+	case strings.Contains(low, "cpa") && strings.Contains(low, "disabled"):
+		return "cpa_disabled", "CPA文件已禁用", "reason:cpa_disabled"
+	case status == 401 || strings.Contains(low, "authentication required"):
+		return "auth_401", "401·凭证失效", "auth_401"
+	case status == 403 || strings.Contains(low, "permission-denied"):
+		return "permission_403", "403·权限拒绝", "permission_403"
+	case status == 404 || strings.Contains(low, "404"):
+		return "http_404", "404·路径/网关", "http_404"
+	case status > 0:
+		return fmt.Sprintf("http_%d", status), fmt.Sprintf("HTTP %d", status), fmt.Sprintf("http_%d", status)
+	default:
+		fp := sample
+		if len(fp) > 40 {
+			fp = fp[:40]
+		}
+		fp = strings.ToLower(strings.TrimSpace(fp))
+		fp = strings.ReplaceAll(fp, " ", "_")
+		return "msg:" + fp, "未分类片段", "reason:msg"
+	}
+}
+
 func (s *Store) ListObserved() []ObservedError {
 	s.mu.Lock()
 	defer s.mu.Unlock()

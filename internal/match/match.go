@@ -143,7 +143,10 @@ func isInvalidCreds(status int, lower string) bool {
 	return strings.Contains(lower, "invalid or expired credentials") ||
 		strings.Contains(lower, "no auth context") ||
 		strings.Contains(lower, "invalid_grant") ||
-		strings.Contains(lower, "unauthorized")
+		strings.Contains(lower, "unauthorized") ||
+		strings.Contains(lower, "authentication required") ||
+		strings.Contains(lower, "auth required") ||
+		strings.Contains(lower, "not authenticated")
 }
 
 func extractCode(body string) string {

@@ -165,6 +165,10 @@ tr:hover td{background:#f5f9ff}
 .policy-log th{position:sticky;top:0;background:#f1f5f9;color:var(--muted);font-weight:700;z-index:1}
 .policy-log td:nth-child(3){white-space:nowrap}
 .policy-log .pl-empty{color:#94a3b8;padding:12px;text-align:center}
+.shape-box{margin:6px 0 8px;padding:8px;border:1px dashed #91caff;border-radius:8px;background:#f5faff}
+.shape-row{display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #e8eef7}
+.shape-row:last-child{border-bottom:0}
+.shape-lab{flex:1;font-size:12px;font-weight:700;color:#0f172a}
 .policy-pager{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px;font-size:11px;color:var(--muted)}
 .err-title{font-size:15px;font-weight:800;color:#0f172a;letter-spacing:.2px}
 .err-title .err-http{color:#64748b;font-weight:600;font-size:12px;margin-left:6px}
@@ -189,7 +193,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.15</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.16</span> <span id="modeBadge" class="badge">模式</span></h1>
     </div>
     <div class="row" style="align-items:center;flex-wrap:wrap">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -822,7 +826,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.5.15');
+    document.getElementById('ver').textContent='v'+(st.version||'0.5.16');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -943,8 +947,28 @@ function policyLogsHTML(key){
   ERR_PAGE[key]=page;
   const rows=all.slice((page-1)*pageSize, page*pageSize);
   const err=(ERRORS||[]).find(e=>e.key===key)||{};
-  const head='<div class="meta" style="margin:2px 0 4px">账号报错明细 · 本页 '+rows.length+' / 共 '+total+' 条 · 命中总计 '+(err.count||0)+'</div>';
-  if(!total) return head+'<div class="pl-empty">暂无该策略相关账号报错</div>';
+  let shapeBox='';
+  if(key==='unmatched'){
+    const shapes=err.shapes||[];
+    if(shapes.length){
+      shapeBox='<div class="shape-box"><div class="meta" style="font-weight:700;margin-bottom:4px">可拆分的错误形态（点「拆成此类」独立成分类）</div>'+
+        shapes.map(s=>{
+          const lab=s.label||s.shape||'未命名';
+          const cnt=s.count||0;
+          const sk=s.suggest_key||('reason:'+(s.shape||'x'));
+          return '<div class="shape-row">'+
+            '<span class="shape-lab" title="'+esc(s.sample||'')+'">'+esc(lab)+'</span>'+
+            '<span class="meta">约 '+cnt+' 次</span>'+
+            '<button class="xs primary" onclick="splitShape(\''+esc(s.shape||'')+'\',\''+esc(sk)+'\',\''+esc(lab)+'\')">拆成此类</button>'+
+          '</div>';
+        }).join('')+
+      '</div>';
+    }else{
+      shapeBox='<div class="meta" style="margin:4px 0">未分类里暂无足够形态可拆分</div>';
+    }
+  }
+  const head='<div class="meta" style="margin:2px 0 4px">账号报错 · 本页 '+rows.length+' / 共 '+total+' 个账号 · 命中总计 '+(err.count||0)+'</div>';
+  if(!total) return shapeBox+head+'<div class="pl-empty">暂无该策略相关账号报错</div>';
   const table='<table><thead><tr>'+
     '<th style="width:92px">时间</th>'+
     '<th style="width:150px">账号</th>'+
@@ -954,13 +978,17 @@ function policyLogsHTML(key){
     '<th style="width:150px">操作</th>'+
     '</tr></thead><tbody>'+
     rows.map(r=>{
-      const msg=String(r.reason||err.label||key);
+      let msg=String(r.reason||err.sample_msg||err.label||key);
+      // strip leftover raw json/html if any
+      if(msg.indexOf('{')===0 || msg.indexOf('&#34;')>=0 || msg.toLowerCase().indexOf('<html')>=0){
+        msg=(err.sample_msg||err.label||'错误')+(r.source?('（'+r.source+'）'):'');
+      }
       const label=dispAuth(r.label||r.auth);
       const auth=esc(r.auth||'');
       return '<tr>'+
         '<td class="mono">'+esc(r.lastAt||'')+'</td>'+
         '<td title="'+esc(r.label||r.auth||'')+'">'+esc(label)+'</td>'+
-        '<td title="'+esc(msg)+'">'+esc(msg.slice(0,120))+'</td>'+
+        '<td title="'+esc(msg)+'">'+esc(msg.slice(0,80))+'</td>'+
         '<td>'+(r.streak||0)+'</td>'+
         '<td>'+(r.hits||r.fail||0)+'</td>'+
         '<td class="actions">'+
@@ -977,7 +1005,7 @@ function policyLogsHTML(key){
       '<button class="xs" '+(page<=1?'disabled':'')+' onclick="setPolicyPage(\''+esc(key)+'\','+(page-1)+')">上一页</button>'+
       '<button class="xs" '+(page>=pages?'disabled':'')+' onclick="setPolicyPage(\''+esc(key)+'\','+(page+1)+')">下一页</button>'+
     '</span></div>';
-  return head+table+pager;
+  return shapeBox+head+table+pager;
 }
 function logsForPolicy(key){ return policyErrorRows(key); }
 function errorStructureKey(list){
@@ -1002,8 +1030,8 @@ function renderErrorCards(list, force){
     const last=(e.last_at||'').replace('T',' ').replace('Z','')||'—';
     const act=ACT_ZH[e.action]||e.action||'-';
     const http=httpCodeOf(e.key);
-    const canUnclass = e.key!=='unmatched';
-    const canSplit = e.key==='unmatched';
+    const builtin=['free_usage_429','spending_limit_402','auth_401','permission_403','http_404','code:invalid-argument'];
+    const canUnclass = e.key!=='unmatched' && builtin.indexOf(e.key)<0 && e.source!=='builtin';
     return '<div class="err-card" data-key="'+esc(e.key)+'">'+
       '<div class="err-head"><div>'+
         '<div class="err-title">'+esc(e.label||e.key)+(http?('<span class="err-http">HTTP '+http+'</span>'):'')+'</div>'+
@@ -1022,8 +1050,8 @@ function renderErrorCards(list, force){
         '<button class="xs primary" data-key="'+esc(e.key)+'" onclick="saveErrorKey(this.getAttribute(\'data-key\'))">保存</button>'+
       '</div>'+
       '<div class="err-actions-row">'+
-        (canSplit?'<button class="xs" onclick="splitUnmatched()">从「未分类」拆成分类…</button>':'')+
-        (canUnclass?'<button class="xs warn" onclick="unclassifyError(\''+esc(e.key)+'\')">取消分类→未分类</button>':'')+
+        (e.key==='unmatched'?'<span class="meta">在下方「可拆分错误形态」里点拆成此类</span>':'')+
+        (canUnclass?'<button class="xs warn" onclick="unclassifyError(\''+esc(e.key)+'\',\''+esc(e.label||e.key)+'\')">降回未分类</button>':'')+
       '</div>'+
       '<div class="meta" style="margin-top:8px;font-weight:700;color:#334155">报错日志</div>'+
       '<div class="policy-log" data-f="plog">'+policyLogsHTML(e.key)+'</div>'+
@@ -1060,22 +1088,23 @@ async function saveErrorKey(key, silent){
   }catch(err){ toast(err.message) }
 }
 async function quickSaveError(key){ return saveErrorKey(key, true); }
-async function unclassifyError(key){
+async function unclassifyError(key, label){
   if(!key || key==='unmatched') return;
-  if(!confirm('把「'+(key)+'」整类移入「未分类错误」？')) return;
+  const name=label||key;
+  if(!confirm('把分类「'+name+'」整类降回「未分类」？\n\n之后可在未分类里再按错误形态拆开。')) return;
   try{
     await j('/errors/reclassify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({from:key,to:'unmatched',label:'未分类错误'})});
-    toast('已取消分类');
+    toast('已降回未分类：'+name);
     ERR_RENDERED=false; await loadErrors(true);
   }catch(e){ toast(e.message) }
 }
-async function splitUnmatched(){
-  const to=prompt('把「未分类」拆成新分类 key（如 code:foo 或 http_418）');
-  if(!to) return;
-  const label=prompt('新分类显示名', to)||to;
+async function splitShape(shape, suggestKey, label){
+  if(!shape){ toast('形态为空'); return; }
+  const name=label||suggestKey||shape;
+  if(!confirm('把未分类里的「'+name+'」拆成独立分类？\n\n默认动作：仅观察\n可稍后在该分类卡片改冷却/候删。')) return;
   try{
-    await j('/errors/reclassify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({from:'unmatched',to:to.trim(),label:label.trim()})});
-    toast('已拆分为 '+to);
+    const r=await j('/errors/reclassify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({from:'unmatched',to:(suggestKey||('reason:'+shape)),label:name,shape:shape})});
+    toast('已拆分「'+name+'」'+(r.moved!=null?(' · 移动 '+r.moved+' 条'):''));
     ERR_RENDERED=false; await loadErrors(true);
   }catch(e){ toast(e.message) }
 }
