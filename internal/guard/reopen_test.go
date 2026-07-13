@@ -564,3 +564,39 @@ func TestDefaultReopenForeignDisabledFalse(t *testing.T) {
 		t.Fatal("safe default must be reopen_foreign_disabled=false")
 	}
 }
+
+func TestConservativeTickDoesNotOverwriteCooldown(t *testing.T) {
+	dir := t.TempDir()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v0/management/auth-files" && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"files": []map[string]any{{
+				"name": "xai-hx9oiguq1m@lovc.eu.cc.json", "auth_index": "8bd2c3e0b7e7634a",
+				"email": "hx9oiguq1m@lovc.eu.cc", "provider": "xai", "type": "xai", "disabled": true,
+			}}})
+		default:
+			w.WriteHeader(200)
+		}
+	}))
+	defer srv.Close()
+	cfg := sentrycfg.Default()
+	cfg.SentryEnabled = true
+	cfg.ManagementURL = srv.URL
+	cfg.ManagementKey = "k"
+	cfg.ReopenForeignDisabled = false // conservative
+	st := state.New(filepath.Join(dir, "s.json"))
+	st.Touch("8bd2c3e0b7e7634a")
+	st.UpdateMeta("8bd2c3e0b7e7634a", "xai-hx9oiguq1m@lovc.eu.cc.json", "hx9oiguq1m@lovc.eu.cc", "")
+	st.SetAccountState("8bd2c3e0b7e7634a", state.CooldownQuota, "plugin_auto")
+	st.SetRecoverAt("8bd2c3e0b7e7634a", time.Now().Add(24*time.Hour))
+	st.SetLastSignal("8bd2c3e0b7e7634a", "free_usage_429")
+	_ = st.Save()
+	g := guard.New(cfg, st, trash.New(filepath.Join(dir, "t"), 7, true, st), cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, dir))
+	if err := g.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	acc := st.Get("8bd2c3e0b7e7634a")
+	if acc.State != state.CooldownQuota || acc.DisableSource != "plugin_auto" {
+		t.Fatalf("cool-down overwritten: state=%s src=%s", acc.State, acc.DisableSource)
+	}
+}

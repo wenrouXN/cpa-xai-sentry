@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.1
+
+### Fixed: conservative mode overwriting cool-down as CPA已禁用
+- `file_disabled_sync` must not run when account is owned cool-down/manual.
+- Triple-check identity ownership before tagging cpa_file_disabled.
+- Lock bulk cooldown path.
+
 ## 1.1.0
 
 ### Hard fix: stop cool-down being reopened as "非自有禁用"
@@ -101,6 +108,13 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.1
+
+### Fixed: conservative mode overwriting cool-down as CPA已禁用
+- `file_disabled_sync` must not run when account is owned cool-down/manual.
+- Triple-check identity ownership before tagging cpa_file_disabled.
+- Lock bulk cooldown path.
 
 ## 1.1.0
 

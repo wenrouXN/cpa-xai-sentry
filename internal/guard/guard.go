@@ -867,14 +867,47 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 			continue
 		}
 
-		// Conservative mode: keep disabled, mark CPA已禁用 for manual enable
+		// Conservative mode: keep file disabled. Only tag as CPA已禁用 when we are
+		// sure this is NOT an owned cool-down (double-check again).
+		target := owned
+		if target == nil {
+			target = acc
+		}
+		if g.shouldProtectDisable(target, now) {
+			continue
+		}
+		// refuse if any protected identity exists
+		blocked := false
+		for _, a := range g.State.AccountsSnapshot() {
+			if !g.shouldProtectDisable(a, now) {
+				continue
+			}
+			af := authFileBase(a.FileName)
+			if (ai != "" && strings.EqualFold(strings.TrimSpace(a.AuthIndex), ai)) ||
+				(base != "" && af == base) ||
+				(em != "" && (strings.EqualFold(strings.TrimSpace(a.Email), em) || emailFromXAIFile(a.FileName) == em)) {
+				blocked = true
+				break
+			}
+		}
+		if blocked {
+			continue
+		}
 		authIndex := auth
-		if acc == nil {
+		if target != nil {
+			authIndex = target.AuthIndex
+		} else {
 			authIndex = name
 			g.State.Touch(authIndex)
-			g.State.UpdateMeta(authIndex, name, em, "")
+			g.State.UpdateMeta(authIndex, authFileBase(name), em, "")
+		}
+		// do not clear recover_at / wipe cool-down fields if present
+		cur := g.State.Get(authIndex)
+		if cur != nil && g.shouldProtectDisable(cur, now) {
+			continue
 		}
 		g.State.SetAccountState(authIndex, state.UserManual, "cpa_file_disabled")
+		// only zero recover_at when not protecting
 		g.State.SetRecoverAt(authIndex, time.Time{})
 		g.State.Log(state.ActionLog{
 			Auth: authIndex, Source: "tick", Action: "file_disabled_sync",
@@ -1197,6 +1230,8 @@ func (g *Guard) ManualTrash(ctx context.Context, authIndex string) error {
 
 // ApplySuggestedCooldown cools accounts currently active with free_usage_429 (or provided list).
 func (g *Guard) ApplySuggestedCooldown(ctx context.Context, authIndexes []string, hours int) (int, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	if hours <= 0 {
 		hours = 24
 	}
