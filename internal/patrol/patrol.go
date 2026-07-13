@@ -108,10 +108,10 @@ func (r *Runner) Run(ctx context.Context, targets []Target) []Result {
 	return out
 }
 
-// DefaultProbeBaseURL matches cpa-xai-quota-guard / Grok CLI chat-proxy.
+// DefaultProbeBaseURL is used when an auth file has no base_url (Grok CLI chat-proxy).
 const DefaultProbeBaseURL = "https://cli-chat-proxy.grok.com/v1"
 
-// DefaultProbeCLIVersion matches cpa-xai-quota-guard DefaultProbeCLIVersion.
+// DefaultProbeCLIVersion is sent as Grok CLI client identity (avoids HTTP 426).
 const DefaultProbeCLIVersion = "0.2.93"
 
 func (r *Runner) probeOne(ctx context.Context, t Target) Result {
@@ -124,10 +124,10 @@ func (r *Runner) probeOne(ctx context.Context, t Target) Result {
 	if model == "" {
 		model = "grok-4.5"
 	}
-	// Align with cpa-xai-quota-guard doChatProbe:
-	//   1) POST .../responses  (input + max_output_tokens, NO max_tokens)
-	//   2) fall back to .../chat/completions only on 404/405 (or shape 400)
-	// If base already ends with /v1, do NOT prefix /v1 again.
+	// Probe order:
+	//   1) POST .../responses  (input + max_output_tokens, never max_tokens)
+	//   2) fall back to .../chat/completions on 404/405 or body-shape errors
+	// If base already ends with /v1, do not prefix /v1 again.
 	var paths []string
 	if strings.HasSuffix(strings.ToLower(base), "/v1") {
 		paths = []string{"/responses", "/chat/completions"}
@@ -152,7 +152,7 @@ func (r *Runner) probeOne(ctx context.Context, t Target) Result {
 				lastErr = fmt.Errorf("upstream %d", code)
 				continue
 			}
-			// endpoint missing / wrong method → try next path (qg behavior)
+			// endpoint missing / wrong method → try next path
 			if code == 404 || code == 405 {
 				lastErr = fmt.Errorf("http %d on %s", code, pth)
 				continue
@@ -204,7 +204,7 @@ func IsProbeShapeError(body string) bool {
 }
 
 func (r *Runner) postProbe(ctx context.Context, url, pathHint, model, token string) (int, string, error) {
-	// Payload aligned with cpa-xai-quota-guard doChatProbe.
+	// Endpoint-specific JSON body.
 	lowPath := strings.ToLower(pathHint)
 	var payload map[string]any
 	if strings.Contains(lowPath, "responses") {
@@ -215,7 +215,7 @@ func (r *Runner) postProbe(ctx context.Context, url, pathHint, model, token stri
 			"stream":            false,
 		}
 	} else {
-		// chat/completions fallback (qg uses content "hi")
+		// chat/completions fallback
 		payload = map[string]any{
 			"model": model,
 			"messages": []map[string]string{
@@ -234,8 +234,7 @@ func (r *Runner) postProbe(ctx context.Context, url, pathHint, model, token stri
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	// Full Grok CLI identity (cpa-xai-quota-guard defaultProbeHeaders).
-	// Missing these → HTTP 426 "CLI version (none) is outdated".
+	// Grok CLI identity headers. Missing these → HTTP 426 (CLI version none).
 	cliVer := DefaultProbeCLIVersion
 	req.Header.Set("User-Agent", "grok-pager/"+cliVer+" grok-shell/"+cliVer+" (linux; x86_64)")
 	req.Header.Set("x-authenticateresponse", "authenticate-response")

@@ -2,11 +2,11 @@
 
 ## 1.1.14
 
-### Patrol probe aligned with cpa-xai-quota-guard
+### Patrol probe
 - Default base: `https://cli-chat-proxy.grok.com/v1` when auth file has no base_url.
 - Probe order: **`/responses` first** (`input` + `max_output_tokens`, never `max_tokens`), then `/chat/completions` on 404/405/shape errors.
-- Full Grok CLI headers: `x-authenticateresponse`, `x-grok-client-identifier`, `x-grok-client-version=0.2.93`, `x-xai-token-auth`.
-- Chat fallback content `"hi"` (same as quota-guard).
+- Grok CLI headers: `x-authenticateresponse`, `x-grok-client-identifier`, `x-grok-client-version=0.2.93`, `x-xai-token-auth`.
+- Chat fallback content `"hi"`.
 
 
 ## 1.1.13
@@ -219,11 +219,11 @@ Changes:
 
 ## 1.1.14
 
-### Patrol probe aligned with cpa-xai-quota-guard
+### Patrol probe
 - Default base: `https://cli-chat-proxy.grok.com/v1` when auth file has no base_url.
 - Probe order: **`/responses` first** (`input` + `max_output_tokens`, never `max_tokens`), then `/chat/completions` on 404/405/shape errors.
-- Full Grok CLI headers: `x-authenticateresponse`, `x-grok-client-identifier`, `x-grok-client-version=0.2.93`, `x-xai-token-auth`.
-- Chat fallback content `"hi"` (same as quota-guard).
+- Grok CLI headers: `x-authenticateresponse`, `x-grok-client-identifier`, `x-grok-client-version=0.2.93`, `x-xai-token-auth`.
+- Chat fallback content `"hi"`.
 
 
 ## 1.1.13

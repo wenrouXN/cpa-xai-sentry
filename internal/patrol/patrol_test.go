@@ -94,7 +94,7 @@ func TestProbeFallsBackFromResponses404ToChat(t *testing.T) {
 		var got map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&got)
 		if strings.Contains(r.URL.Path, "responses") {
-			// missing endpoint → fall back (quota-guard style)
+			// missing endpoint → fall back to chat/completions
 			w.WriteHeader(404)
 			_, _ = w.Write([]byte(`{"error":"not found"}`))
 			return
@@ -125,13 +125,13 @@ func TestProbeFallsBackFromResponses404ToChat(t *testing.T) {
 	}
 }
 
-func TestProbeResponsesPayloadAlignedWithQuotaGuard(t *testing.T) {
+func TestProbeResponsesPayloadAndCLIHeaders(t *testing.T) {
 	var got map[string]any
 	var path string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path = r.URL.Path
 		_ = json.NewDecoder(r.Body).Decode(&got)
-		// require qg headers
+		// require Grok CLI identity headers
 		if r.Header.Get("x-grok-client-version") == "" || r.Header.Get("x-grok-client-identifier") == "" {
 			w.WriteHeader(426)
 			_, _ = w.Write([]byte(`{"error":"CLI version"}`))
