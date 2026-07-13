@@ -55,15 +55,17 @@ th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #eef1f5;vertical-
 th{position:sticky;top:0;background:#f7f9fc;color:#64748b;font-weight:600;font-size:11px;z-index:1;letter-spacing:.02em}
 tr:hover td{background:#f5f9ff}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
-.acc-name{font-size:12px;font-weight:500;color:#1f2937;line-height:1.3}
-.acc-sub{display:block;color:#98a2b3;font-size:10.5px;margin-top:2px;line-height:1.3}
+.acc-name{font-size:12px;font-weight:500;color:#1f2937;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
+.acc-sub{display:none} /* single-line accounts: density goes into columns */
+.num-main{font-variant-numeric:tabular-nums;font-weight:600;font-size:12px;color:#1f2937;white-space:nowrap}
+.num-sub{display:block;color:#98a2b3;font-size:10.5px;margin-top:1px;white-space:nowrap}
+.rate-ok{color:#067647}.rate-mid{color:#b88230}.rate-bad{color:#b42318}
 .tag{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;border:1px solid transparent;background:#f1f5f9;color:#475569;white-space:nowrap;font-weight:600}
 .tag.active,.tag.ok{background:#ecfdf3;color:#067647;border-color:#abefc6}
 .tag.cooldown,.tag.wait{background:#f2f4f7;color:#344054;border-color:#e4e7ec}
 .tag.candidate,.tag.trash{background:#fef3f2;color:#b42318;border-color:#fecdca}
 .tag.manual,.tag.review{background:#f4f4f5;color:#606266}
 .tag.observe,.tag.none{background:#eff8ff;color:#175cd3;border-color:#b2ddff}
-.reqcell{display:flex;align-items:center;min-width:78px}
 .sigbars{display:inline-flex;align-items:flex-end;gap:1.5px;height:16px;padding:0;cursor:default;user-select:none}
 .sigbars .slot{width:3px;height:100%;border-radius:1px;background:#e5e7eb}
 .sigbars .slot.on{background:#12b76a}
@@ -76,8 +78,11 @@ tr:hover td{background:#f5f9ff}
 .time-main{font-variant-numeric:tabular-nums;font-weight:500;font-size:12px;color:#344054;white-space:nowrap}
 .time-sub{display:none}
 .table-wrap.accounts{max-height:min(62vh,680px)}
-.table-wrap.accounts th,.table-wrap.accounts td{padding:9px 10px}
-.table-wrap.accounts tr td:nth-child(2){min-width:180px}
+.table-wrap.accounts th,.table-wrap.accounts td{padding:7px 8px}
+.table-wrap.accounts tr td:nth-child(2){min-width:160px;max-width:240px}
+.table-wrap.accounts th:nth-child(4),.table-wrap.accounts td:nth-child(4),
+.table-wrap.accounts th:nth-child(5),.table-wrap.accounts td:nth-child(5){text-align:right}
+.reqcell{display:flex;align-items:center;gap:6px;min-width:78px}
 .chips{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}
 .chip{border:1px solid var(--border);background:#fff;border-radius:999px;padding:2px 8px;font-size:11px}
 .chip b{color:var(--accent)}
@@ -153,7 +158,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.4.7</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.4.8</span> <span id="modeBadge" class="badge">模式</span></h1>
     </div>
     <div class="row" style="align-items:center">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -230,11 +235,13 @@ select.act{min-width:100px}input.num{width:70px}
           <tr>
             <th style="width:28px"><input type="checkbox" id="chkAll" onchange="selAll(this.checked)"/></th>
             <th>账号</th>
-            <th style="width:88px">状态</th>
-            <th style="width:96px">请求</th>
-            <th style="width:120px">用量</th>
-            <th style="width:110px">更新时间</th>
-            <th style="width:100px">恢复时间</th>
+            <th style="width:78px">状态</th>
+            <th style="width:72px">请求总数</th>
+            <th style="width:64px">成功率</th>
+            <th style="width:92px">最近15次</th>
+            <th style="width:168px">用量</th>
+            <th style="width:100px">更新时间</th>
+            <th style="width:92px">恢复时间</th>
           </tr>
         </thead>
         <tbody id="accBody"></tbody>
@@ -312,15 +319,7 @@ function toggleMask(){
   // re-render from cache without full network roundtrip when possible
   if(LAST_ACCOUNTS && LAST_ACCOUNTS.length){
     const prevSel=new Set(selectedAuths());
-    document.getElementById('accBody').innerHTML=(LAST_ACCOUNTS||[]).map(a=>'<tr>'+
-      '<td><input type="checkbox" class="rowchk" data-auth="'+esc(a.auth_index)+'"'+(prevSel.has(a.auth_index)?' checked':'')+'/></td>'+
-      '<td>'+accountCell(a)+'</td>'+
-      '<td>'+stateTag(a.state)+'</td>'+
-      '<td>'+callsCell(a)+'</td>'+
-      '<td>'+quotaCell(a)+'</td>'+
-      '<td>'+updatedCell(a.updated_at)+'</td>'+
-      '<td>'+timeCell(a.recover_at)+'</td></tr>').join('')||
-      '<tr><td colspan="7" class="muted">无匹配结果</td></tr>';
+    document.getElementById('accBody').innerHTML=renderAccountRows(LAST_ACCOUNTS, prevSel);
   }
   renderLogs(LAST_LOGS||[]);
   if(CURRENT_TAB==='errors'){ ERR_RENDERED=false; renderErrorCards(ERRORS||[], true); }
@@ -395,57 +394,93 @@ function renderKPIs(s, trashCount, cool, inv, usage){
 function accountCell(a){
   const name=dispName(a);
   const title=a.display_name||a.email||a.auth_index||'';
-  const bits=[];
-  if(a.usage_source==='cpamp') bits.push('CPAMP');
-  if(a.day_calls) bits.push((a.day_success||Math.max(0,(a.day_calls||0)-(a.day_fail_calls||0)))+'成/'+(a.day_fail_calls||0)+'败');
-  if(a.success_rate!=null && a.day_calls) bits.push((Number(a.success_rate).toFixed(0))+'%');
-  return '<div class="acc-name" title="'+esc(title)+'">'+esc(name)+'</div>'+
-    (bits.length?('<div class="acc-sub">'+esc(bits.join(' · '))+'</div>'):'');
+  // single-line only — density lives in dedicated columns
+  return '<div class="acc-name" title="'+esc(title)+'">'+esc(name)+'</div>';
+}
+function totalCallsCell(a){
+  const tot=Number(a.total_calls!=null?a.total_calls:a.day_calls||0);
+  const day=Number(a.day_calls||0);
+  if(!tot && !day) return '<div class="num-main">-</div>';
+  let html='<div class="num-main">'+tot+'</div>';
+  if(day>0 && day!==tot) html+='<div class="num-sub">今日 '+day+'</div>';
+  return html;
+}
+function rateCell(a){
+  const tot=Number(a.total_calls!=null?a.total_calls:0);
+  const day=Number(a.day_calls||0);
+  let rate=a.success_rate;
+  if(rate==null){
+    const ok=Number(a.total_success!=null?a.total_success:(a.day_success!=null?a.day_success:Math.max(0,day-Number(a.day_fail_calls||0))));
+    const base=tot||day;
+    rate=base>0?(ok/base*100):null;
+  }
+  if(rate==null || (!(tot||day))) return '<div class="num-main">-</div>';
+  const n=Number(rate);
+  const cls=n>=90?'rate-ok':(n>=70?'rate-mid':'rate-bad');
+  let html='<div class="num-main '+cls+'">'+n.toFixed(0)+'%</div>';
+  if(a.day_success_rate!=null && day>0 && tot>day){
+    html+='<div class="num-sub">今日 '+Number(a.day_success_rate).toFixed(0)+'%</div>';
+  }
+  return html;
 }
 function callsCell(a){
-  const req=Number(a.day_calls||0), fail=Number(a.day_fail_calls||0);
-  const ok=Math.max(0, req-fail);
+  // 15-slot bar = last 15 REAL request outcomes (oldest→newest). Not a day-ratio fill.
   const slots=15;
-  let green=0, red=0;
-  if(req<=0 && fail<=0){ green=0; red=0; }
-  else if(req<=slots){ green=ok; red=Math.min(fail, slots-green); }
-  else {
-    red=fail>0?Math.max(1, Math.round(fail/req*slots)):0;
-    if(red>slots) red=slots;
-    green=slots-red;
-  }
+  let seq=Array.isArray(a.recent15)?a.recent15.slice(-slots):[];
   const parts=[];
   for(let i=0;i<slots;i++){
     let cls='empty';
-    if(i<green) cls='on';
-    else if(i<green+red) cls='fail';
+    if(i<seq.length){
+      cls = seq[i] ? 'on' : 'fail';
+    }
     parts.push('<i class="slot '+cls+'"></i>');
   }
+  const fail = seq.filter(x=>x===false).length;
+  const ok = seq.filter(x=>x===true).length;
   const clickable = fail>0 ? ' clickable' : '';
   const wrapClick = fail>0 ? ' data-auth="'+esc(a.auth_index)+'" onclick="openAccountError(this)"' : '';
-  return '<div class="reqcell"><div class="sigbars'+clickable+'"'+wrapClick+' title="'+(fail>0?'点击查看报错':'')+'">'+parts.join('')+'</div></div>';
+  const title = seq.length ? ('最近'+seq.length+'次 · 成'+ok+' 败'+fail+(fail>0?' · 点红格看报错':'')) : '暂无请求记录';
+  return '<div class="reqcell"><div class="sigbars'+clickable+'"'+wrapClick+' title="'+esc(title)+'">'+parts.join('')+'</div></div>';
 }
 function quotaCell(a){
-  // pure numbers: used / limit  remain ; plus optional day token line
+  // pure numbers: 总计 · 今日 · 今日/24h额度
   let main='-';
-  if(a.quota_limit || a.quota_used || a.quota_remaining){
-    const used=fmtTok(a.quota_used||0), lim=fmtTok(a.quota_limit||0);
-    let rem='';
-    if(a.quota_remaining!=null && a.quota_remaining!=='') rem=' 剩 '+fmtTok(a.quota_remaining||0);
-    else if(a.quota_limit!=null && a.quota_used!=null){
-      const r=Math.max(0, Number(a.quota_limit||0)-Number(a.quota_used||0));
-      rem=' 剩 '+fmtTok(r);
-    }
-    main=used+' / '+lim+rem;
-  } else if(a.day_tokens){
-    main=fmtTok(a.day_tokens);
-  } else if(a.quota_text){
+  if(a.quota_text){
     main=String(a.quota_text||'').replace(/\s*·\s*(报错体|估|免费额用尽).*$/,'').trim() || '-';
   }
-  const sub=[];
-  if(a.day_tokens && (a.quota_limit || a.quota_used)) sub.push('今日 '+fmtTok(a.day_tokens));
-  if(a.day_input_tokens||a.day_output_tokens) sub.push('入'+fmtTok(a.day_input_tokens||0)+'/出'+fmtTok(a.day_output_tokens||0));
-  return '<div class="quota-main">'+esc(main)+'</div>'+(sub.length?('<div class="quota-sub">'+esc(sub.join(' · '))+'</div>'):'');
+  if(main==='-' || !main){
+    const tot=Number(a.total_tokens||0);
+    const day=Number(a.day_tokens||0);
+    if(tot>0 || day>0){
+      main=fmtTok(tot)+' · '+fmtTok(day);
+      if(a.quota_ratio_text) main+=' · '+a.quota_ratio_text;
+      else if(a.quota_limit) main+=' · '+fmtTok(day)+' / '+fmtTok(a.quota_limit);
+      else if(day>0) main+=' · '+fmtTok(day)+' / 2M';
+    } else if(a.quota_limit || a.quota_used){
+      // free-usage actual/limit only — if no parseable numbers and exhausted, show 用尽
+      if(Number(a.quota_used||0)<=0 && Number(a.quota_limit||0)<=0){
+        main='用尽';
+      } else {
+        main=fmtTok(a.quota_used||0)+' / '+fmtTok(a.quota_limit||0);
+      }
+    }
+  }
+  return '<div class="quota-main" title="'+esc(main)+'">'+esc(main)+'</div>';
+}
+function renderAccountRows(list, prevSel){
+  prevSel=prevSel||new Set();
+  const rows=list||[];
+  if(!rows.length) return '<tr><td colspan="9" class="muted">无匹配结果</td></tr>';
+  return rows.map(a=>'<tr>'+
+    '<td><input type="checkbox" class="rowchk" data-auth="'+esc(a.auth_index)+'"'+(prevSel.has(a.auth_index)?' checked':'')+'/></td>'+
+    '<td>'+accountCell(a)+'</td>'+
+    '<td>'+stateTag(a.state)+'</td>'+
+    '<td>'+totalCallsCell(a)+'</td>'+
+    '<td>'+rateCell(a)+'</td>'+
+    '<td>'+callsCell(a)+'</td>'+
+    '<td>'+quotaCell(a)+'</td>'+
+    '<td>'+updatedCell(a.updated_at)+'</td>'+
+    '<td>'+timeCell(a.recover_at)+'</td></tr>').join('');
 }
 function httpCodeOf(sig){
   if(sig==='free_usage_429') return '429';
@@ -507,7 +542,7 @@ function openAccountError(el){
   html+='<div class="ep-kv">'+
     '<b>账号</b><span title="'+esc(fullName)+'">'+esc(name)+'</span>'+
     '<b>状态</b><span>'+esc(STATE_ZH[a.state]||a.state||'-')+'</span>'+
-    '<b>今日</b><span>请求 '+(a.day_calls||0)+' · 成功 '+(a.day_success!=null?a.day_success:Math.max(0,(a.day_calls||0)-(a.day_fail_calls||0)))+' · 失败 '+(a.day_fail_calls||0)+(a.success_rate!=null?(' · '+(Number(a.success_rate).toFixed(0))+'%'):'')+'</span>'+
+    '<b>请求</b><span>总 '+(a.total_calls||a.day_calls||0)+' · 今日 '+(a.day_calls||0)+' · 成功 '+(a.day_success!=null?a.day_success:Math.max(0,(a.day_calls||0)-(a.day_fail_calls||0)))+' · 失败 '+(a.day_fail_calls||0)+((a.day_success_rate!=null||a.success_rate!=null)?(' · '+(Number(a.day_success_rate!=null?a.day_success_rate:a.success_rate).toFixed(0))+'%'):'')+'</span>'+
     (a.day_tokens?('<b>token</b><span>'+esc(fmtTok(a.day_tokens))+(a.day_input_tokens||a.day_output_tokens?('（入'+fmtTok(a.day_input_tokens||0)+' / 出'+fmtTok(a.day_output_tokens||0)+'）'):'')+'</span>'):'')+
     ((a.quota_used||a.quota_limit)?('<b>额度</b><span>'+esc(fmtTok(a.quota_used||0)+' / '+fmtTok(a.quota_limit||0))+'</span>'):'')+
     (body.code?('<b>code</b><span class="mono">'+esc(body.code)+'</span>'):'')+
@@ -645,7 +680,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.4.7');
+    document.getElementById('ver').textContent='v'+(st.version||'0.4.8');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -680,15 +715,7 @@ async function refresh(){
       }
     }catch(e){}
     const prevSel=new Set(selectedAuths());
-    document.getElementById('accBody').innerHTML=(LAST_ACCOUNTS||[]).map(a=>'<tr>'+
-      '<td><input type="checkbox" class="rowchk" data-auth="'+esc(a.auth_index)+'"'+(prevSel.has(a.auth_index)?' checked':'')+'/></td>'+
-      '<td>'+accountCell(a)+'</td>'+
-      '<td>'+stateTag(a.state)+'</td>'+
-      '<td>'+callsCell(a)+'</td>'+
-      '<td>'+quotaCell(a)+'</td>'+
-      '<td>'+updatedCell(a.updated_at)+'</td>'+
-      '<td>'+timeCell(a.recover_at)+'</td></tr>').join('')||
-      '<tr><td colspan="7" class="muted">无匹配结果</td></tr>';
+    document.getElementById('accBody').innerHTML=renderAccountRows(LAST_ACCOUNTS, prevSel);
 
     if(CURRENT_TAB==='trash') await refreshTrashOnly();
     if(CURRENT_TAB==='errors') await loadErrors(false);
