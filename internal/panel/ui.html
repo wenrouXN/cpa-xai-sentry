@@ -173,14 +173,14 @@ tr:hover td{background:#f5f9ff}
 .err-pop .ep-kv b{color:var(--muted);font-weight:600}
 .err-pop .ep-json{background:#0b1220;color:#e2e8f0;border-radius:10px;padding:10px 12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
 .err-pop .ep-msg{color:#fbbf24;font-weight:600;margin-bottom:8px;white-space:pre-wrap}
-.policy-log{margin-top:6px;min-height:168px;max-height:260px;overflow:auto;background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:0}
-.policy-log table{width:100%;border-collapse:collapse;font-size:11.5px;table-layout:fixed}
-.policy-log th,.policy-log td{padding:6px 8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:18px}
-.policy-log th{position:sticky;top:0;background:#f1f5f9;color:var(--muted);font-weight:700;z-index:1}
-.policy-log td:nth-child(3){white-space:nowrap}
-.policy-log td:last-child,.policy-log th:last-child{white-space:normal;overflow:visible;text-overflow:clip}
-.policy-log td.actions{display:flex;flex-wrap:wrap;gap:4px;align-items:center;min-width:0}
-.policy-log td.actions .xs{flex:0 0 auto}
+.policy-log{margin-top:6px;min-height:168px;max-height:280px;overflow:auto;background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:0}
+.policy-log table{width:100%;border-collapse:collapse;font-size:11.5px;table-layout:auto}
+.policy-log th,.policy-log td{padding:6px 8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:middle;line-height:18px}
+.policy-log th{position:sticky;top:0;background:#f1f5f9;color:var(--muted);font-weight:700;z-index:1;white-space:nowrap}
+.policy-log td:nth-child(1),.policy-log td:nth-child(2),.policy-log td:nth-child(3){white-space:nowrap;max-width:180px;overflow:hidden;text-overflow:ellipsis}
+.policy-log td.ops{white-space:nowrap;overflow:visible;min-width:168px}
+.policy-log .ops-wrap{display:inline-flex;flex-wrap:nowrap;gap:4px;align-items:center}
+.policy-log .ops-wrap .xs{padding:2px 6px;font-size:11px}
 .policy-log .pl-empty{color:#94a3b8;padding:12px;text-align:center}
 .shape-box{margin:6px 0 8px;padding:8px;border:1px dashed #91caff;border-radius:8px;background:#f5faff}
 .shape-row{display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #e8eef7}
@@ -214,7 +214,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.24</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.25</span></h1>
     </div>
     <div class="top-actions">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -897,7 +897,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.5.24');
+    document.getElementById('ver').textContent='v'+(st.version||'0.5.25');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -1048,7 +1048,7 @@ function policyLogsHTML(key){
     '<th>错误信息</th>'+
     '<th style="width:48px">连续N</th>'+
     '<th style="width:42px">命中</th>'+
-    '<th style="width:210px">操作</th>'+
+    '<th style="min-width:168px">操作</th>'+
     '</tr></thead><tbody>'+
     rows.map(r=>{
       let msg=String(r.reason||err.sample_msg||err.label||key);
@@ -1064,11 +1064,11 @@ function policyLogsHTML(key){
         '<td title="'+esc(msg)+'">'+esc(msg.slice(0,80))+'</td>'+
         '<td>'+(r.streak||0)+'</td>'+
         '<td>'+(r.hits||r.fail||0)+'</td>'+
-        '<td class="actions">'+
-          '<button class="xs" data-auth="'+auth+'" onclick="bulkOne(this.getAttribute(\'data-auth\'),\'enable\')" title="启用">启用</button>'+
-          '<button class="xs warn" data-auth="'+auth+'" onclick="bulkOne(this.getAttribute(\'data-auth\'),\'cooldown\')" title="冷却">冷却</button>'+
-          '<button class="xs danger" data-auth="'+auth+'" onclick="bulkOne(this.getAttribute(\'data-auth\'),\'disable\')" title="永久禁用：不会自动恢复，需手动启用">永禁</button>'+
-        '</td>'+
+        '<td class="ops"><div class="ops-wrap">'+
+          '<button type="button" class="xs" data-auth="'+auth+'" onclick="bulkOne(this.getAttribute(\'data-auth\'),\'enable\')">启用</button>'+
+          '<button type="button" class="xs warn" data-auth="'+auth+'" onclick="bulkOne(this.getAttribute(\'data-auth\'),\'cooldown\')">冷却</button>'+
+          '<button type="button" class="xs danger" data-auth="'+auth+'" onclick="bulkOne(this.getAttribute(\'data-auth\'),\'disable\')">永久禁用</button>'+
+        '</div></td>'+
       '</tr>';
     }).join('')+
   '</tbody></table>';
