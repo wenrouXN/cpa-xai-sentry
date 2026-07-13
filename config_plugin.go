@@ -300,7 +300,12 @@ func redactConfig(cfg sentrycfg.Config) map[string]any {
 		"trash_dir":               cfg.TrashDir,
 		"patrol_enabled":          cfg.PatrolEnabled,
 		"patrol_interval":         cfg.PatrolInterval,
+		"patrol_timeout":          cfg.PatrolTimeout,
+		"patrol_concurrency":      cfg.PatrolConcurrency,
+		"patrol_batch_size":       cfg.PatrolBatchSize,
 		"patrol_model":            cfg.PatrolModel,
+		"patrol_proxy_url":        cfg.PatrolProxyURL,
+		"patrol_auto_model_switch": cfg.PatrolAutoModelSwitch,
 		"cpamp_url":               cfg.CPAMPURL,
 		"cpamp_admin_key_set":     cfg.CPAMPAdminKey != "",
 	}

@@ -48,6 +48,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/trash/restore", a.handleTrashRestore)
 	mux.HandleFunc("/trash/purge", a.handleTrashPurge)
 	mux.HandleFunc("/run-tick", a.handleRunTick)
+	mux.HandleFunc("/patrol/start", a.handlePatrolStart)
+	mux.HandleFunc("/patrol/status", a.handlePatrolStatus)
 	mux.HandleFunc("/toggle", a.handleToggle)
 	mux.HandleFunc("/preset", a.handlePreset)
 	mux.HandleFunc("/health", a.handleHealth)
@@ -74,6 +76,10 @@ func (a *API) persistSwitches() {
 	}
 	if a.Guard != nil {
 		a.Guard.Cfg = *a.Cfg
+	}
+	if a.Patrol != nil {
+		a.Patrol.Cfg = *a.Cfg
+		a.Patrol.Guard = a.Guard
 	}
 }
 
@@ -361,8 +367,29 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		}
 		display := cpaapi.DisplayName(acc.Email, acc.FileName, acc.AuthIndex)
 		if q != "" {
-			blob := strings.ToLower(display + " " + acc.Email + " " + acc.FileName + " " + acc.AuthIndex + " " + acc.Tier + " " + acc.LastSignal + " " + act + " " + reason)
-			if !strings.Contains(blob, q) {
+			// broad match: email/file/auth/state/signal/action/reason/quota text/tokens
+			stZH := map[string]string{
+				"active": "正常", "cooldown_quota": "额度冷却", "cooldown_spending": "消费冷却",
+				"cooldown_permission": "权限冷却", "candidate_dead": "候选", "user_manual": "手动禁用",
+				"trashed": "垃圾箱", "purged": "已清除",
+			}
+			blob := strings.ToLower(strings.Join([]string{
+				display, acc.Email, acc.FileName, acc.AuthIndex, acc.Tier, acc.LastSignal, act, reason,
+				string(acc.State), stZH[string(acc.State)], acc.DisableSource, acc.QuotaSource,
+				formatTokens(dayT), formatTokens(totT), usageSrc,
+			}, " "))
+			// also allow multi-token AND if query has spaces
+			ok := true
+			for _, part := range strings.Fields(q) {
+				if part == "" {
+					continue
+				}
+				if !strings.Contains(blob, part) {
+					ok = false
+					break
+				}
+			}
+			if !ok {
 				continue
 			}
 		}
@@ -541,7 +568,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":         "cpa-xai-sentry",
-		"version":        "0.5.2",
+		"version":        "0.5.3",
 		"mode":           modeOf(*a.Cfg),
 		"mode_label":     modeLabel(modeOf(*a.Cfg)),
 		"summary":        summary,
@@ -571,6 +598,31 @@ func asInt(v any) int {
 	default:
 		return 0
 	}
+}
+
+func asFloatAny(v any) (float64, bool) {
+	switch t := v.(type) {
+	case float64:
+		return t, true
+	case int:
+		return float64(t), true
+	case int64:
+		return float64(t), true
+	case json.Number:
+		f, err := t.Float64()
+		return f, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func max64(a, b int64) int64 {
@@ -682,20 +734,53 @@ func (a *API) handleConfig(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		writeJSON(w, 200, a.Cfg.Redact())
 	case http.MethodPost:
-		var in sentrycfg.Config
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		// partial update: only override provided patrol/runtime fields from JSON object
+		var raw map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 			writeJSON(w, 400, map[string]string{"error": err.Error()})
 			return
 		}
-		// preserve secrets when client omits them (redacted GET round-trip)
-		if in.ManagementKey == "" && a.Cfg != nil {
-			in.ManagementKey = a.Cfg.ManagementKey
+		cfg := *a.Cfg
+		// merge known fields if present
+		if v, ok := raw["patrol_enabled"].(bool); ok {
+			cfg.PatrolEnabled = v
 		}
-		if in.CPAMPAdminKey == "" && a.Cfg != nil {
-			in.CPAMPAdminKey = a.Cfg.CPAMPAdminKey
+		if v, ok := asFloatAny(raw["patrol_interval"]); ok && v > 0 {
+			cfg.PatrolInterval = int(v)
 		}
-		in = in.Validate()
-		*a.Cfg = in
+		if v, ok := asFloatAny(raw["patrol_timeout"]); ok && v > 0 {
+			cfg.PatrolTimeout = int(v)
+		}
+		if v, ok := asFloatAny(raw["patrol_concurrency"]); ok && v > 0 {
+			cfg.PatrolConcurrency = int(v)
+		}
+		if v, ok := asFloatAny(raw["patrol_batch_size"]); ok && v >= 0 {
+			cfg.PatrolBatchSize = int(v)
+		}
+		if v, ok := raw["patrol_model"].(string); ok && strings.TrimSpace(v) != "" {
+			cfg.PatrolModel = strings.TrimSpace(v)
+		}
+		if v, ok := raw["patrol_proxy_url"].(string); ok {
+			cfg.PatrolProxyURL = strings.TrimSpace(v)
+		}
+		if v, ok := raw["patrol_auto_model_switch"].(bool); ok {
+			cfg.PatrolAutoModelSwitch = v
+		}
+		// also allow full config shape if client sent nested-less full body with bools
+		if v, ok := raw["auto_cooldown"].(bool); ok {
+			cfg.AutoCooldown = v
+		}
+		if v, ok := raw["auto_candidate"].(bool); ok {
+			cfg.AutoCandidate = v
+		}
+		if v, ok := raw["auto_delete"].(bool); ok {
+			cfg.AutoDelete = v
+		}
+		if v, ok := raw["sentry_enabled"].(bool); ok {
+			cfg.SentryEnabled = v
+		}
+		cfg = cfg.Validate()
+		*a.Cfg = cfg
 		a.persistSwitches()
 		writeJSON(w, 200, a.Cfg.Redact())
 	default:
@@ -874,6 +959,10 @@ func composeLogText(actL, action, sigL, signal, who, reason, srcL, source string
 			return "已彻底清除 " + who, "warn"
 		}
 		return "已彻底清除垃圾箱条目", "warn"
+	case "patrol_start":
+		return "开始主动巡查：" + firstNonEmpty(why, "执行中"), "info"
+	case "patrol_done":
+		return firstNonEmpty(why, "主动巡查已完成"), "ok"
 	case "observe":
 		if who != "" && why != "" {
 			return "观察到 " + who + " 出现" + why + "（仅记录，未处置）", "info"
@@ -956,6 +1045,12 @@ func logSourceZH(s string) string {
 		return "面板"
 	case "patrol":
 		return "巡查"
+	case "patrol_start":
+		return "开始巡查"
+	case "patrol_done":
+		return "巡查完成"
+	case "probe_error":
+		return "探测失败"
 	case "cpamp":
 		return "用量回补"
 	case "tick", "sentry":
@@ -1065,16 +1160,56 @@ func (a *API) handleRunTick(w http.ResponseWriter, r *http.Request) {
 	// report cooldown count after sync for panel toast/debug
 	cool := a.State.CooldownStats(time.Now())
 	writeJSON(w, 200, map[string]any{
-		"ok": true,
+		"ok":             true,
 		"cooldown_stats": cool,
-		"note": "recovered due cooldowns + synced CPA disabled → sentry cooldown + purged trash",
+		"note":           "recovered due cooldowns + synced CPA disabled → sentry cooldown + purged trash",
 	})
+}
+
+func (a *API) handlePatrolStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(405)
+		return
+	}
+	if a.Patrol == nil {
+		writeJSON(w, 503, map[string]string{"error": "patrol runtime 未就绪"})
+		return
+	}
+	var in struct {
+		Mode string `json:"mode"` // full | cooldown
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in)
+	mode := patrol.ModeFull
+	if strings.EqualFold(strings.TrimSpace(in.Mode), "cooldown") || strings.EqualFold(strings.TrimSpace(in.Mode), "spending") {
+		mode = patrol.ModeCooldown
+	}
+	// apply latest cfg
+	if a.Cfg != nil {
+		a.Patrol.Cfg = *a.Cfg
+	}
+	if a.Guard != nil {
+		a.Patrol.Guard = a.Guard
+	}
+	st, err := a.Patrol.Start(r.Context(), mode)
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "patrol": st})
+}
+
+func (a *API) handlePatrolStatus(w http.ResponseWriter, r *http.Request) {
+	if a.Patrol == nil {
+		writeJSON(w, 200, map[string]any{"ok": true, "patrol": map[string]any{"running": false, "message": "未就绪"}})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "patrol": a.Patrol.Status()})
 }
 
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.2",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.3",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 		"cooldown_stats": a.State.CooldownStats(time.Now()),
 	})

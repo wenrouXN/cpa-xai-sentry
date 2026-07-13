@@ -21,6 +21,8 @@ type Identity struct {
 	Note      string
 	Label     string
 	Provider  string
+	Token     string
+	BaseURL   string
 }
 
 // Resolver maps auth_index / filename / email to a concrete auth file.
@@ -104,62 +106,65 @@ func (r *Resolver) Reload(ctx context.Context) error {
 		}
 	}
 
-	// Always merge local dir scan — ground truth for email/filename.
-	if r.Client.AuthDir != "" {
-		entries, err := os.ReadDir(r.Client.AuthDir)
-		if err == nil {
-			for _, e := range entries {
-				if e.IsDir() {
-					continue
-				}
-				name := e.Name()
-				if !strings.HasSuffix(strings.ToLower(name), ".json") {
-					continue
-				}
-				if !IsXAIName(name, "") {
-					continue
-				}
-				email := EmailFromFileName(name)
-				note, label := "", ""
-				raw, err := os.ReadFile(filepath.Join(r.Client.AuthDir, name))
-				if err == nil {
-					email2, n, l := PeekAuthMeta(raw)
-					if email2 != "" {
-						email = email2
+	// Always merge local dir scan — ground truth for email/filename/token.
+		if r.Client.AuthDir != "" {
+			entries, err := os.ReadDir(r.Client.AuthDir)
+			if err == nil {
+				for _, e := range entries {
+					if e.IsDir() {
+						continue
 					}
-					note, label = n, l
-				}
-				key := strings.ToLower(name)
-				if _, ok := seenFile[key]; ok {
-					// enrich existing
-					for i := range ids {
-						if strings.EqualFold(ids[i].FileName, name) {
-							if ids[i].Email == "" {
-								ids[i].Email = email
-							}
-							if ids[i].Note == "" {
-								ids[i].Note = note
-							}
-							if ids[i].Label == "" {
-								ids[i].Label = label
+					name := e.Name()
+					if !strings.HasSuffix(strings.ToLower(name), ".json") {
+						continue
+					}
+					if !IsXAIName(name, "") {
+						continue
+					}
+					email := EmailFromFileName(name)
+					note, label, tok, base := "", "", "", ""
+					dis := false
+					raw, err := os.ReadFile(filepath.Join(r.Client.AuthDir, name))
+					if err == nil {
+						email2, n, l, t, b, d := PeekAuthMeta(raw)
+						if email2 != "" {
+							email = email2
+						}
+						note, label, tok, base, dis = n, l, t, b, d
+					}
+					key := strings.ToLower(name)
+					if _, ok := seenFile[key]; ok {
+						for i := range ids {
+							if strings.EqualFold(ids[i].FileName, name) {
+								if ids[i].Email == "" {
+									ids[i].Email = email
+								}
+								if ids[i].Note == "" {
+									ids[i].Note = note
+								}
+								if ids[i].Label == "" {
+									ids[i].Label = label
+								}
+								if ids[i].Token == "" {
+									ids[i].Token = tok
+								}
+								if ids[i].BaseURL == "" {
+									ids[i].BaseURL = base
+								}
+								ids[i].Disabled = dis
 							}
 						}
+						continue
 					}
-					continue
+					ids = append(ids, Identity{
+						AuthIndex: name, FileName: name, Email: email,
+						Note: note, Label: label, Provider: "xai",
+						Token: tok, BaseURL: base, Disabled: dis,
+					})
+					seenFile[key] = struct{}{}
 				}
-				ids = append(ids, Identity{
-					AuthIndex: name,
-					FileName:  name,
-					Email:     email,
-					Note:      note,
-					Label:     label,
-					Provider:  "xai",
-				})
-				seenFile[key] = struct{}{}
 			}
 		}
-	}
-
 	byIndex := map[string]Identity{}
 	byFile := map[string]Identity{}
 	byEmail := map[string]Identity{}
@@ -269,10 +274,10 @@ func EmailFromFileName(name string) string {
 	return ""
 }
 
-func PeekAuthMeta(raw []byte) (email, note, label string) {
+func PeekAuthMeta(raw []byte) (email, note, label, token, baseURL string, disabled bool) {
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return "", "", ""
+		return "", "", "", "", "", false
 	}
 	get := func(keys ...string) string {
 		for _, k := range keys {
@@ -287,6 +292,11 @@ func PeekAuthMeta(raw []byte) (email, note, label string) {
 	email = get("email", "Email", "account", "Account")
 	note = get("note", "Note", "remark", "Remark")
 	label = get("label", "Label")
+	token = get("access_token", "AccessToken", "token", "Token", "api_key", "apiKey")
+	baseURL = get("base_url", "BaseURL", "baseUrl", "endpoint", "api_base")
+	if v, ok := m["disabled"].(bool); ok {
+		disabled = v
+	}
 	if email == "" {
 		if meta, ok := m["metadata"].(map[string]any); ok {
 			if s, ok := meta["email"].(string); ok {
@@ -294,7 +304,7 @@ func PeekAuthMeta(raw []byte) (email, note, label string) {
 			}
 		}
 	}
-	return email, note, label
+	return email, note, label, token, baseURL, disabled
 }
 
 func HashCandidates(fileName, email, stem string) []string {

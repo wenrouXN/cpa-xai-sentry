@@ -92,6 +92,20 @@ tr:hover td{background:#f5f9ff}
 .tabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 8px}
 .tabs button.active{background:var(--accent);border-color:#337ecc;color:#fff}
 .help{background:#f5f9ff;border:1px solid #b3d8ff;border-radius:10px;padding:8px 10px;color:#337ecc;font-size:11.5px;line-height:1.5;margin-bottom:8px}
+.patrol-box{margin-top:10px;padding:10px;border:1px solid var(--border);border-radius:10px;background:#f8fbff}
+.patrol-head{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start;margin-bottom:8px}
+.patrol-head b{font-size:12.5px;margin-right:6px}
+.patrol-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin-bottom:8px}
+@media(max-width:1100px){.patrol-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:700px){.patrol-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.patrol-grid label{display:flex;flex-direction:column;gap:4px;font-size:10.5px;color:var(--muted);font-weight:700}
+.patrol-grid input{width:100%}
+.patrol-log{max-height:160px;overflow:auto;background:#0b1220;color:#e8eefc;border-radius:8px;padding:8px;font-size:11.5px;line-height:1.45}
+.patrol-log .pl{display:grid;grid-template-columns:54px 1fr;gap:8px;padding:3px 0;border-bottom:1px solid #ffffff10}
+.patrol-log .pl:last-child{border-bottom:0}
+.patrol-log .pt{color:#93a4c3;font-variant-numeric:tabular-nums}
+.patrol-log .pm.ok{color:#86efac}.patrol-log .pm.warn{color:#fbbf24}.patrol-log .pm.err{color:#fca5a5}.patrol-log .pm.info{color:#bfdbfe}
+#patrolStatus{margin:4px 0 6px}
 .toast{position:fixed;right:12px;top:12px;background:#fff;border:1px solid var(--border);padding:8px 12px;border-radius:10px;display:none;box-shadow:0 8px 24px #0f172a1a;z-index:20;max-width:420px}
 .logbox{max-height:min(65vh,640px);overflow:auto;background:#0b1220;color:#e8eefc;border-radius:10px;padding:8px 10px;font-family:var(--font);font-size:12px;line-height:1.55}
 .logbox .ll{display:grid;grid-template-columns:58px 56px 1fr;gap:8px;align-items:start;padding:6px 2px;border-bottom:1px solid #ffffff0f}
@@ -158,7 +172,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.2</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.3</span> <span id="modeBadge" class="badge">模式</span></h1>
     </div>
     <div class="row" style="align-items:center">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -185,7 +199,7 @@ select.act{min-width:100px}input.num{width:70px}
       <label class="sw"><span class="lbl">自动垃圾箱</span>
         <span class="switch danger"><input id="swDel" type="checkbox" onchange="toggle('auto_delete',this.checked)"/><span class="slider"></span></span>
       </label>
-      <label class="sw" title="定时主动探测账号是否可用">
+      <label class="sw" title="定时主动探测账号是否可用（会消耗额度）">
         <span class="lbl">主动巡查</span>
         <span class="switch"><input id="swPatrol" type="checkbox" onchange="toggle('patrol_enabled',this.checked)"/><span class="slider"></span></span>
       </label>
@@ -193,6 +207,29 @@ select.act{min-width:100px}input.num{width:70px}
       <button class="xs" onclick="applyPreset('observe')" title="关闭自动冷却/候选/垃圾箱，只记录观察">仅观察</button>
       <button class="xs warn" onclick="applyPreset('safe-guard')" title="打开自动冷却+自动候选；不会自动进垃圾箱">安全防护</button>
       <button class="xs" onclick="runTick()" title="被动维护：恢复到期冷却 + 同步 CPA 已禁用账号到哨兵冷却状态 + 清理过期垃圾箱（不主动探测，不消耗额度）">立即维护</button>
+    </div>
+    <div class="patrol-box">
+      <div class="patrol-head">
+        <div>
+          <b>主动巡查</b>
+          <span class="meta">会真实请求 xAI，消耗免费额度 · 全量只扫已启用 · 仅冷却只扫冷却号</span>
+        </div>
+        <div class="row">
+          <button class="xs primary" onclick="patrolStart('full')" title="只探测当前已启用的 xAI 账号">全量巡查</button>
+          <button class="xs warn" onclick="patrolStart('cooldown')" title="只探测当前冷却中的账号">仅查冷却号</button>
+          <button class="xs" onclick="savePatrolCfg()" title="保存下方巡查参数">保存巡查配置</button>
+        </div>
+      </div>
+      <div class="patrol-grid">
+        <label>周期(秒)<input id="pInterval" type="number" min="60" step="60" value="3600"/></label>
+        <label>超时(秒)<input id="pTimeout" type="number" min="3" step="1" value="15"/></label>
+        <label>并发<input id="pConc" type="number" min="1" max="64" step="1" value="8"/></label>
+        <label>每轮上限<input id="pBatch" type="number" min="0" step="1" value="50"/></label>
+        <label>模型<input id="pModel" type="text" value="grok-4.5"/></label>
+        <label>代理URL<input id="pProxy" type="text" placeholder="可选 http://..."/></label>
+      </div>
+      <div class="meta" id="patrolStatus">空闲</div>
+      <div id="patrolLog" class="patrol-log">暂无巡查日志</div>
     </div>
   </div>
 
@@ -207,7 +244,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div id="tab-accounts" class="tabpanel card" style="margin:0">
     <h2><span>账号</span><span class="meta" id="accMeta">0</span></h2>
     <div class="toolbar">
-      <input id="q" placeholder="搜邮箱" style="flex:1;min-width:140px" oninput="debouncedRefresh()"/>
+      <input id="q" placeholder="搜账号/邮箱/文件/状态/信号" style="flex:1;min-width:180px" oninput="debouncedRefresh()"/>
       <select id="view" onchange="refresh()"><option value="focus">问题账号</option><option value="all">全部观测</option></select>
       <select id="stateFilter" onchange="refresh()">
         <option value="">全部状态</option>
@@ -635,18 +672,45 @@ function renderLogs(logs){
   LAST_LOGS=logs||[];
   const box=document.getElementById('logbox');
   if(!box) return;
-  const lines=LAST_LOGS.slice().reverse().slice(0,300).map(e=>{
+  // filter logs by current account search/state selection when possible
+  const q=(document.getElementById('q')?.value||'').trim().toLowerCase();
+  const stf=(document.getElementById('stateFilter')?.value||'').trim();
+  const accKeys=new Set();
+  (LAST_ACCOUNTS||[]).forEach(a=>{
+    if(a.auth_index) accKeys.add(String(a.auth_index).toLowerCase());
+    if(a.email) accKeys.add(String(a.email).toLowerCase());
+    if(a.file_name) accKeys.add(String(a.file_name).toLowerCase());
+    if(a.display_name) accKeys.add(String(a.display_name).toLowerCase());
+  });
+  let src=LAST_LOGS.slice().reverse();
+  if(q || stf){
+    src=src.filter(e=>{
+      const who=String(e.auth_label||e.auth||'').toLowerCase();
+      const auth=String(e.auth||'').toLowerCase();
+      const text=String(e.text||'').toLowerCase();
+      // if we have filtered accounts, keep logs that match those accounts OR global patrol/tick
+      if(accKeys.size){
+        const hit=[...accKeys].some(k=>k && (who.includes(k)||auth.includes(k)||text.includes(k)));
+        if(hit) return true;
+        // keep global maintenance/patrol lines when searching those keywords
+        if(q && (text.includes(q) || String(e.source||'').includes(q) || String(e.action||'').includes(q))) return true;
+        // if account filter active, drop unrelated account logs
+        if(e.auth || e.auth_label) return false;
+        return !q; // keep generic when only state filter
+      }
+      if(!q) return true;
+      return who.includes(q) || auth.includes(q) || text.includes(q) || String(e.action||'').includes(q) || String(e.source||'').includes(q);
+    });
+  }
+  const lines=src.slice(0,300).map(e=>{
     const level=e.level || (String(e.action||'').includes('fail')||String(e.action||'').includes('error')?'err'
       :(e.action==='cooldown'||e.action==='candidate'||e.action==='trash'||e.action==='delete'||e.action==='manual_disable'?'warn'
-      :(e.action==='reenable'||e.action==='manual_enable'||e.action==='backfill'||e.action==='auto_backfill'?'ok':'info')));
+      :(e.action==='reenable'||e.action==='manual_enable'||e.action==='backfill'||e.action==='auto_backfill'||e.action==='patrol_done'?'ok':'info')));
     const badge=e.action_label||ACT_ZH[e.action]||e.action||'事件';
-    // prefer backend narrative text; fallback compose
     let text=e.text || '';
-    if(!text || text.indexOf(' · ')>=0 && text.split(' · ').length>=3 && !/因|已将|已恢复|失败/.test(text)){
-      // old-style "冷却 · 免费额度用尽 · mail" → rewrite client-side too
+    if(!text || (text.indexOf(' · ')>=0 && text.split(' · ').length>=3 && !/因|已将|已恢复|失败|巡查|维护/.test(text))){
       text=composeLogClient(e);
     }
-    // light emphasis: email-like token
     const htmlText=esc(text).replace(/([a-z0-9._%+\-*]+@[a-z0-9.\-*]+\.[a-z*]{2,})/ig,'<span class="who">$1</span>');
     return '<div class="ll">'+
       '<div class="lt">'+esc(e.at||'')+'</div>'+
@@ -654,9 +718,9 @@ function renderLogs(logs){
       '<div class="lm">'+htmlText+'</div>'+
     '</div>';
   });
-  box.innerHTML=lines.join('')||'<div class="empty">暂无动作日志</div>';
+  box.innerHTML=lines.join('')||'<div class="empty">暂无匹配日志</div>';
   const meta=document.getElementById('logMeta');
-  if(meta) meta.textContent=(LAST_LOGS.length||0)+' 条'+(MASKED?' · 脱敏':'');
+  if(meta) meta.textContent=(lines.length||0)+'/'+(LAST_LOGS.length||0)+' 条'+(MASKED?' · 脱敏':'')+(q||stf?' · 已筛选':'');
 }
 function composeLogClient(e){
   const act=e.action||'';
@@ -695,7 +759,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.5.2');
+    document.getElementById('ver').textContent='v'+(st.version||'0.5.3');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -707,6 +771,7 @@ async function refresh(){
     setSwitch('swCand',!!CFG.auto_candidate);
     setSwitch('swDel',!!CFG.auto_delete);
     setSwitch('swPatrol',!!CFG.patrol_enabled);
+    fillPatrolForm(CFG);
     const patrolMin=CFG.patrol_interval? Math.round((CFG.patrol_interval||0)/60)+'分' : '-';
     document.getElementById('cfgLine').textContent=
       '维护每'+(CFG.tick_seconds||30)+'s · 巡查'+(CFG.patrol_enabled?('每'+patrolMin):'关')+
@@ -889,6 +954,85 @@ async function runTick(){
     toast('维护完成：已同步 CPA 禁用状态 · 当前冷却 '+n+' 个');
     await refresh();
   }catch(e){toast(e.message)}
+}
+let PATROL_TIMER=null, PATROL_CFG_DIRTY=false;
+function fillPatrolForm(cfg){
+  if(PATROL_CFG_DIRTY) return;
+  cfg=cfg||{};
+  const set=(id,v)=>{const el=document.getElementById(id); if(el && document.activeElement!==el) el.value=(v==null?'':v)};
+  set('pInterval', cfg.patrol_interval||3600);
+  set('pTimeout', cfg.patrol_timeout||15);
+  set('pConc', cfg.patrol_concurrency||8);
+  set('pBatch', cfg.patrol_batch_size||50);
+  set('pModel', cfg.patrol_model||'grok-4.5');
+  set('pProxy', cfg.patrol_proxy_url||'');
+}
+function markPatrolDirty(){ PATROL_CFG_DIRTY=true; }
+['pInterval','pTimeout','pConc','pBatch','pModel','pProxy'].forEach(id=>{
+  // bound after DOM ready via refresh; also attach now if present
+  const el=document.getElementById(id);
+  if(el){ el.addEventListener('input', markPatrolDirty); el.addEventListener('change', markPatrolDirty); }
+});
+async function savePatrolCfg(){
+  try{
+    const body={
+      patrol_enabled: !!document.getElementById('swPatrol')?.checked,
+      patrol_interval: Number(document.getElementById('pInterval').value||3600),
+      patrol_timeout: Number(document.getElementById('pTimeout').value||15),
+      patrol_concurrency: Number(document.getElementById('pConc').value||8),
+      patrol_batch_size: Number(document.getElementById('pBatch').value||50),
+      patrol_model: (document.getElementById('pModel').value||'grok-4.5').trim(),
+      patrol_proxy_url: (document.getElementById('pProxy').value||'').trim(),
+    };
+    CFG=await j('/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    PATROL_CFG_DIRTY=false;
+    fillPatrolForm(CFG);
+    toast('巡查配置已保存');
+  }catch(e){ toast('保存失败:'+e.message) }
+}
+async function patrolStart(mode){
+  try{
+    // save current form first so run uses latest knobs
+    await savePatrolCfg();
+    const r=await j('/patrol/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:mode||'full'})});
+    paintPatrol(r.patrol||{});
+    toast(mode==='cooldown'?'已启动：仅查冷却号':'已启动：全量巡查（会耗额度）');
+    if(PATROL_TIMER) clearInterval(PATROL_TIMER);
+    PATROL_TIMER=setInterval(patrolPoll, 1500);
+    patrolPoll();
+  }catch(e){ toast('巡查启动失败:'+e.message) }
+}
+async function patrolPoll(){
+  try{
+    const r=await j('/patrol/status');
+    paintPatrol(r.patrol||{});
+    if(!(r.patrol&&r.patrol.running)){
+      if(PATROL_TIMER){ clearInterval(PATROL_TIMER); PATROL_TIMER=null; }
+      // refresh accounts/logs after finish
+      await refresh();
+    }
+  }catch(e){}
+}
+function paintPatrol(p){
+  p=p||{};
+  const st=document.getElementById('patrolStatus');
+  if(st){
+    if(p.running){
+      st.textContent='进行中 · 模式 '+(p.mode||'-')+' · 目标 '+(p.total||0)+' · 已探测 '+(p.probed||0)+' · 存活 '+(p.alive||0)+' · 冷却信号 '+(p.cooldown||0)+' · 异常 '+(p.errors||0);
+    }else{
+      st.textContent=(p.message||'空闲')+(p.finished_at?(' · 结束 '+p.finished_at):'');
+    }
+  }
+  const box=document.getElementById('patrolLog');
+  if(!box) return;
+  const logs=p.logs||[];
+  if(!logs.length){ box.textContent='暂无巡查日志'; return; }
+  box.innerHTML=logs.slice().reverse().slice(0,120).map(l=>{
+    const lv=l.level||'info';
+    const who=l.label||l.auth||'';
+    const code=l.code?(' HTTP '+l.code):'';
+    return '<div class="pl"><div class="pt">'+esc(l.at||'')+'</div><div class="pm '+lv+'">'+esc((who?who+' · ':'')+(l.text||'')+code)+'</div></div>';
+  }).join('');
 }
 async function restore(id,enable){ try{ await j('/trash/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,enable})}); toast(enable?'已恢复并启用':'已恢复(禁用)'); await refresh() }catch(e){toast(e.message)} }
 async function purge(id){ if(!confirm('彻底清除后不可恢复,确认?')) return; try{ await j('/trash/purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,confirm:true})}); toast('已清除'); await refresh() }catch(e){toast(e.message)} }
