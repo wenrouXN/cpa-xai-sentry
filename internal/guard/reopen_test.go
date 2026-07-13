@@ -511,3 +511,51 @@ func TestTickGraceProtectsRecentCooldownAction(t *testing.T) {
 		t.Fatalf("recent cooldown grace must protect, opens=%d", setToFalse)
 	}
 }
+
+func TestTickReassertsOwnedCooldownIfFileEnabled(t *testing.T) {
+	dir := t.TempDir()
+	setTo := map[bool]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v0/management/auth-files" && r.Method == http.MethodGet:
+			// file shows ENABLED but account is cool-down owned
+			_ = json.NewEncoder(w).Encode(map[string]any{"files": []map[string]any{{
+				"name": "xai-i1bh92sdjf@lovc.eu.cc.json", "auth_index": "de847af412d8414c",
+				"email": "i1bh92sdjf@lovc.eu.cc", "provider": "xai", "type": "xai", "disabled": false,
+			}}})
+		case r.URL.Path == "/v0/management/auth-files/status":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if d, ok := body["disabled"].(bool); ok {
+				setTo[d]++
+			}
+			w.WriteHeader(200)
+		default:
+			w.WriteHeader(200)
+		}
+	}))
+	defer srv.Close()
+	cfg := sentrycfg.Default()
+	cfg.SentryEnabled = true
+	cfg.ManagementURL = srv.URL
+	cfg.ManagementKey = "k"
+	st := state.New(filepath.Join(dir, "s.json"))
+	st.Touch("de847af412d8414c")
+	st.UpdateMeta("de847af412d8414c", "xai-i1bh92sdjf@lovc.eu.cc.json", "i1bh92sdjf@lovc.eu.cc", "")
+	st.SetAccountState("de847af412d8414c", state.CooldownQuota, "plugin_auto")
+	st.SetRecoverAt("de847af412d8414c", time.Now().Add(24*time.Hour))
+	_ = st.Save()
+	g := guard.New(cfg, st, trash.New(filepath.Join(dir, "t"), 7, true, st), cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, dir))
+	if err := g.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if setTo[true] == 0 {
+		t.Fatalf("must re-disable owned cool-down file, setTo=%v", setTo)
+	}
+	if setTo[false] != 0 {
+		t.Fatalf("must not open, setTo=%v", setTo)
+	}
+	if st.Get("de847af412d8414c").State != state.CooldownQuota {
+		t.Fatalf("state=%s", st.Get("de847af412d8414c").State)
+	}
+}

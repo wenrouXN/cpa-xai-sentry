@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.11
+
+### Fixed: owned cool-down file left enabled after false reopen
+- Precompute owned disable identities (auth_index/file/email).
+- If CPA file is enabled but account is owned cool-down/manual → **re-disable** (`cooldown_reassert`).
+- Self-heal only runs for non-owned disables.
+
+
 ## 1.0.10
 
 ### Fixed: cooldown then immediate "打开非自有禁用"
@@ -78,6 +86,14 @@
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.0.11
+
+### Fixed: owned cool-down file left enabled after false reopen
+- Precompute owned disable identities (auth_index/file/email).
+- If CPA file is enabled but account is owned cool-down/manual → **re-disable** (`cooldown_reassert`).
+- Self-heal only runs for non-owned disables.
+
 
 ## 1.0.10
 

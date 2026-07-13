@@ -623,11 +623,30 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 		return best
 	}
 
-	n := 0
-	for _, f := range files {
-		if !f.Disabled {
+	// Precompute identities that currently own a CPA disable (must never self-heal open).
+	ownedFile := map[string]*state.Account{}
+	ownedEmail := map[string]*state.Account{}
+	ownedAuth := map[string]*state.Account{}
+	for _, a := range g.State.AccountsSnapshot() {
+		if !g.shouldProtectDisable(a, now) {
 			continue
 		}
+		if a.AuthIndex != "" {
+			ownedAuth[strings.ToLower(strings.TrimSpace(a.AuthIndex))] = a
+		}
+		if af := authFileBase(a.FileName); af != "" {
+			ownedFile[af] = a
+		}
+		if em := strings.ToLower(strings.TrimSpace(a.Email)); em != "" {
+			ownedEmail[em] = a
+		}
+		if em := emailFromXAIFile(a.FileName); em != "" {
+			ownedEmail[em] = a
+		}
+	}
+
+	n := 0
+	for _, f := range files {
 		name := strings.TrimSpace(f.Name)
 		prov := f.Provider
 		if prov == "" {
@@ -658,6 +677,39 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 			em = emailFromXAIFile(f.Path)
 		}
 		ai := strings.ToLower(strings.TrimSpace(f.AuthIndex))
+		// Absolute ownership map (immune to pickAcc / empty cand races)
+		var forced *state.Account
+		if ai != "" {
+			forced = ownedAuth[ai]
+		}
+		if forced == nil && base != "" {
+			forced = ownedFile[base]
+		}
+		if forced == nil && em != "" {
+			forced = ownedEmail[em]
+		}
+		if forced == nil && authFileBase(f.ID) != "" {
+			forced = ownedFile[authFileBase(f.ID)]
+		}
+		if forced != nil {
+			// Owned cool-down/manual: never open. If CPA file is enabled, re-disable.
+			if !f.Disabled {
+				if err := g.CPA.SetDisabled(ctx, name, true); err != nil {
+					g.State.Log(state.ActionLog{Auth: forced.AuthIndex, Source: "tick", Action: "cooldown_reassert_failed", Reason: err.Error()})
+				} else {
+					g.State.Log(state.ActionLog{Auth: forced.AuthIndex, Source: "tick", Action: "cooldown_reassert", Reason: "owned_disable_was_enabled"})
+					n++
+				}
+			}
+			if name != "" {
+				g.State.UpdateMeta(forced.AuthIndex, authFileBase(name), em, "")
+			}
+			continue
+		}
+		if !f.Disabled {
+			// not owned and already enabled — nothing to self-heal
+			continue
+		}
 		var cands []*state.Account
 		// 1) strongest: auth_index from CPA runtime
 		if ai != "" {
