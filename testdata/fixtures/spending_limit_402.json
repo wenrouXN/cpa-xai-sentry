@@ -1,0 +1,4 @@
+{
+  "status_code": 402,
+  "body": "{\"code\":\"personal-team-blocked:spending-limit\",\"error\":\"You have run out of credits or need a Grok subscription.\"}"
+}

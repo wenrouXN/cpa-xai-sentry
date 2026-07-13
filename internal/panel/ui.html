@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>XAI Sentry</title>
+<style>
+:root{--app-bg:#eff2f7;--app-accent:#409eff;--app-text-primary:#2c3e50;--app-text-regular:#5f6c7b;--app-text-muted:#8b95a6;--app-surface:#ffffffe6;--app-border:#0f172a14;--color-success:#67c23a;--color-warning:#e6a23c;--color-danger:#f56c6c;--radius:12px;--font:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+*{box-sizing:border-box}
+body{margin:0;font-family:var(--font);background:linear-gradient(120deg,#f0f7ff,#e7f2ff 50%,#edf7ff);color:var(--app-text-primary)}
+.wrap{max-width:1100px;margin:0 auto;padding:24px}
+h1{font-size:20px;margin:0 0 4px}
+.sub{color:var(--app-text-muted);font-size:13px;margin-bottom:20px}
+.grid{display:grid;gap:16px}
+.card{background:var(--app-surface);border:1px solid var(--app-border);border-radius:var(--radius);padding:20px;backdrop-filter:blur(12px)}
+.card h2{font-size:15px;margin:0 0 12px}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;background:#409eff1f;color:#337ecc}
+button{border:1px solid var(--app-border);background:#fff;color:var(--app-text-primary);border-radius:8px;padding:8px 12px;cursor:pointer}
+button.primary{background:var(--app-accent);border-color:var(--app-accent);color:#fff}
+button.danger{background:var(--color-danger);border-color:var(--color-danger);color:#fff}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--app-border)}
+th{color:var(--app-text-muted);font-weight:600}
+tr:hover td{background:#409eff14}
+.muted{color:var(--app-text-muted)}
+.toast{position:fixed;right:16px;top:16px;background:#fff;border:1px solid var(--app-border);padding:10px 14px;border-radius:8px;display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>XAI Sentry</h1>
+  <div class="sub">Observe + guard + trash · CPAMP style · default observe-only</div>
+  <div class="grid">
+    <div class="card">
+      <div class="row">
+        <h2 style="margin:0;flex:1">Overview</h2>
+        <span id="mode" class="badge">—</span>
+        <button onclick="refresh()">Refresh</button>
+        <button class="primary" onclick="runTick()">Run tick</button>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <div>Accounts (focus): <b id="accCount">0</b></div>
+        <div>Trash: <b id="trashCount">0</b></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Accounts (focus)</h2>
+      <table><thead><tr><th>Email</th><th>File</th><th>Tier</th><th>State</th><th>Signal</th></tr></thead>
+      <tbody id="accBody"></tbody></table>
+    </div>
+    <div class="card">
+      <h2>垃圾箱 Trash</h2>
+      <p class="muted">默认保留 7 天，到期自动清除。恢复默认禁用。</p>
+      <table><thead><tr><th>Email</th><th>File</th><th>Signal</th><th>Expires</th><th>Actions</th></tr></thead>
+      <tbody id="trashBody"></tbody></table>
+    </div>
+    <div class="card">
+      <h2>Action log</h2>
+      <table><thead><tr><th>At</th><th>Auth</th><th>Action</th><th>Signal</th><th>Reason</th></tr></thead>
+      <tbody id="logBody"></tbody></table>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+async function j(url, opt){const r=await fetch(url,opt);return r.json()}
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(function(){t.style.display='none'},2200)}
+function esc(s){return (s==null?'':String(s)).replace(/[&<>"']/g,function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]);});}
+function rowAcc(a){return '<tr><td>'+esc(a.email)+'</td><td>'+esc(a.file_name)+'</td><td>'+esc(a.tier)+'</td><td>'+esc(a.state)+'</td><td>'+esc(a.last_signal)+'</td></tr>';}
+function rowTrash(t){return '<tr><td>'+esc(t.email)+'</td><td>'+esc(t.file_name)+'</td><td>'+esc(t.signal)+'</td><td>'+esc(t.expires_at)+'</td><td><button onclick="restore(\''+esc(t.id)+'\',false)">恢复</button> <button class="primary" onclick="restore(\''+esc(t.id)+'\',true)">恢复并启用</button> <button class="danger" onclick="purge(\''+esc(t.id)+'\')">彻底清除</button></td></tr>';}
+function rowLog(e){return '<tr><td>'+esc(e.at)+'</td><td>'+esc(e.auth)+'</td><td>'+esc(e.action)+'</td><td>'+esc(e.signal)+'</td><td>'+esc(e.reason)+'</td></tr>';}
+async function refresh(){
+  const st=await j('/state?view=focus');
+  document.getElementById('mode').textContent=st.mode||'—';
+  document.getElementById('accCount').textContent=(st.accounts||[]).length;
+  document.getElementById('trashCount').textContent=st.trash_count||0;
+  document.getElementById('accBody').innerHTML=(st.accounts||[]).map(rowAcc).join('');
+  const tr=await j('/trash');
+  const items=tr.trash||[];
+  document.getElementById('trashBody').innerHTML=items.length?items.map(rowTrash).join(''):'<tr><td colspan="5" class="muted">垃圾箱为空</td></tr>';
+  const lg=await j('/logs');
+  const logs=(lg.logs||[]).slice().reverse().slice(0,50);
+  document.getElementById('logBody').innerHTML=logs.map(rowLog).join('');
+}
+async function restore(id,enable){
+  await j('/trash/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,enable:enable})});
+  toast(enable?'已恢复并启用':'已恢复(禁用)'); refresh();
+}
+async function purge(id){
+  if(!confirm('彻底清除不可恢复，确认？')) return;
+  await j('/trash/purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,confirm:true})});
+  toast('已清除'); refresh();
+}
+async function runTick(){ await j('/run-tick',{method:'POST'}); toast('tick done'); refresh(); }
+document.addEventListener('click', function(ev){
+  var t=ev.target;
+  if(t.classList.contains('btn-restore')) restore(t.getAttribute('data-id'), false);
+  if(t.classList.contains('btn-restore-enable')) restore(t.getAttribute('data-id'), true);
+  if(t.classList.contains('btn-purge')) purge(t.getAttribute('data-id'));
+});
+refresh();
+</script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+{
+  "status_code": 429,
+  "body": "{\"code\":\"subscription:free-usage-exhausted\",\"error\":\"You've used all the included free usage for model grok-4.5-build-free for now. Usage resets over a rolling 24-hour window — tokens (actual/limit): 1091108/1000000.\"}"
+}

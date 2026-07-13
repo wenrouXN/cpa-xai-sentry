@@ -1,0 +1,4 @@
+{
+  "status_code": 401,
+  "body": "{\"error\":\"Invalid or expired credentials (auth_kind=bearer, x_xai_token_auth=none, upstream=PermissionDenied, reason=no auth context)\"}"
+}
