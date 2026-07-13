@@ -119,8 +119,8 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">XAI 账号巡检 / 额度池</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.3.3</span> <span id="modeBadge" class="badge">模式</span></h1>
-      <div class="sub">已关闭 = CPA 文件禁用；冷却中 = 哨兵临时禁用（到期可自动恢复）。额度口径对齐 quota-guard：启用号 × 1M 估日池。</div>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.3.4</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <div class="sub">已关闭 = CPA 文件禁用；冷却中 = 哨兵临时禁用（到期可自动恢复）。额度口径：启用号 × 2M 估日池。</div>
     </div>
     <div class="row" style="align-items:center">
       <label class="sw" title="关闭后不再自动冷却/候选/删号；状态仍可读">
@@ -327,7 +327,7 @@ function renderKPIs(s, trashCount, cool, inv, usage){
     ['已开启', inv.auth_enabled!=null?inv.auth_enabled:0, 'ok', '可接流量'],
     ['已关闭', inv.auth_disabled!=null?inv.auth_disabled:0, '', '含冷却+手动'],
     ['冷却中', cooling, 'warn', '到期可恢复'],
-    ['日池(估)', fmtTok(usage.pool_est||0), 'accent', '开启×1M'],
+    ['日池(估)', fmtTok(usage.pool_est||0), 'accent', '开启×2M'],
     ['日池已用', fmtTok(usage.pool_used||0), 'warn', (usage.pool_used_pct!=null? (Number(usage.pool_used_pct).toFixed(1)+'%') : '')],
     ['日池剩余', fmtTok(usage.pool_remaining||0), 'ok', ''],
     ['候选/箱', (s.candidate||0)+'/'+(trashCount||0), '', ''],
@@ -338,11 +338,11 @@ function renderKPIs(s, trashCount, cool, inv, usage){
   const pl=document.getElementById('poolLine');
   if(pl){
     pl.textContent='日额度池(估) '+fmtTok(usage.pool_est||0)+
-      ' = 开启 '+(usage.pool_enabled!=null?usage.pool_enabled:(inv.auth_enabled||0))+' × 1M'+
+      ' = 开启 '+(usage.pool_enabled!=null?usage.pool_enabled:(inv.auth_enabled||0))+' × 2M'+
       ' · 已用 '+fmtTok(usage.pool_used||0)+
       ' · 剩余 '+fmtTok(usage.pool_remaining||0)+
       (usage.cpamp_day?(' · 统计日 '+usage.cpamp_day):'')+
-      ' · 冷却号行内显示 已用/限额/剩余（无上游数字时按 1M 用尽估算）';
+      ' · 冷却号行内显示 已用/限额/剩余（无上游数字时按 2M 用尽估算）';
   }
 }
 function accountCell(a){
@@ -373,7 +373,7 @@ function quotaCell(a){
   if(a.quota_limit || a.quota_used || a.quota_remaining){
     const main=fmtTok(a.quota_used||0)+' / '+fmtTok(a.quota_limit||0)+' 剩 '+fmtTok(a.quota_remaining||0);
     const sub=[];
-    if(a.quota_source==='free_usage_exhausted') sub.push('免费额用尽·估1M');
+    if(a.quota_source==='free_usage_exhausted') sub.push('免费额用尽·估2M');
     else if(a.quota_source) sub.push(a.quota_source);
     if(a.day_calls) sub.push('调用 '+(a.day_calls||0)+(a.day_fail_calls?('/失败 '+a.day_fail_calls):''));
     return '<div class="quota-main">'+esc(main)+'</div>'+(sub.length?'<div class="quota-sub">'+esc(sub.join(' · '))+'</div>':'');
@@ -442,7 +442,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.3.3');
+    document.getElementById('ver').textContent='v'+(st.version||'0.3.4');
     document.getElementById('updatedAt').textContent='更新 '+(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
     const inv=st.inventory||{};

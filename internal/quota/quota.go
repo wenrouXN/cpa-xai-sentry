@@ -135,12 +135,12 @@ func fromMap(m map[string]any) Info {
 	return info
 }
 
-// FreeQuotaPerAccount is the rolling free-tier estimate used by quota-guard
-// (enabled xAI accounts × 1M tokens / 24h). Used when upstream body has no numbers.
-const FreeQuotaPerAccount int64 = 1_000_000
+// FreeQuotaPerAccount is the rolling free-tier estimate per enabled xAI account
+// (enabled × 2M tokens / 24h). Used when upstream body has no numbers.
+const FreeQuotaPerAccount int64 = 2_000_000
 
 // FreeUsageExhaustedEstimate marks remaining=0 when free usage exhausted.
-// If the body has no numeric limit/used, fill the 1M free-tier estimate so UI
+// If the body has no numeric limit/used, fill the 2M free-tier estimate so UI
 // can show 已用/限额/剩余 instead of empty "今日调用N".
 func FreeUsageExhaustedEstimate(body string, recoverAt time.Time) Info {
 	info := Parse(body)

@@ -293,7 +293,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		}
 		qLimit, qUsed, qRem := acc.QuotaLimit, acc.QuotaUsed, acc.QuotaRemaining
 		qSrc := acc.QuotaSource
-		// free-usage exhausted often arrives without numeric fields — show 1M estimate like quota-guard
+		// free-usage exhausted often arrives without numeric fields — show 2M free-tier estimate
 		if (qLimit == 0 && qUsed == 0 && qRem == 0) &&
 			(acc.LastSignal == "free_usage_429" || qSrc == "free_usage_exhausted" ||
 				acc.State == state.CooldownQuota) {
@@ -372,11 +372,11 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		"pool_used":         usedTok,
 		"pool_remaining":    remainTok,
 		"pool_used_pct":     pct,
-		"pool_source":       "enabled×1M (rolling free-tier est)",
+		"pool_source":       "enabled×2M (rolling free-tier est)",
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":         "cpa-xai-sentry",
-		"version":        "0.3.3",
+		"version":        "0.3.4",
 		"mode":           modeOf(*a.Cfg),
 		"mode_label":     modeLabel(modeOf(*a.Cfg)),
 		"summary":        summary,
@@ -713,7 +713,7 @@ func (a *API) handleRunTick(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.3.3",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.3.4",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 		"cooldown_stats": a.State.CooldownStats(time.Now()),
 	})
