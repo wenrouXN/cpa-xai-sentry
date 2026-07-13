@@ -558,10 +558,10 @@ func TestTickReassertsOwnedCooldownIfFileEnabled(t *testing.T) {
 }
 
 
-func TestDefaultReopenForeignDisabledFalse(t *testing.T) {
+func TestDefaultReopenForeignDisabledTrue(t *testing.T) {
 	cfg := sentrycfg.Default()
-	if cfg.ReopenForeignDisabled {
-		t.Fatal("safe default must be reopen_foreign_disabled=false")
+	if !cfg.ReopenForeignDisabled {
+		t.Fatal("ops default must be reopen_foreign_disabled=true (open unowned)")
 	}
 }
 

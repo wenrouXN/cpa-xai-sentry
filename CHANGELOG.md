@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.2
+
+### Ops preference restored: open unowned disables
+- Default `reopen_foreign_disabled=true` again (open non-owned disables; wait next error).
+- **Still hard-protects** owned cool-downs / panel permanent disable (mutex, ownership map, reassert, no ResetToActive on cool-downs).
+- Production config set `reopen_foreign_disabled: true`.
+
+
 ## 1.1.1
 
 ### Fixed: conservative mode overwriting cool-down as CPA已禁用
@@ -108,6 +116,14 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.2
+
+### Ops preference restored: open unowned disables
+- Default `reopen_foreign_disabled=true` again (open non-owned disables; wait next error).
+- **Still hard-protects** owned cool-downs / panel permanent disable (mutex, ownership map, reassert, no ResetToActive on cool-downs).
+- Production config set `reopen_foreign_disabled: true`.
+
 
 ## 1.1.1
 

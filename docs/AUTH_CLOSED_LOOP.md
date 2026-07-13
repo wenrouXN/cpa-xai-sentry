@@ -1,4 +1,4 @@
-> **Policy since v1.1.0:** auto-open of unowned disables is **OFF** by default (`reopen_foreign_disabled: false`).
+> **Policy:** auto-open **unowned** disables is **ON** (`reopen_foreign_disabled: true`). Owned cool-downs are never opened.
 
 # Auth closed-loop state machine
 

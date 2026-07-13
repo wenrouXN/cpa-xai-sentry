@@ -537,13 +537,13 @@ func (g *Guard) shouldProtectDisable(acc *state.Account, now time.Time) bool {
 
 // syncDisabledFromCPA inspects CPA auth files that are currently disabled.
 //
-// Default (reopen_foreign_disabled=true) — self-heal model:
-//   - If sentry OWNS the disable (plugin_auto cool-down/候删, panel user_manual), leave it.
-//   - Otherwise REOPEN the file and ResetToActive; next real usage/patrol error
-//     will re-apply policy and stamp ownership again.
+// Default (reopen_foreign_disabled=true) — ops self-heal model:
+//   - If sentry OWNS the disable (plugin_auto cool-down/候删, panel user_manual), NEVER open;
+//     if file was wrongly enabled, re-disable (cooldown_reassert).
+//   - If unowned: enable CPA file only; do NOT ResetToActive cool-downs.
+//     Next real usage/patrol error re-stamps ownership.
 //
-// Optional (reopen_foreign_disabled=false) — conservative:
-//   - Keep unowned disables closed and mark cpa_file_disabled for manual enable.
+// Optional (reopen_foreign_disabled=false) — keep unowned closed + mark CPA已禁用.
 func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, error) {
 	if g.CPA == nil {
 		return 0, nil
@@ -807,10 +807,10 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 			auth = acc.AuthIndex
 		}
 
-		// Optional self-heal (OFF by default). Even when enabled:
+		// Ops self-heal (ON by default): open UNOWNED disables only.
 		//  - NEVER open if shouldProtectDisable (owned cool-down/manual)
-		//  - NEVER ResetToActive (that wiped cool-downs and caused "冷却后又打开")
-		//  - only enable the CPA file; leave sentry state for next real error / recover_at
+		//  - NEVER ResetToActive on protectable accounts
+		//  - only enable the CPA file; next real error re-stamps cool-down
 		if g.Cfg.ReopenForeignDisabled {
 			// final hard gate
 			if g.shouldProtectDisable(owned, now) || g.shouldProtectDisable(acc, now) {
