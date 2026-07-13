@@ -92,6 +92,9 @@ tr:hover td{background:#409eff0c}
 .acc-file{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10.5px;color:#64748b;margin-top:2px;word-break:break-all}
 .sig-main{font-weight:700;font-size:12px}
 .sig-sub{color:var(--muted);font-size:10.5px;margin-top:2px}
+.tip{cursor:help}
+.tag.danger{background:#fef0f0;color:#c45656;border-color:#fbc4c4}
+.tag.ok{background:#f0f9eb;color:#529b2e;border-color:#c2e7b0}
 .quota-main{font-variant-numeric:tabular-nums;font-weight:600}
 .quota-sub{color:var(--muted);font-size:10.5px;margin-top:2px}
 .time-main{font-variant-numeric:tabular-nums;font-weight:600}
@@ -104,9 +107,13 @@ tr:hover td{background:#409eff0c}
 .err-controls{display:grid;grid-template-columns:repeat(5,minmax(0,1fr)) auto;gap:8px;align-items:end;margin-top:10px}
 @media(max-width:900px){.err-controls{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .err-controls label{display:flex;flex-direction:column;gap:4px;font-size:10.5px;color:var(--muted);font-weight:700}
-.err-sample{margin-top:10px;background:#0b1220;color:#e2e8f0;border-radius:10px;padding:10px 12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.45;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto}
+.err-sample{margin-top:10px;background:#0b1220;color:#e2e8f0;border-radius:10px;padding:10px 12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.45;white-space:pre-wrap;word-break:break-word;max-height:120px;overflow:auto}
 .err-sample .msg{color:#fbbf24;font-weight:600;margin-bottom:6px;white-space:normal}
 .err-empty{color:var(--muted);padding:16px;text-align:center}
+.policy-log{margin-top:8px;max-height:140px;overflow:auto;background:#0b1220;color:#dbe7ff;border-radius:8px;padding:8px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.4}
+.policy-log .pl-line{padding:1px 0;border-bottom:1px solid #ffffff0d}
+.policy-log .pl-line:last-child{border-bottom:0}
+.policy-log .pl-empty{color:#94a3b8}
 .table-wrap.accounts{max-height:min(62vh,680px)}
 .table-wrap.accounts th,.table-wrap.accounts td{padding:8px 8px}
 .table-wrap.accounts tr td:nth-child(2){min-width:210px}
@@ -119,7 +126,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.3.5</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.3.7</span> <span id="modeBadge" class="badge">模式</span></h1>
     </div>
     <div class="row" style="align-items:center">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -150,9 +157,9 @@ select.act{min-width:100px}input.num{width:70px}
         <span class="switch"><input id="swPatrol" type="checkbox" onchange="toggle('patrol_enabled',this.checked)"/><span class="slider"></span></span>
       </label>
       <span class="meta" id="cfgLine"></span>
-      <button class="xs" onclick="applyPreset('observe')">仅观察</button>
-      <button class="xs warn" onclick="applyPreset('safe-guard')">安全防护</button>
-      <button class="xs" onclick="runTick()" title="只恢复到期冷却 + 清理过期垃圾箱">立即维护</button>
+      <button class="xs" onclick="applyPreset('observe')" title="关闭自动冷却/候选/垃圾箱，只记录观察">仅观察</button>
+      <button class="xs warn" onclick="applyPreset('safe-guard')" title="打开自动冷却+自动候选；不会自动进垃圾箱">安全防护</button>
+      <button class="xs" onclick="runTick()" title="只恢复到期冷却 + 清理过期垃圾箱（被动维护，不是主动探测）">立即维护</button>
     </div>
   </div>
 
@@ -181,12 +188,12 @@ select.act{min-width:100px}input.num{width:70px}
       </select>
       <select id="signalFilter" style="display:none" onchange="refresh()"><option value=""></option></select>
       <select id="actionFilter" style="display:none" onchange="refresh()"><option value=""></option></select>
-      <button class="xs" onclick="selAll(true)">全选</button>
-      <button class="xs" onclick="selAll(false)">清空</button>
-      <button class="xs primary" onclick="bulk('enable')">启用</button>
-      <button class="xs warn" onclick="bulk('disable')">禁用</button>
-      <button class="xs danger" onclick="bulk('trash')">进垃圾箱</button>
-      <button class="xs warn" onclick="bulk('cooldown')">冷却</button>
+      <button class="xs" onclick="selAll(true)" title="勾选当前列表全部账号">全选</button>
+      <button class="xs" onclick="selAll(false)" title="取消全部勾选">清空</button>
+      <button class="xs primary" onclick="bulk('enable')" title="对勾选账号：CPA 重新启用">启用</button>
+      <button class="xs warn" onclick="bulk('disable')" title="对勾选账号：手动禁用（不会自动恢复）">禁用</button>
+      <button class="xs danger" onclick="bulk('trash')" title="移入垃圾箱，可恢复">进垃圾箱</button>
+      <button class="xs warn" onclick="bulk('cooldown')" title="对勾选账号执行冷却">冷却</button>
     </div>
     <div class="meta" id="coolLine" style="margin:4px 0 6px"></div>
     <div class="table-wrap accounts">
@@ -195,9 +202,10 @@ select.act{min-width:100px}input.num{width:70px}
           <tr>
             <th style="width:28px"><input type="checkbox" id="chkAll" onchange="selAll(this.checked)"/></th>
             <th>账号</th>
-            <th style="width:100px">状态</th>
-            <th style="width:160px">用量</th>
-            <th style="width:110px">恢复时间</th>
+            <th style="width:90px">状态</th>
+            <th style="width:90px">请求/报错</th>
+            <th style="width:150px">用量</th>
+            <th style="width:100px">恢复时间</th>
           </tr>
         </thead>
         <tbody id="accBody"></tbody>
@@ -206,11 +214,7 @@ select.act{min-width:100px}input.num{width:70px}
   </div>
 
   <div id="tab-errors" class="tabpanel card" hidden>
-    <h2><span>动态错误目录与策略</span><span class="meta" id="errMeta">0</span></h2>
-    <div class="help" style="margin-top:0">
-      内置 4 类稳定策略 + 动态学到的错误码。停留本页时<strong>不会整表重绘</strong>(避免输入框跳动);次数/最近时间会静默更新。
-      样本会格式化为可读报错(code / message / JSON)。消费限额类强制永不自动进垃圾箱。
-    </div>
+    <h2><span>错误策略</span><span class="meta" id="errMeta">0</span></h2>
     <div id="errBody"></div>
   </div>
 
@@ -312,6 +316,49 @@ function accountCell(a){
   const tier=a.tier&&a.tier!=='unknown'?a.tier:'';
   return '<div class="acc-name">'+esc(name)+'</div>'+(tier?('<div class="acc-sub">'+esc(tier)+'</div>'):'');
 }
+function callsCell(a){
+  const ok=a.day_calls||0, fail=a.day_fail_calls||0;
+  const tip=accountErrorTip(a);
+  const badge=fail>0
+    ? '<span class="tag danger tip" title="'+esc(tip)+'">报错 '+fail+'</span>'
+    : '<span class="tag ok">0</span>';
+  const sig=a.last_signal?('<div class="sig-sub tip" title="'+esc(tip)+'">'+esc(shortSignal(a.last_signal))+'</div>'):'';
+  return '<div class="quota-main tip" title="'+esc(tip)+'">'+ok+' / '+fail+'</div>'+badge+sig;
+}
+function shortSignal(sig){
+  if(!sig) return '';
+  if(sig==='free_usage_429') return '429';
+  if(sig==='spending_limit_402') return '402';
+  if(sig==='auth_401') return '401';
+  if(sig==='permission_403') return '403';
+  return sig.length>12?sig.slice(0,12)+'…':sig;
+}
+function accountErrorTip(a){
+  const lines=[];
+  const sig=a.last_signal||'';
+  if(sig) lines.push((SIG_ZH[sig]||sig)+'  ['+sig+']');
+  if(a.reason) lines.push('说明: '+a.reason);
+  if(a.state) lines.push('状态: '+(STATE_ZH[a.state]||a.state));
+  if(a.day_calls||a.day_fail_calls) lines.push('今日请求 '+(a.day_calls||0)+' · 报错 '+(a.day_fail_calls||0));
+  // recent action logs for this account
+  const logs=(LAST_LOGS||[]).filter(l=>{
+    return l.auth===a.auth_index || l.auth_label===a.display_name || l.auth_label===a.email || l.auth===a.email;
+  }).slice().reverse().slice(0,8);
+  if(logs.length){
+    lines.push('—— 最近动作 ——');
+    logs.forEach(l=>{
+      lines.push((l.at||'')+' '+(l.text||((l.action_label||l.action||'')+' · '+(l.reason||l.signal_label||l.signal||''))));
+    });
+  }
+  // sample from error policy catalog
+  const err=(ERRORS||[]).find(e=>e.key===sig);
+  if(err && (err.sample||err.sample_pretty||err.sample_msg)){
+    lines.push('—— 错误样本 ——');
+    lines.push(err.sample_msg||err.sample||err.sample_pretty);
+    if(err.sample_pretty && err.sample_pretty!==err.sample) lines.push(String(err.sample_pretty).slice(0,500));
+  }
+  return lines.join('\n') || '暂无报错详情';
+}
 function quotaCell(a){
   if(a.quota_limit || a.quota_used || a.quota_remaining){
     return '<div class="quota-main">'+esc(fmtTok(a.quota_used||0)+' / '+fmtTok(a.quota_limit||0)+' 剩 '+fmtTok(a.quota_remaining||0))+'</div>';
@@ -379,7 +426,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.3.5');
+    document.getElementById('ver').textContent='v'+(st.version||'0.3.7');
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
     const inv=st.inventory||{};
@@ -402,63 +449,91 @@ async function refresh(){
       coolLine.textContent=t;
     }
     document.getElementById('accMeta').textContent=(st.account_count||0)+' 行';
+    // load logs + error samples for hover tips
+    try{
+      const lg=await j('/logs'); LAST_LOGS=lg.logs||[];
+      renderLogs(LAST_LOGS);
+    }catch(e){}
+    try{
+      if(!ERRORS || !ERRORS.length || CURRENT_TAB==='errors'){
+        const er=await j('/errors'); ERRORS=er.errors||[];
+      }
+    }catch(e){}
     const prevSel=new Set(selectedAuths());
     document.getElementById('accBody').innerHTML=(st.accounts||[]).map(a=>'<tr>'+
       '<td><input type="checkbox" class="rowchk" data-auth="'+esc(a.auth_index)+'"'+(prevSel.has(a.auth_index)?' checked':'')+'/></td>'+
       '<td>'+accountCell(a)+'</td>'+
       '<td>'+stateTag(a.state)+'</td>'+
+      '<td>'+callsCell(a)+'</td>'+
       '<td>'+quotaCell(a)+'</td>'+
       '<td>'+timeCell(a.recover_at)+'</td></tr>').join('')||
-      '<tr><td colspan="5" class="muted">无匹配结果</td></tr>';
+      '<tr><td colspan="6" class="muted">无匹配结果</td></tr>';
 
     if(CURRENT_TAB==='trash') await refreshTrashOnly();
-    const lg=await j('/logs'); renderLogs(lg.logs||[]);
     if(CURRENT_TAB==='errors') await loadErrors(false);
   }catch(e){ toast('刷新失败:'+e.message); console.error(e) }
 }
+function policyLogsHTML(key){
+  const rows=logsForPolicy(key);
+  if(!rows.length) return '<div class="pl-empty">暂无该策略相关动作日志</div>';
+  return rows.map(e=>{
+    const who=e.auth_label||e.auth||'';
+    const act=e.action_label||ACT_ZH[e.action]||e.action||'—';
+    const why=e.reason||e.signal_label||'';
+    return '<div class="pl-line"><span class="muted">'+esc(e.at||'')+'</span> '+esc(act)+(why?(' · '+esc(why)):'')+(who?(' · '+esc(who)):'')+'</div>';
+  }).join('');
+}
+function logsForPolicy(key){
+  // unmatched: no known builtin signal
+  const known=new Set(Object.keys(SIG_ZH));
+  return (LAST_LOGS||[]).filter(l=>{
+    const sig=l.signal||'';
+    if(key==='unmatched') return !sig || !known.has(sig);
+    return sig===key;
+  }).slice().reverse().slice(0,40);
+}
 function errorStructureKey(list){
-  return (list||[]).map(e=>e.key+'|'+(e.enabled?1:0)+'|'+(e.action||'')+'|'+(e.threshold||0)+'|'+(e.cooldown_seconds||0)+'|'+(e.never_trash?1:0)+'|'+(e.note||'')+'|'+(e.sample||'').slice(0,40)).sort().join(';');
+  return (list||[]).map(e=>e.key+'|'+(e.enabled?1:0)+'|'+(e.action||'')+'|'+(e.threshold||0)+'|'+(e.cooldown_seconds||0)+'|'+(e.never_trash?1:0)+'|'+(e.note||'')+'|'+(e.sample||'').slice(0,40)+'|'+logsForPolicy(e.key).length).sort().join(';');
 }
 function renderErrorCards(list, force){
   const snap=errorStructureKey(list);
   if(!force && ERR_RENDERED && snap===ERR_SNAPSHOT){
-    // soft-update counts/times only
     (list||[]).forEach(e=>{
       const card=document.querySelector('.err-card[data-key="'+CSS.escape(e.key)+'"]');
       if(!card) return;
       const c=card.querySelector('[data-f="count"]'); if(c) c.textContent=String(e.count||0);
       const t=card.querySelector('[data-f="last"]'); if(t) t.textContent=(e.last_at||'').replace('T',' ').replace('Z','')||'—';
+      const log=card.querySelector('[data-f="plog"]'); if(log) log.innerHTML=policyLogsHTML(e.key);
     });
     return;
   }
   ERR_SNAPSHOT=snap; ERR_RENDERED=true;
   const box=document.getElementById('errBody');
-  if(!(list||[]).length){ box.innerHTML='<div class="err-empty">还没有采集到错误。有 xAI 失败请求后会自动出现。</div>'; return; }
+  if(!(list||[]).length){ box.innerHTML='<div class="err-empty">还没有采集到错误。</div>'; return; }
   box.innerHTML=list.slice().sort((a,b)=>(b.count||0)-(a.count||0)).map((e,i)=>{
-    const fmt=(e.sample_pretty||e.sample_msg)?{msg:e.sample_msg||e.label||e.key, pretty:e.sample_pretty||e.sample||''}:formatErrorSample(e.sample||'');
+    const sample=e.sample?formatErrorSample(e.sample):null;
     const last=(e.last_at||'').replace('T',' ').replace('Z','')||'—';
-    return '<div class="err-card" data-key="'+esc(e.key)+'" data-i="'+i+'">'+ 
-      '<div class="err-head">'+ 
-        '<div><div class="err-title">'+esc(e.label||e.key)+'</div>'+ 
-        '<div class="err-key">'+esc(e.key)+'</div>'+ 
-        '<div class="err-meta">'+ 
-          '<span class="tag">'+(e.source==='builtin'?'内置':'动态')+'</span>'+ 
-          (e.status_code?('<span class="tag">HTTP '+esc(e.status_code)+'</span>'):'')+ 
-          (e.code?('<span class="tag mono">'+esc(e.code)+'</span>'):'')+ 
-          (e.never_trash?'<span class="tag danger">禁删</span>':'')+ 
-          '<span class="tag">次数 <b data-f="count">'+(e.count||0)+'</b></span>'+ 
-          '<span class="tag muted">最近 <span data-f="last">'+esc(last)+'</span></span>'+ 
-        '</div></div>'+ 
-      '</div>'+ 
-      '<div class="err-controls">'+ 
-        '<label>启用<select class="en"><option value="1"'+(e.enabled?' selected':'')+'>开</option><option value="0"'+(!e.enabled?' selected':'')+'>关</option></select></label>'+ 
-        '<label>动作<select class="act">'+['observe','cooldown','candidate','trash'].map(a=>'<option value="'+a+'"'+(e.action===a?' selected':'')+'>'+(ACT_ZH[a]||a)+'</option>').join('')+'</select></label>'+ 
-        '<label>连续 N<input class="num th" type="number" min="1" value="'+(e.threshold||1)+'"/></label>'+ 
-        '<label>冷却秒<input class="num cd" type="number" min="0" value="'+(e.cooldown_seconds||0)+'"/></label>'+ 
-        '<label>备注<input class="note" value="'+esc(e.note||'')+'"/></label>'+ 
-        '<button class="xs primary" data-key="'+esc(e.key)+'" onclick="saveErrorKey(this.getAttribute(\'data-key\'))">保存</button>'+ 
-      '</div>'+ 
-      '<div class="err-sample"><div class="msg">'+esc(fmt.msg||'样本')+'</div>'+esc(fmt.pretty||'（无详细正文）')+'</div>'+ 
+    const act=ACT_ZH[e.action]||e.action||'-';
+    return '<div class="err-card" data-key="'+esc(e.key)+'">'+
+      '<div class="err-head"><div>'+
+        '<div class="err-title">'+esc(e.label||e.key)+'</div>'+
+        '<div class="err-meta">'+
+          '<span class="tag">'+(e.source==='builtin'?'内置':'动态')+'</span>'+
+          (e.never_trash?'<span class="tag danger">禁删</span>':'')+
+          '<span class="tag">命中 <b data-f="count">'+(e.count||0)+'</b></span>'+
+          '<span class="tag muted">最近 <span data-f="last">'+esc(last)+'</span></span>'+
+          '<span class="tag">当前动作: '+esc(act)+'</span>'+
+        '</div></div></div>'+
+      '<div class="err-controls">'+
+        '<label>启用<select class="en"><option value="1"'+(e.enabled?' selected':'')+'>开</option><option value="0"'+(!e.enabled?' selected':'')+'>关</option></select></label>'+
+        '<label>动作<select class="act">'+['observe','cooldown','candidate','trash'].map(a=>'<option value="'+a+'"'+(e.action===a?' selected':'')+'>'+(ACT_ZH[a]||a)+'</option>').join('')+'</select></label>'+
+        '<label>连续N<input class="num th" type="number" min="1" value="'+(e.threshold||1)+'"/></label>'+
+        '<label>冷却秒<input class="num cd" type="number" min="0" value="'+(e.cooldown_seconds||0)+'"/></label>'+
+        '<button class="xs primary" data-key="'+esc(e.key)+'" onclick="saveErrorKey(this.getAttribute(\'data-key\'))">保存</button>'+
+      '</div>'+
+      (sample && sample.pretty ? ('<div class="err-sample"><div class="msg">最近样本</div>'+esc((sample.pretty||'').slice(0,280))+'</div>') : '')+
+      '<div class="meta" style="margin-top:8px">本策略动作日志</div>'+
+      '<div class="policy-log" data-f="plog">'+policyLogsHTML(e.key)+'</div>'+
     '</div>';
   }).join('');
 }
@@ -478,14 +553,14 @@ async function saveErrorKey(key){
   const action=card.querySelector('.act').value;
   const threshold=parseInt(card.querySelector('.th').value||'1',10);
   const cooldown=parseInt(card.querySelector('.cd').value||'0',10);
-  const note=(card.querySelector('.note').value||'');
+  const note=e.note||'';
   const never=!!e.never_trash;
   try{
     await j('/errors/policy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
       key:e.key,label:e.label,enabled,action,threshold,cooldown_seconds:cooldown,never_trash:never,note,source:e.source||'user'
     })});
     toast('已保存: '+(e.label||e.key));
-    ERR_RENDERED=false; // force next full render after save
+    ERR_RENDERED=false;
     await loadErrors(true);
   }catch(err){ toast(err.message) }
 }
