@@ -950,11 +950,9 @@ func humanizeReason(reason, sigL, action string) string {
 	case "panel bulk/manual":
 		return "面板批量操作"
 	case "cpa_disabled_sync":
-		return "CPA文件已禁用（状态对齐）"
-	case "cpa_disabled_free_usage_sync":
-		return "CPA已禁用且疑似免费额度用尽（状态对齐）"
-	case "cpa_disabled_sync":
 		return "CPA凭证文件已禁用（非面板操作）"
+	case "cpa_disabled_free_usage_sync":
+		return "CPA已禁用且有免费额度证据（状态对齐）"
 	case "demote_false_quota_cooldown":
 		return "纠正误标额度冷却（CPA文件禁用，无免费额度证据）"
 	case "今日用量自动回补", "今日用量回补":
