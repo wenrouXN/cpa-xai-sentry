@@ -189,7 +189,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.10</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.11</span> <span id="modeBadge" class="badge">模式</span></h1>
     </div>
     <div class="row" style="align-items:center;flex-wrap:wrap">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -283,11 +283,11 @@ select.act{min-width:100px}input.num{width:70px}
       <select id="stateFilter" onchange="refresh()">
         <option value="">全部状态</option>
         <option value="active">正常</option>
-        <option value="cooldown_quota">额度冷却</option>
-        <option value="cooldown_spending">消费冷却</option>
-        <option value="cooldown_permission">权限冷却</option>
-        <option value="candidate_dead">候选</option>
-        <option value="user_manual">手动/CPA禁用</option>
+        <option value="cooldown_quota">429·额度冷却</option>
+        <option value="cooldown_spending">402·消费冷却</option>
+        <option value="cooldown_permission">403·权限冷却</option>
+        <option value="candidate_dead">401·候删</option>
+        <option value="user_manual">禁用/CPA禁用</option>
         <option value="trashed">垃圾箱</option>
       </select>
       <select id="signalFilter" style="display:none" onchange="refresh()"><option value=""></option></select>
@@ -306,7 +306,7 @@ select.act{min-width:100px}input.num{width:70px}
           <tr>
             <th style="width:28px"><input type="checkbox" id="chkAll" onchange="selAll(this.checked)"/></th>
             <th>账号</th>
-            <th style="width:72px">状态</th>
+            <th style="width:110px">状态</th>
             <th style="width:68px">请求总数</th>
             <th style="width:58px">成功率</th>
             <th style="width:90px">最近15次</th>
@@ -354,8 +354,8 @@ let MASKED = localStorage.getItem('cpa-xai-sentry-mask') !== '0'; // default mas
 const SIG_ZH={free_usage_429:'免费额度用尽',spending_limit_402:'消费限额',auth_401:'凭证失效',permission_403:'权限拒绝',http_404:'HTTP 404', 'code:invalid-argument':'参数无效/上下文过长'};
 const API="/v0/management/cpa-xai-sentry";
 const KEY_LS="cpa-xai-sentry-management-key";
-const STATE_ZH={active:'正常',cooldown_quota:'额度冷却',cooldown_spending:'消费冷却',cooldown_permission:'权限冷却',candidate_dead:'候选死号',user_manual:'手动禁用',trashed:'垃圾箱',purged:'已清除'};
-const ACT_ZH={observe:'仅观察',cooldown:'冷却',candidate:'进候选',trash:'进垃圾箱',wait:'等待恢复',review:'复查',manual:'手动',none:'无',restore_or_purge:'恢复/清除'};
+const STATE_ZH={active:'正常',cooldown_quota:'429·额度冷却',cooldown_spending:'402·消费冷却',cooldown_permission:'403·权限冷却',candidate_dead:'401·候删',user_manual:'手动禁用',trashed:'垃圾箱',purged:'已清除'};
+const ACT_ZH={observe:'仅观察',cooldown:'冷却',candidate:'候删',trash:'进垃圾箱',wait:'等待恢复',review:'复查',manual:'禁用',none:'无',restore_or_purge:'恢复/清除'};
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2400)}
 function esc(s){return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 // CPAMP-style mask: local part >8 => abc***wxyz@domain
@@ -427,27 +427,33 @@ function modeBadge(mode,label){
 }
 function setSwitch(id,on){const el=document.getElementById(id); if(el) el.checked=!!on}
 function tag(cls,text){return '<span class="tag '+cls+'">'+esc(text)+'</span>'}
-function stateTag(st, a){
-  let zh=STATE_ZH[st]||st;
-  // clearer label for file-disabled manual
-  if(st==='user_manual' && a && (a.disable_source==='cpa_file_disabled' || a.disable_source==='cpa_disabled')) zh='CPA已禁用';
-  let html='';
-  if(st==='active') html=tag('active',zh);
-  else if(String(st).startsWith('cooldown')) html=tag('cooldown',zh);
-  else if(st==='candidate_dead') html=tag('candidate',zh);
-  else if(st==='user_manual') html=tag('manual',zh);
-  else if(st==='trashed'||st==='purged') html=tag('trash',zh);
-  else html=tag('',zh);
-  // only show real error signal; never invent blank second row
-  if(a && a.last_signal){
-    const sig=a.last_signal;
-    const lab=SIG_ZH[sig]||sig;
-    html+='<div class="num-sub" title="'+esc(sig)+'">'+esc(lab)+'</div>';
-  } else if(a && a.reason && String(st).startsWith('cooldown')){
-    // compact reason without looking like a second account row
-    html+='<div class="num-sub" title="'+esc(a.reason)+'">'+esc(String(a.reason).slice(0,18))+'</div>';
+function stateLabel(st, a){
+  // 状态码 + 执行动作（一句话）
+  a=a||{};
+  const sig=a.last_signal||'';
+  if(st==='active') return {text:'正常', cls:'active', tip:'正常可用'};
+  if(st==='cooldown_quota') return {text:'429·额度冷却', cls:'cooldown', tip:'HTTP 429 免费额度用尽 → 冷却'};
+  if(st==='cooldown_spending') return {text:'402·消费冷却', cls:'cooldown', tip:'HTTP 402 消费限额 → 冷却'};
+  if(st==='cooldown_permission') return {text:'403·权限冷却', cls:'cooldown', tip:'HTTP 403 权限拒绝 → 冷却'};
+  if(st==='candidate_dead') return {text:'401·候删', cls:'candidate', tip:'HTTP 401 凭证失效 → 候删/候选'};
+  if(st==='user_manual'){
+    if(a.disable_source==='cpa_file_disabled' || a.disable_source==='cpa_disabled')
+      return {text:'CPA已禁用', cls:'manual', tip:'CPA凭证文件 disabled（非面板手动点禁用）'};
+    return {text:'手动禁用', cls:'manual', tip:'面板手动禁用'};
   }
-  return html;
+  if(st==='trashed') return {text:'垃圾箱', cls:'trash', tip:'已进垃圾箱，可恢复'};
+  if(st==='purged') return {text:'已清除', cls:'trash', tip:'已彻底清除'};
+  // fallback by signal when state not specific
+  if(sig==='free_usage_429') return {text:'429·额度冷却', cls:'cooldown', tip:sig};
+  if(sig==='spending_limit_402') return {text:'402·消费冷却', cls:'cooldown', tip:sig};
+  if(sig==='permission_403') return {text:'403·权限冷却', cls:'cooldown', tip:sig};
+  if(sig==='auth_401') return {text:'401·候删', cls:'candidate', tip:sig};
+  return {text: STATE_ZH[st]||st||'-', cls:'', tip:st||''};
+}
+function stateTag(st, a){
+  const s=stateLabel(st, a);
+  // single line only: 状态码+动作，避免看起来像两行账号
+  return '<span class="tag '+s.cls+'" title="'+esc(s.tip)+'">'+esc(s.text)+'</span>';
 }
 function actionTag(a){const cls=({cooldown:'cooldown',candidate:'candidate',trash:'trash',wait:'wait',review:'review',manual:'manual',observe:'observe',none:'none',restore_or_purge:'trash'}[a]||''); return tag(cls, ACT_ZH[a]||a||'-')}
 function switchTab(name){
@@ -815,7 +821,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.5.10');
+    document.getElementById('ver').textContent='v'+(st.version||'0.5.11');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};

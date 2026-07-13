@@ -202,13 +202,13 @@ func suggestAction(acc *state.Account) (action, reason string) {
 	}
 	switch acc.State {
 	case state.CandidateDead:
-		return "trash", "候选死号"
+		return "trash", "401·候删"
 	case state.CooldownQuota:
-		return "wait", "额度冷却中"
+		return "wait", "429·额度冷却"
 	case state.CooldownSpending:
-		return "wait", "消费限额冷却中"
+		return "wait", "402·消费冷却"
 	case state.CooldownPermission:
-		return "review", "权限冷却中"
+		return "review", "403·权限冷却"
 	case state.UserManual:
 		if acc.DisableSource == "cpa_file_disabled" || acc.DisableSource == "cpa_disabled" {
 			return "manual", "CPA文件已禁用"
@@ -219,13 +219,13 @@ func suggestAction(acc *state.Account) (action, reason string) {
 	}
 	switch acc.LastSignal {
 	case "auth_401":
-		return "candidate", "凭证失效"
+		return "candidate", "401·候删"
 	case "permission_403":
-		return "cooldown", "权限拒绝"
+		return "cooldown", "403·权限冷却"
 	case "free_usage_429":
-		return "cooldown", "免费额度用尽"
+		return "cooldown", "429·额度冷却"
 	case "spending_limit_402":
-		return "cooldown", "消费限额"
+		return "cooldown", "402·消费冷却"
 	}
 	if acc.State == state.Active && acc.LastSignal == "" {
 		return "none", ""
@@ -479,8 +479,8 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		if q != "" {
 			// broad match: email/file/auth/state/signal/action/reason/quota text/tokens
 			stZH := map[string]string{
-				"active": "正常", "cooldown_quota": "额度冷却", "cooldown_spending": "消费冷却",
-				"cooldown_permission": "权限冷却", "candidate_dead": "候选", "user_manual": "手动禁用",
+				"active": "正常", "cooldown_quota": "429·额度冷却", "cooldown_spending": "402·消费冷却",
+				"cooldown_permission": "403·权限冷却", "candidate_dead": "401·候删", "user_manual": "手动禁用",
 				"trashed": "垃圾箱", "purged": "已清除",
 			}
 			blob := strings.ToLower(strings.Join([]string{
@@ -678,7 +678,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":         "cpa-xai-sentry",
-		"version":        "0.5.10",
+		"version":        "0.5.11",
 		"mode":           modeOf(*a.Cfg),
 		"mode_label":     modeLabel(modeOf(*a.Cfg)),
 		"summary":        summary,
@@ -1360,7 +1360,7 @@ func (a *API) handlePatrolStatus(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.10",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.11",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 		"cooldown_stats": a.State.CooldownStats(time.Now()),
 	})
