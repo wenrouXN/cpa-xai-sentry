@@ -499,7 +499,7 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 			g.State.SetAccountState(acc.AuthIndex, state.UserManual, "cpa_file_disabled")
 			g.State.SetRecoverAt(acc.AuthIndex, time.Time{})
 			g.State.ObserveError("unmatched", "未分类错误", "", "cpa_disabled", "CPA auth file disabled (no free-usage evidence)", acc.AuthIndex, acc.FileName, "tick", 0)
-			g.State.Log(state.ActionLog{Auth: acc.AuthIndex, Source: "tick", Signal: "", Action: "manual_disable", Reason: "cpa_disabled_sync"})
+			g.State.Log(state.ActionLog{Auth: acc.AuthIndex, Source: "tick", Signal: "", Action: "file_disabled_sync", Reason: "cpa_disabled_sync"})
 			n++
 		}
 	}
@@ -524,7 +524,7 @@ func (g *Guard) correctFalseQuotaCooldowns(now time.Time) {
 			// demote to CPA-file-disabled manual if file still disabled, else active
 			g.State.SetAccountState(acc.AuthIndex, state.UserManual, "cpa_file_disabled")
 			g.State.SetRecoverAt(acc.AuthIndex, time.Time{})
-			g.State.Log(state.ActionLog{Auth: acc.AuthIndex, Source: "tick", Action: "manual_disable", Reason: "demote_false_quota_cooldown"})
+			g.State.Log(state.ActionLog{Auth: acc.AuthIndex, Source: "tick", Action: "file_disabled_sync", Reason: "demote_false_quota_cooldown"})
 		}
 	}
 }

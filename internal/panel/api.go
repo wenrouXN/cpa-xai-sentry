@@ -678,7 +678,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":         "cpa-xai-sentry",
-		"version":        "0.5.9",
+		"version":        "0.5.10",
 		"mode":           modeOf(*a.Cfg),
 		"mode_label":     modeLabel(modeOf(*a.Cfg)),
 		"summary":        summary,
@@ -953,6 +953,10 @@ func humanizeReason(reason, sigL, action string) string {
 		return "CPA文件已禁用（状态对齐）"
 	case "cpa_disabled_free_usage_sync":
 		return "CPA已禁用且疑似免费额度用尽（状态对齐）"
+	case "cpa_disabled_sync":
+		return "CPA凭证文件已禁用（非面板操作）"
+	case "demote_false_quota_cooldown":
+		return "纠正误标额度冷却（CPA文件禁用，无免费额度证据）"
 	case "今日用量自动回补", "今日用量回补":
 		return r
 	}
@@ -1044,6 +1048,11 @@ func composeLogText(actL, action, sigL, signal, who, reason, srcL, source string
 			return "已将 " + who + " 移入垃圾箱", level
 		}
 		return "账号已移入垃圾箱", level
+	case "file_disabled_sync":
+		if who != "" {
+			return "维护发现 CPA 凭证文件已禁用，已将 " + who + " 标记为「CPA已禁用」（不是你在面板点的禁用）", "warn"
+		}
+		return "维护发现 CPA 凭证文件已禁用（不是面板手动禁用）", "warn"
 	case "manual_disable":
 		if who != "" {
 			return "已在面板手动禁用 " + who, level
@@ -1112,6 +1121,8 @@ func logActionZH(a string) string {
 		return "进候选"
 	case "manual_disable":
 		return "手动禁用"
+	case "file_disabled_sync":
+		return "CPA文件禁用对齐"
 	case "manual_enable":
 		return "手动启用"
 	case "backfill", "auto_backfill":
@@ -1351,7 +1362,7 @@ func (a *API) handlePatrolStatus(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.9",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.10",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 		"cooldown_stats": a.State.CooldownStats(time.Now()),
 	})
