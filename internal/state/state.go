@@ -373,6 +373,12 @@ func (s *Store) SetRecoverAt(authIndex string, at time.Time) {
 }
 
 // SetLastSignal stamps last_signal without bumping streaks (for maintenance sync).
+func (s *Store) DeleteAccount(authIndex string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.Accounts, authIndex)
+}
+
 func (s *Store) SetLastSignal(authIndex, signal string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

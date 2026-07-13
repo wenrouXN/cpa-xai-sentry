@@ -357,6 +357,7 @@ func (g *Guard) Tick(ctx context.Context) error {
 		g.State.Log(state.ActionLog{Source: "tick", Action: "sync_disabled_failed", Reason: syncErr.Error()})
 	}
 	g.correctFalseQuotaCooldowns(now)
+	g.pruneDuplicateAccounts()
 	for _, acc := range g.State.AccountsSnapshot() {
 		if acc.RecoverAt.IsZero() || acc.RecoverAt.After(now) {
 			continue
@@ -524,6 +525,72 @@ func (g *Guard) correctFalseQuotaCooldowns(now time.Time) {
 			g.State.SetAccountState(acc.AuthIndex, state.UserManual, "cpa_file_disabled")
 			g.State.SetRecoverAt(acc.AuthIndex, time.Time{})
 			g.State.Log(state.ActionLog{Auth: acc.AuthIndex, Source: "tick", Action: "manual_disable", Reason: "demote_false_quota_cooldown"})
+		}
+	}
+}
+
+
+// pruneDuplicateAccounts keeps one state entry per email/file (prefer hash auth_index).
+func (g *Guard) pruneDuplicateAccounts() {
+	if g.State == nil {
+		return
+	}
+	type wrap struct {
+		a *state.Account
+	}
+	// work on snapshot then delete losers
+	accs := g.State.AccountsSnapshot()
+	best := map[string]string{} // key -> authIndex to keep
+	score := func(a *state.Account) int {
+		s := 0
+		ai := strings.ToLower(a.AuthIndex)
+		if ai != "" && !strings.Contains(ai, "@") && !strings.HasSuffix(ai, ".json") {
+			s += 100
+		}
+		if a.LastSignal != "" {
+			s += 20
+		}
+		s += int(a.DayCalls)
+		return s
+	}
+	keyOf := func(a *state.Account) string {
+		if e := strings.ToLower(strings.TrimSpace(a.Email)); e != "" {
+			return e
+		}
+		return strings.ToLower(strings.TrimSpace(a.FileName))
+	}
+	for _, a := range accs {
+		k := keyOf(a)
+		if k == "" {
+			continue
+		}
+		if cur, ok := best[k]; !ok {
+			best[k] = a.AuthIndex
+		} else {
+			// compare
+			var curA *state.Account
+			for _, x := range accs {
+				if x.AuthIndex == cur {
+					curA = x
+					break
+				}
+			}
+			if score(a) > score(curA) {
+				best[k] = a.AuthIndex
+			}
+		}
+	}
+	keep := map[string]bool{}
+	for _, id := range best {
+		keep[id] = true
+	}
+	for _, a := range accs {
+		k := keyOf(a)
+		if k == "" {
+			continue
+		}
+		if !keep[a.AuthIndex] {
+			g.State.DeleteAccount(a.AuthIndex)
 		}
 	}
 }

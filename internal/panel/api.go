@@ -97,17 +97,33 @@ func dedupeAccountsForPanel(accs []*state.Account) []*state.Account {
 	if len(accs) <= 1 {
 		return accs
 	}
-	type key struct{ k string }
 	best := map[string]*state.Account{}
-	order := []string{}
+	order := make([]string, 0, len(accs))
+	keyOf := func(a *state.Account) string {
+		if a == nil {
+			return ""
+		}
+		if e := strings.ToLower(strings.TrimSpace(a.Email)); e != "" {
+			return "e:" + e
+		}
+		if f := strings.ToLower(strings.TrimSpace(a.FileName)); f != "" {
+			return "f:" + f
+		}
+		// filename-like auth index
+		ai := strings.ToLower(strings.TrimSpace(a.AuthIndex))
+		if strings.HasSuffix(ai, ".json") || strings.Contains(ai, "@") {
+			return "f:" + ai
+		}
+		return "a:" + a.AuthIndex
+	}
 	score := func(a *state.Account) int {
-		s := 0
 		if a == nil {
 			return -1
 		}
-		// prefer opaque hash auth_index over filename-as-index
-		if a.AuthIndex != "" && !strings.Contains(a.AuthIndex, "@") && !strings.HasSuffix(strings.ToLower(a.AuthIndex), ".json") {
-			s += 50
+		s := 0
+		ai := strings.ToLower(a.AuthIndex)
+		if ai != "" && !strings.Contains(ai, "@") && !strings.HasSuffix(ai, ".json") {
+			s += 100 // real runtime auth index
 		}
 		if a.LastSignal != "" {
 			s += 20
@@ -118,48 +134,58 @@ func dedupeAccountsForPanel(accs []*state.Account) []*state.Account {
 		if a.FileName != "" {
 			s += 5
 		}
-		if !a.RecoverAt.IsZero() {
-			s += 3
+		if a.DayCalls > 0 {
+			s += int(a.DayCalls)
 		}
-		s += int(a.DayCalls)
 		return s
+	}
+	merge := func(dst, src *state.Account) {
+		if dst == nil || src == nil {
+			return
+		}
+		if dst.LastSignal == "" {
+			dst.LastSignal = src.LastSignal
+		}
+		if dst.Email == "" {
+			dst.Email = src.Email
+		}
+		if dst.FileName == "" {
+			dst.FileName = src.FileName
+		}
+		if dst.DisableSource == "" {
+			dst.DisableSource = src.DisableSource
+		}
+		if dst.DayCalls < src.DayCalls {
+			dst.DayCalls = src.DayCalls
+		}
+		if dst.DayFailCalls < src.DayFailCalls {
+			dst.DayFailCalls = src.DayFailCalls
+		}
+		if dst.RecoverAt.IsZero() && !src.RecoverAt.IsZero() {
+			dst.RecoverAt = src.RecoverAt
+		}
 	}
 	for _, a := range accs {
 		if a == nil {
 			continue
 		}
-		k := strings.ToLower(strings.TrimSpace(a.Email))
+		k := keyOf(a)
 		if k == "" {
-			k = strings.ToLower(strings.TrimSpace(a.FileName))
+			continue
 		}
-		if k == "" {
-			k = a.AuthIndex
-		}
-		if old, ok := best[k]; !ok {
-			best[k] = a
+		if cur, ok := best[k]; !ok {
+			cp := *a
+			best[k] = &cp
 			order = append(order, k)
-		} else if score(a) > score(old) {
-			// merge useful fields
-			if old.LastSignal == "" && a.LastSignal != "" {
-				old.LastSignal = a.LastSignal
-			}
-			if old.FileName == "" {
-				old.FileName = a.FileName
-			}
-			if old.Email == "" {
-				old.Email = a.Email
-			}
-			// keep higher-score identity as primary
-			best[k] = a
-			if a.LastSignal == "" && old.LastSignal != "" {
-				a.LastSignal = old.LastSignal
-			}
-			if a.FileName == "" {
-				a.FileName = old.FileName
-			}
-			if a.Email == "" {
-				a.Email = old.Email
-			}
+			continue
+		}
+		// always merge metadata
+		if score(a) > score(cur) {
+			cp := *a
+			merge(&cp, cur)
+			best[k] = &cp
+		} else {
+			merge(cur, a)
 		}
 	}
 	out := make([]*state.Account, 0, len(order))
@@ -183,6 +209,9 @@ func suggestAction(acc *state.Account) (action, reason string) {
 	case state.CooldownPermission:
 		return "review", "权限冷却中"
 	case state.UserManual:
+		if acc.DisableSource == "cpa_file_disabled" || acc.DisableSource == "cpa_disabled" {
+			return "manual", "CPA文件已禁用"
+		}
 		return "manual", "手动禁用"
 	case state.Trashed:
 		return "restore_or_purge", "垃圾箱"
