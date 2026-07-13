@@ -201,6 +201,18 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	accs = a.State.AccountsSnapshot()
+	// CPAMP usage.sqlite per-account day stats (same source as request monitor)
+	cpampByAuth, cpampDB, _ := cpamp.FetchXAIAccountDay(r.Context())
+	// also index by email/file for fallback matching
+	cpampByEmail := map[string]cpamp.AccountDay{}
+	for _, v := range cpampByAuth {
+		if v.Account != "" {
+			cpampByEmail[strings.ToLower(v.Account)] = v
+		}
+		if v.Label != "" {
+			cpampByEmail[strings.ToLower(v.Label)] = v
+		}
+	}
 	type row struct {
 		AuthIndex       string         `json:"auth_index"`
 		FileName        string         `json:"file_name"`
@@ -223,7 +235,12 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		DayCalls        int64          `json:"day_calls,omitempty"`
 		DayFailCalls    int64          `json:"day_fail_calls,omitempty"`
 		DayTokens       int64          `json:"day_tokens,omitempty"`
+		DaySuccess      int64          `json:"day_success,omitempty"`
+		DayInputTokens  int64          `json:"day_input_tokens,omitempty"`
+		DayOutputTokens int64          `json:"day_output_tokens,omitempty"`
 		QuotaText       string         `json:"quota_text,omitempty"`
+		UsageSource     string         `json:"usage_source,omitempty"`
+		SuccessRate     float64        `json:"success_rate,omitempty"`
 	}
 	summary := map[string]int{
 		"total": 0, "active": 0, "cooldown": 0, "candidate": 0,
@@ -233,12 +250,50 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 	signalCounts := map[string]int{}
 	var dayCalls, dayFails, dayTokens int64
+	var cpampTokSum, cpampCallSum int64
 	rows := make([]row, 0, len(accs))
 	for _, acc := range accs {
+		// prefer CPAMP usage.sqlite per-auth day stats
+		usageSrc := "local"
+		dayC, dayF, dayT := acc.DayCalls, acc.DayFailCalls, acc.DayTokens
+		var dayS, dayIn, dayOut int64
+		if cu, ok := cpampByAuth[acc.AuthIndex]; ok {
+			usageSrc = "cpamp"
+			dayC, dayS, dayF = cu.Calls, cu.Success, cu.Failure
+			dayT, dayIn, dayOut = cu.Tokens, cu.InputTokens, cu.OutputTokens
+			if cu.Actual > 0 || cu.Limit > 0 {
+				// write real free-usage actual/limit into account quota
+				a.State.UpdateQuota(acc.AuthIndex, cu.Limit, cu.Actual, max64(0, cu.Limit-cu.Actual), "cpamp_fail_body", time.Time{})
+				acc.QuotaLimit, acc.QuotaUsed = cu.Limit, cu.Actual
+				acc.QuotaRemaining = max64(0, cu.Limit-cu.Actual)
+				acc.QuotaSource = "cpamp_fail_body"
+			}
+		} else if acc.Email != "" {
+			if cu, ok := cpampByEmail[strings.ToLower(acc.Email)]; ok {
+				usageSrc = "cpamp"
+				dayC, dayS, dayF = cu.Calls, cu.Success, cu.Failure
+				dayT, dayIn, dayOut = cu.Tokens, cu.InputTokens, cu.OutputTokens
+				if cu.Actual > 0 || cu.Limit > 0 {
+					a.State.UpdateQuota(acc.AuthIndex, cu.Limit, cu.Actual, max64(0, cu.Limit-cu.Actual), "cpamp_fail_body", time.Time{})
+					acc.QuotaLimit, acc.QuotaUsed = cu.Limit, cu.Actual
+					acc.QuotaRemaining = max64(0, cu.Limit-cu.Actual)
+					acc.QuotaSource = "cpamp_fail_body"
+				}
+			}
+		}
+		// if still no success count, derive
+		if dayS == 0 && dayC >= dayF {
+			dayS = dayC - dayF
+		}
+
 		summary["total"]++
-		dayCalls += acc.DayCalls
-		dayFails += acc.DayFailCalls
-		dayTokens += acc.DayTokens
+		dayCalls += dayC
+		dayFails += dayF
+		dayTokens += dayT
+		if usageSrc == "cpamp" {
+			cpampTokSum += dayT
+			cpampCallSum += dayC
+		}
 		switch acc.State {
 		case state.Active:
 			summary["active"]++
@@ -309,12 +364,25 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		qLimit, qUsed, qRem := acc.QuotaLimit, acc.QuotaUsed, acc.QuotaRemaining
 		qSrc := acc.QuotaSource
 		qText := ""
-		// Prefer real body numbers. If none, show "用尽" without inventing 2M/2M.
+		// Prefer real body/cpamp numbers. If none, show "用尽" without inventing 2M/2M.
 		if (qLimit == 0 && qUsed == 0 && qRem == 0) &&
 			(acc.LastSignal == "free_usage_429" || qSrc == "free_usage_exhausted" ||
 				acc.State == state.CooldownQuota) {
-			qText = "用尽"
-			qSrc = "free_usage_exhausted_est"
+			// if CPAMP day tokens present, show that as used under free-tier limit estimate
+			if dayT > 0 {
+				qUsed = dayT
+				qLimit = quota.FreeQuotaPerAccount
+				if qUsed > qLimit {
+					qRem = 0
+				} else {
+					qRem = qLimit - qUsed
+				}
+				qSrc = "cpamp_day_tokens"
+				qText = formatTokens(qUsed) + " / " + formatTokens(qLimit) + " 剩 " + formatTokens(qRem)
+			} else {
+				qText = "用尽"
+				qSrc = "free_usage_exhausted_est"
+			}
 		} else {
 			if qLimit > 0 && qUsed > qLimit {
 				qRem = 0
@@ -323,9 +391,15 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			}
 			if qLimit > 0 || qUsed > 0 || qRem > 0 {
 				qText = formatTokens(qUsed) + " / " + formatTokens(qLimit) + " 剩 " + formatTokens(qRem)
-			} else if acc.DayTokens > 0 {
-				qText = "今日 token " + formatTokens(acc.DayTokens)
+			} else if dayT > 0 {
+				qText = formatTokens(dayT)
+				qUsed = dayT
+				qSrc = usageSrc
 			}
+		}
+		rate := 0.0
+		if dayC > 0 {
+			rate = float64(dayS) / float64(dayC) * 100
 		}
 		rows = append(rows, row{
 			AuthIndex: acc.AuthIndex, FileName: acc.FileName, Email: acc.Email, DisplayName: display,
@@ -333,10 +407,19 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			DisableSource: acc.DisableSource, Streaks: acc.Streaks, StreakSummary: streakSum,
 			SuggestedAction: act, Reason: reason, RecoverAt: ra, UpdatedAt: ua,
 			QuotaLimit: qLimit, QuotaUsed: qUsed, QuotaRemaining: qRem,
-			QuotaSource: qSrc, DayCalls: acc.DayCalls, DayFailCalls: acc.DayFailCalls,
-			DayTokens: acc.DayTokens, QuotaText: qText,
+			QuotaSource: qSrc, DayCalls: dayC, DayFailCalls: dayF,
+			DayTokens: dayT, DaySuccess: dayS, DayInputTokens: dayIn, DayOutputTokens: dayOut,
+			QuotaText: qText, UsageSource: usageSrc, SuccessRate: rate,
 		})
 	}
+	// if local day tokens empty, use cpamp sum for pool used
+	if dayTokens == 0 && cpampTokSum > 0 {
+		dayTokens = cpampTokSum
+	}
+	if dayCalls == 0 && cpampCallSum > 0 {
+		dayCalls = cpampCallSum
+	}
+	_ = cpampDB
 	m := a.State.MetricsSnapshot()
 	cool := a.State.CooldownStats(time.Now())
 	// enrich summary with cooldown capacity
@@ -355,7 +438,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 	enabledN := asInt(inv["auth_enabled"])
 	poolEst := int64(xaiN) * quota.FreeQuotaPerAccount
-	// used: prefer CPAMP/local real token floors; do NOT use invented 2M fills
+	// used: prefer CPAMP per-account token sum, else floor
 	usedTok := dayTokens
 	if usedTok == 0 {
 		usedTok = m.TokensFloor
@@ -378,6 +461,8 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		"cpamp_tokens":   m.TokensFloor,
 		"cpamp_calls":    m.CallsFloor,
 		"cpamp_day":      m.DayKey,
+		"cpamp_db":       cpampDB,
+		"cpamp_accounts": len(cpampByAuth),
 		// pool = 全量 xAI × 2M；冷却只影响「可接流量」，不影响总量口径
 		"pool_est":         poolEst,
 		"pool_per_account": quota.FreeQuotaPerAccount,
@@ -386,11 +471,11 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		"pool_used":        usedTok,
 		"pool_remaining":   remainTok,
 		"pool_used_pct":    pct,
-		"pool_source":      "xai_total×2M est; used=CPAMP/local tokens",
+		"pool_source":      "xai_total×2M est; used=cpamp per-account tokens",
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":         "cpa-xai-sentry",
-		"version":        "0.4.2",
+		"version":        "0.4.3",
 		"mode":           modeOf(*a.Cfg),
 		"mode_label":     modeLabel(modeOf(*a.Cfg)),
 		"summary":        summary,
@@ -422,17 +507,31 @@ func asInt(v any) int {
 	}
 }
 
-// formatTokens renders large token counts compactly (1.0M / 549k / 120).
+func max64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// formatTokens renders large token counts compactly (2.05M / 549k / 120).
 func formatTokens(n int64) string {
 	if n < 0 {
 		n = -n
 	}
 	if n >= 1_000_000 {
-		// one decimal for millions
 		whole := n / 1_000_000
-		frac := (n % 1_000_000) / 100_000
+		// two decimal digits from remainder
+		frac := (n % 1_000_000) / 10_000
 		if frac == 0 {
 			return itoa64(whole) + "M"
+		}
+		if frac%10 == 0 {
+			return itoa64(whole) + "." + itoa64(frac/10) + "M"
+		}
+		// pad two digits
+		if frac < 10 {
+			return itoa64(whole) + ".0" + itoa64(frac) + "M"
 		}
 		return itoa64(whole) + "." + itoa64(frac) + "M"
 	}
@@ -727,7 +826,7 @@ func (a *API) handleRunTick(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.4.2",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.4.3",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 		"cooldown_stats": a.State.CooldownStats(time.Now()),
 	})
