@@ -258,7 +258,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":          "cpa-xai-sentry",
-		"version":         "0.3.0",
+		"version":         "0.3.1",
 		"mode":            modeOf(*a.Cfg),
 		"mode_label":      modeLabel(modeOf(*a.Cfg)),
 		"summary":         summary,
@@ -491,7 +491,7 @@ func (a *API) handleRunTick(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.3.0",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.3.1",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 		"cooldown_stats": a.State.CooldownStats(time.Now()),
 	})
@@ -664,8 +664,12 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 		Count       int64  `json:"count"`
 		LastAt      string `json:"last_at,omitempty"`
 		Sample      string `json:"sample,omitempty"`
+		SampleMsg   string `json:"sample_msg,omitempty"`
+		SamplePretty string `json:"sample_pretty,omitempty"`
 		StatusCode  int    `json:"status_code,omitempty"`
 		Code        string `json:"code,omitempty"`
+		LastAuth    string `json:"last_auth,omitempty"`
+		LastFile    string `json:"last_file,omitempty"`
 	}
 	byKey := map[string]row{}
 	for _, p := range pols {

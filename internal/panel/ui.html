@@ -84,8 +84,30 @@ tr:hover td{background:#409eff0c}
 .switch input:checked+.slider:before{transform:translateX(18px)}
 .switch.danger input:checked+.slider{background:var(--danger)}
 .preset-hint{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.4}
-.acc-name{font-weight:700;font-size:12.5px;color:var(--text)}
-.acc-sub{color:var(--muted);font-size:11px;margin-top:2px;word-break:break-all}
+.acc-name{font-weight:700;font-size:13px;color:var(--text);letter-spacing:.01em}
+.acc-sub{color:var(--muted);font-size:11px;margin-top:3px;line-height:1.35}
+.acc-sub .k{color:#94a3b8;margin-right:2px}
+.acc-file{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10.5px;color:#64748b;margin-top:2px;word-break:break-all}
+.sig-main{font-weight:700;font-size:12px}
+.sig-sub{color:var(--muted);font-size:10.5px;margin-top:2px}
+.quota-main{font-variant-numeric:tabular-nums;font-weight:600}
+.quota-sub{color:var(--muted);font-size:10.5px;margin-top:2px}
+.time-main{font-variant-numeric:tabular-nums;font-weight:600}
+.time-sub{color:var(--muted);font-size:10.5px;margin-top:2px}
+.err-card{border:1px solid var(--border);border-radius:12px;background:#fff;padding:10px 12px;margin-bottom:8px}
+.err-head{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start}
+.err-title{font-size:13.5px;font-weight:700}
+.err-key{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;color:var(--muted);margin-top:2px}
+.err-meta{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.err-controls{display:grid;grid-template-columns:repeat(5,minmax(0,1fr)) auto;gap:8px;align-items:end;margin-top:10px}
+@media(max-width:900px){.err-controls{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.err-controls label{display:flex;flex-direction:column;gap:4px;font-size:10.5px;color:var(--muted);font-weight:700}
+.err-sample{margin-top:10px;background:#0b1220;color:#e2e8f0;border-radius:10px;padding:10px 12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.45;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto}
+.err-sample .msg{color:#fbbf24;font-weight:600;margin-bottom:6px;white-space:normal}
+.err-empty{color:var(--muted);padding:16px;text-align:center}
+.table-wrap.accounts{max-height:min(62vh,680px)}
+.table-wrap.accounts th,.table-wrap.accounts td{padding:8px 8px}
+.table-wrap.accounts tr td:nth-child(2){min-width:210px}
 .tabpanel[hidden]{display:none!important}
 select.act{min-width:100px}input.num{width:70px}
 </style>
@@ -95,29 +117,29 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">XAI 账号巡检 / 动态错误管控</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.3.0</span> <span id="modeBadge" class="badge">模式</span></h1>
-      <div class="sub">观察用量错误 → 按策略冷却/候选/垃圾箱。默认仅观察；「安全防护」= 自动冷却 + 自动候选，<b>不会</b>自动进垃圾箱。</div>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.3.1</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <div class="sub">观察用量错误 → 按策略冷却/候选/垃圾箱。默认仅观察;「安全防护」= 自动冷却 + 自动候选,<b>不会</b>自动进垃圾箱。</div>
     </div>
     <div class="row">
       <input id="cfgKey" type="password" placeholder="管理密钥 X-Management-Key" style="width:170px"/>
       <button class="xs" onclick="saveKey()">保存密钥</button>
       <button class="xs" onclick="refresh()">刷新</button>
-      <button class="xs primary" onclick="runTick()" title="恢复到期冷却 + 清理过期垃圾箱；不是主动巡检">执行周期任务</button>
+      <button class="xs primary" onclick="runTick()" title="恢复到期冷却 + 清理过期垃圾箱;不是主动巡检">执行周期任务</button>
       <button class="xs" onclick="applyPreset('observe')">仅观察</button>
-      <button class="xs warn" onclick="applyPreset('safe-guard')" title="打开自动冷却+自动候选；仍不自动进垃圾箱">安全防护</button>
+      <button class="xs warn" onclick="applyPreset('safe-guard')" title="打开自动冷却+自动候选;仍不自动进垃圾箱">安全防护</button>
     </div>
   </div>
 
   <div class="help" id="helpBox">
-    <b>周期任务</b>：到期自动恢复冷却账号 + 清理过期垃圾箱（不是主动巡检）。
-    <b>CPAMP</b>：若已配置地址和密钥，启动后会自动回补今日 xAI 用量；未配置则跳过。
-    <b>安全防护</b>：自动冷却 + 自动候选，仍禁止自动进垃圾箱；进垃圾箱需人工确认或单独打开「自动垃圾箱」。
-    <b>开关持久化</b>：面板开关会写入挂载目录，不会被 YAML 重载打回「仅观察」。
-    <b>配额</b>：优先解析错误体；否则用本地日计数 + CPAMP 日地板估算（非官方实时余额）。
+    <b>周期任务</b>:到期自动恢复冷却账号 + 清理过期垃圾箱(不是主动巡检)。
+    <b>CPAMP</b>:若已配置地址和密钥,启动后会自动回补今日 xAI 用量;未配置则跳过。
+    <b>安全防护</b>:自动冷却 + 自动候选,仍禁止自动进垃圾箱;进垃圾箱需人工确认或单独打开「自动垃圾箱」。
+    <b>开关持久化</b>:面板开关会写入挂载目录,不会被 YAML 重载打回「仅观察」。
+    <b>配额</b>:优先解析错误体;否则用本地日计数 + CPAMP 日地板估算(非官方实时余额)。
   </div>
 
   <div class="card">
-    <h2><span>总览</span><span class="meta" id="updatedAt">—</span></h2>
+    <h2><span>总览</span><span class="meta" id="updatedAt">-</span></h2>
     <div class="kpis" id="kpis"></div>
     <div class="chips" id="signalChips"></div>
     <div class="swbar">
@@ -138,7 +160,7 @@ select.act{min-width:100px}input.num{width:70px}
       </label>
       <span class="meta" id="cfgLine"></span>
     </div>
-    <div class="preset-hint" id="metricsLine">CPAMP：—</div>
+    <div class="preset-hint" id="metricsLine">CPAMP:-</div>
   </div>
 
   <div class="main-grid">
@@ -190,21 +212,19 @@ select.act{min-width:100px}input.num{width:70px}
       <button class="xs warn" onclick="bulk('cooldown')">冷却所选</button>
       <button class="xs warn" onclick="cooldownSuggested()">一键冷却「建议冷却」</button>
     </div>
-    <div class="meta" id="coolLine" style="margin:4px 0 6px">冷却/配额：—</div>
-    <div class="table-wrap">
+    <div class="meta" id="coolLine" style="margin:4px 0 6px">冷却/配额:-</div>
+    <div class="table-wrap accounts">
       <table>
         <thead>
           <tr>
             <th style="width:28px"><input type="checkbox" id="chkAll" onchange="selAll(this.checked)"/></th>
-            <th style="min-width:180px">账号</th>
+            <th>账号</th>
             <th>状态</th>
-            <th>信号</th>
-            <th>连续</th>
-            <th>配额/今日</th>
-            <th>建议</th>
-            <th>原因</th>
-            <th>恢复</th>
-            <th>更新</th>
+            <th>信号 / 连续</th>
+            <th>用量</th>
+            <th>建议动作</th>
+            <th>说明</th>
+            <th>恢复时间</th>
           </tr>
         </thead>
         <tbody id="accBody"></tbody>
@@ -214,21 +234,15 @@ select.act{min-width:100px}input.num{width:70px}
 
   <div id="tab-errors" class="tabpanel card" hidden>
     <h2><span>动态错误目录与策略</span><span class="meta" id="errMeta">0</span></h2>
-    <div class="help" style="margin-top:0">每个错误可单独设：启用、动作、连续次数、冷却秒。消费限额类强制永不自动进垃圾箱。</div>
-    <div class="table-wrap" style="max-height:min(68vh,680px)">
-      <table>
-        <thead>
-          <tr>
-            <th>错误</th><th>次数</th><th>最近</th><th>启用</th><th>动作</th><th>连续N</th><th>冷却秒</th><th>禁删</th><th>备注</th><th>样本</th><th></th>
-          </tr>
-        </thead>
-        <tbody id="errBody"></tbody>
-      </table>
+    <div class="help" style="margin-top:0">
+      内置 4 类稳定策略 + 动态学到的错误码。停留本页时<strong>不会整表重绘</strong>(避免输入框跳动);次数/最近时间会静默更新。
+      样本会格式化为可读报错(code / message / JSON)。消费限额类强制永不自动进垃圾箱。
     </div>
+    <div id="errBody"></div>
   </div>
 
   <div id="tab-trash" class="tabpanel card" hidden>
-    <h2><span>垃圾箱（可恢复）</span><button class="xs danger" onclick="purgeExpired()">清理到期</button></h2>
+    <h2><span>垃圾箱(可恢复)</span><button class="xs danger" onclick="purgeExpired()">清理到期</button></h2>
     <div class="table-wrap">
       <table>
         <thead><tr><th>账号</th><th>信号</th><th>到期</th><th>操作</th></tr></thead>
@@ -241,13 +255,15 @@ select.act{min-width:100px}input.num{width:70px}
 
   <div class="card side-log" id="sideLogCard">
     <h2><span>动作日志</span><span class="meta" id="logMeta">实时</span></h2>
-    <div id="logbox" class="logbox">—</div>
+    <div id="logbox" class="logbox">-</div>
   </div>
   </div><!-- main-grid -->
 </div>
 <div class="toast" id="toast"></div>
 <script>
 let CFG={}, timer=null, LAST_LOGS=[], ERRORS=[], CURRENT_TAB='accounts';
+let ERR_RENDERED=false, ERR_SNAPSHOT='';
+const SIG_ZH={free_usage_429:'免费额度用尽',spending_limit_402:'消费限额',auth_401:'凭证失效',permission_403:'权限拒绝'};
 const API="/v0/management/cpa-xai-sentry";
 const KEY_LS="cpa-xai-sentry-management-key";
 const STATE_ZH={active:'正常',cooldown_quota:'额度冷却',cooldown_spending:'消费冷却',cooldown_permission:'权限冷却',candidate_dead:'候选死号',user_manual:'手动禁用',trashed:'垃圾箱',purged:'已清除'};
@@ -278,12 +294,12 @@ function modeBadge(mode,label){
   else if(mode==='safe-guard'||mode==='cooldown') el.classList.add('warn');
   else if(mode==='auto_trash') el.classList.add('danger');
   else el.classList.add('off');
-  el.innerHTML='<span class="dot"></span>'+esc(label||mode||'—');
+  el.innerHTML='<span class="dot"></span>'+esc(label||mode||'-');
 }
 function setSwitch(id,on){const el=document.getElementById(id); if(el) el.checked=!!on}
 function tag(cls,text){return '<span class="tag '+cls+'">'+esc(text)+'</span>'}
 function stateTag(st){const zh=STATE_ZH[st]||st; if(st==='active') return tag('active',zh); if(String(st).startsWith('cooldown')) return tag('cooldown',zh); if(st==='candidate_dead') return tag('candidate',zh); if(st==='user_manual') return tag('manual',zh); if(st==='trashed'||st==='purged') return tag('trash',zh); return tag('',zh)}
-function actionTag(a){const cls=({cooldown:'cooldown',candidate:'candidate',trash:'trash',wait:'wait',review:'review',manual:'manual',observe:'observe',none:'none',restore_or_purge:'trash'}[a]||''); return tag(cls, ACT_ZH[a]||a||'—')}
+function actionTag(a){const cls=({cooldown:'cooldown',candidate:'candidate',trash:'trash',wait:'wait',review:'review',manual:'manual',observe:'observe',none:'none',restore_or_purge:'trash'}[a]||''); return tag(cls, ACT_ZH[a]||a||'-')}
 function switchTab(name){
   CURRENT_TAB=name;
   document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
@@ -291,7 +307,7 @@ function switchTab(name){
     const el=document.getElementById('tab-'+n);
     if(el) el.hidden=(n!==name);
   });
-  if(name==='errors') loadErrors();
+  if(name==='errors') loadErrors(!ERR_RENDERED);
   if(name==='trash') refreshTrashOnly();
   // logs always visible on the right
   renderLogs(LAST_LOGS);
@@ -316,16 +332,54 @@ function renderSignals(sc){
     : '<span class="muted">暂无信号聚合</span>';
 }
 function accountCell(a){
-  const name=a.display_name||a.email||a.file_name||a.auth_index||'—';
-  const file=a.file_name&&a.file_name!==a.auth_index?a.file_name:'';
-  const email=a.email&&a.email!==name?a.email:'';
+  const name=a.display_name||a.email||a.file_name||a.auth_index||'-';
+  const email=a.email||'';
+  const file=a.file_name||'';
   const id=a.auth_index||'';
-  let sub=[];
-  if(email) sub.push(email);
-  if(file) sub.push(file);
-  if(id && id!==name && id!==file) sub.push(id);
-  if(a.tier) sub.push(a.tier);
-  return '<div class="acc-name">'+esc(name)+'</div><div class="acc-sub mono">'+esc(sub.join(' · ')||'—')+'</div>';
+  const tier=a.tier&&a.tier!=='unknown'?a.tier:'';
+  let bits=[];
+  if(email && email!==name) bits.push('<span class="k">邮箱</span>'+esc(email));
+  if(tier) bits.push('<span class="k">套餐</span>'+esc(tier));
+  if(id && id!==name) bits.push('<span class="k">ID</span>'+esc(id.length>12?id.slice(0,8)+'...':id));
+  const fileLine=file && file!==name && file!==id ? '<div class="acc-file">'+esc(file)+'</div>' : '';
+  return '<div class="acc-name">'+esc(name)+'</div>'+(bits.length?'<div class="acc-sub">'+bits.join(' · ')+'</div>':'')+fileLine;
+}
+function signalCell(a){
+  const sig=a.last_signal||'';
+  const zh=SIG_ZH[sig]||sig||'-';
+  const streak=(a.streak_summary||'').replace(sig+':', '×') || '';
+  return '<div class="sig-main">'+esc(zh)+'</div>'+(sig?'<div class="sig-sub mono">'+esc(sig)+(streak?(' '+esc(streak)):'')+'</div>':'');
+}
+function quotaCell(a){
+  const main=a.quota_text||'-';
+  const sub=[];
+  if(a.day_calls) sub.push('今日 '+(a.day_calls||0)+' 次 / 失败 '+(a.day_fail_calls||0));
+  if(a.quota_source) sub.push(a.quota_source);
+  return '<div class="quota-main">'+esc(main)+'</div>'+(sub.length?'<div class="quota-sub">'+esc(sub.join(' · '))+'</div>':'');
+}
+function timeCell(recover, updated){
+  return '<div class="time-main">'+esc(recover||'-')+'</div>'+(updated?'<div class="time-sub">更新 '+esc(updated)+'</div>':'');
+}
+function decodeEntities(s){
+  if(!s) return '';
+  const t=document.createElement('textarea'); t.innerHTML=String(s); return t.value;
+}
+function formatErrorSample(raw){
+  let s=decodeEntities(raw||'').trim();
+  if(!s) return {msg:'暂无样本', pretty:''};
+  // try JSON pretty
+  try{
+    const obj=JSON.parse(s);
+    const msg=obj.error||obj.message||(obj.error&&obj.error.message)||obj.code||'';
+    const code=obj.code||(obj.error&&obj.error.code)||'';
+    let head='';
+    if(code) head+=String(code);
+    if(msg && String(msg)!==String(code)) head+=(head?' · ':'')+String(msg);
+    return {msg: head||'错误样本', pretty: JSON.stringify(obj,null,2)};
+  }catch(e){}
+  // key:value fragments
+  if(s.length>400) s=s.slice(0,400)+'...';
+  return {msg:s.split(/[\n\r]/)[0].slice(0,160), pretty:s};
 }
 function renderLogs(logs){
   LAST_LOGS=logs||[];
@@ -344,11 +398,11 @@ async function refreshTrashOnly(){
     const tr=await j('/trash');
     const items=tr.trash||[];
     document.getElementById('trashBody').innerHTML=items.length?items.map(t=>'<tr>'+
-      '<td><div class="acc-name">'+esc(t.email||t.file_name||t.auth_index||'—')+'</div><div class="acc-sub mono">'+esc(t.file_name||t.auth_index||'')+'</div></td>'+
+      '<td><div class="acc-name">'+esc(t.email||t.file_name||t.auth_index||'-')+'</div><div class="acc-sub mono">'+esc(t.file_name||t.auth_index||'')+'</div></td>'+
       '<td>'+esc(t.signal||'')+'</td><td class="mono">'+esc(t.expires_at||'')+'</td>'+
       '<td class="actions"><button class="xs btn-restore" data-id="'+esc(t.id)+'">恢复</button><button class="xs primary btn-restore-en" data-id="'+esc(t.id)+'">恢复并启用</button><button class="xs danger btn-purge" data-id="'+esc(t.id)+'">彻底清除</button></td></tr>').join('')
       :'<tr><td colspan="4" class="muted">垃圾箱为空</td></tr>';
-  }catch(e){ toast('垃圾箱加载失败：'+e.message) }
+  }catch(e){ toast('垃圾箱加载失败:'+e.message) }
 }
 async function refresh(){
   try{
@@ -360,8 +414,8 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.3.0');
-    document.getElementById('updatedAt').textContent='更新 '+(st.updated_at||'—').replace('T',' ').replace('Z','');
+    document.getElementById('ver').textContent='v'+(st.version||'0.3.1');
+    document.getElementById('updatedAt').textContent='更新 '+(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
     renderKPIs(st.summary, st.trash_count||0, cool);
     renderSignals(st.signal_counts||{});
@@ -370,12 +424,12 @@ async function refresh(){
     setSwitch('swCand',!!CFG.auto_candidate);
     setSwitch('swDel',!!CFG.auto_delete);
     setSwitch('swPatrol',!!CFG.patrol_enabled);
-    document.getElementById('cfgLine').textContent='周期 '+(CFG.tick_seconds||30)+'s · 垃圾箱保留 '+(CFG.trash_retention_days||7)+'天'+(CFG.trash_auto_purge?'（自动清）':'')+' · 密钥 '+(CFG.management_key_set?'已配置':'缺失')+' · 开关已持久化';
+    document.getElementById('cfgLine').textContent='周期 '+(CFG.tick_seconds||30)+'s · 垃圾箱保留 '+(CFG.trash_retention_days||7)+'天'+(CFG.trash_auto_purge?'(自动清)':'')+' · 密钥 '+(CFG.management_key_set?'已配置':'缺失')+' · 开关已持久化';
     const m=st.metrics||{};
     document.getElementById('metricsLine').textContent=
       (CFG.cpamp_url
-        ? ('CPAMP 已配置 · 日='+(m.day_key||'—')+' · Token≥'+(m.tokens_floor||0)+' · 调用≥'+(m.calls_floor||0)+' · 最近回补 '+(m.backfill_at||'尚未')+(m.backfill_source?(' / '+m.backfill_source):'')+' · 自动回补开启')
-        : 'CPAMP 未配置，跳过自动回补');
+        ? ('CPAMP 已配置 · 日='+(m.day_key||'-')+' · Token≥'+(m.tokens_floor||0)+' · 调用≥'+(m.calls_floor||0)+' · 最近回补 '+(m.backfill_at||'尚未')+(m.backfill_source?(' / '+m.backfill_source):'')+' · 自动回补开启')
+        : 'CPAMP 未配置,跳过自动回补');
     const coolLine=document.getElementById('coolLine');
     if(coolLine){
       const parts=[
@@ -389,63 +443,99 @@ async function refresh(){
       coolLine.textContent=parts.join(' · ')+(st.quota_help?(' · '+st.quota_help):'');
     }
     document.getElementById('accMeta').textContent=(st.account_count||0)+' 行 / 已观测 '+((st.summary&&st.summary.total)||0);
+    // preserve checkbox selection across refresh
+    const prevSel=new Set(selectedAuths());
     document.getElementById('accBody').innerHTML=(st.accounts||[]).map(a=>'<tr>'+
-      '<td><input type="checkbox" class="rowchk" data-auth="'+esc(a.auth_index)+'"/></td>'+
+      '<td><input type="checkbox" class="rowchk" data-auth="'+esc(a.auth_index)+'"'+(prevSel.has(a.auth_index)?' checked':'')+'/></td>'+
       '<td>'+accountCell(a)+'</td>'+
       '<td>'+stateTag(a.state)+'</td>'+
-      '<td>'+esc(a.last_signal||'')+'</td>'+
-      '<td class="mono">'+esc(a.streak_summary||'')+'</td>'+
-      '<td class="mono">'+esc(a.quota_text||'—')+'</td>'+
+      '<td>'+signalCell(a)+'</td>'+
+      '<td>'+quotaCell(a)+'</td>'+
       '<td>'+actionTag(a.suggested_action)+'</td>'+
-      '<td class="reason">'+esc(a.reason||'')+'</td>'+
-      '<td class="mono">'+esc(a.recover_at||'')+'</td>'+
-      '<td class="mono">'+esc(a.updated_at||'')+'</td></tr>').join('')||
-      '<tr><td colspan="10" class="muted">无匹配结果</td></tr>';
+      '<td class="reason">'+esc(a.reason||'—')+'</td>'+
+      '<td>'+timeCell(a.recover_at,a.updated_at)+'</td></tr>').join('')||
+      '<tr><td colspan="8" class="muted">无匹配结果</td></tr>';
 
     if(CURRENT_TAB==='trash') await refreshTrashOnly();
     const lg=await j('/logs'); renderLogs(lg.logs||[]);
-    if(CURRENT_TAB==='errors') await loadErrors();
-  }catch(e){ toast('刷新失败：'+e.message); console.error(e) }
+    if(CURRENT_TAB==='errors') await loadErrors(false);
+  }catch(e){ toast('刷新失败:'+e.message); console.error(e) }
 }
-async function loadErrors(){
+function errorStructureKey(list){
+  return (list||[]).map(e=>e.key+'|'+(e.enabled?1:0)+'|'+(e.action||'')+'|'+(e.threshold||0)+'|'+(e.cooldown_seconds||0)+'|'+(e.never_trash?1:0)+'|'+(e.note||'')+'|'+(e.sample||'').slice(0,40)).sort().join(';');
+}
+function renderErrorCards(list, force){
+  const snap=errorStructureKey(list);
+  if(!force && ERR_RENDERED && snap===ERR_SNAPSHOT){
+    // soft-update counts/times only
+    (list||[]).forEach(e=>{
+      const card=document.querySelector('.err-card[data-key="'+CSS.escape(e.key)+'"]');
+      if(!card) return;
+      const c=card.querySelector('[data-f="count"]'); if(c) c.textContent=String(e.count||0);
+      const t=card.querySelector('[data-f="last"]'); if(t) t.textContent=(e.last_at||'').replace('T',' ').replace('Z','')||'—';
+    });
+    return;
+  }
+  ERR_SNAPSHOT=snap; ERR_RENDERED=true;
+  const box=document.getElementById('errBody');
+  if(!(list||[]).length){ box.innerHTML='<div class="err-empty">还没有采集到错误。有 xAI 失败请求后会自动出现。</div>'; return; }
+  box.innerHTML=list.slice().sort((a,b)=>(b.count||0)-(a.count||0)).map((e,i)=>{
+    const fmt=(e.sample_pretty||e.sample_msg)?{msg:e.sample_msg||e.label||e.key, pretty:e.sample_pretty||e.sample||''}:formatErrorSample(e.sample||'');
+    const last=(e.last_at||'').replace('T',' ').replace('Z','')||'—';
+    return '<div class="err-card" data-key="'+esc(e.key)+'" data-i="'+i+'">'+ 
+      '<div class="err-head">'+ 
+        '<div><div class="err-title">'+esc(e.label||e.key)+'</div>'+ 
+        '<div class="err-key">'+esc(e.key)+'</div>'+ 
+        '<div class="err-meta">'+ 
+          '<span class="tag">'+(e.source==='builtin'?'内置':'动态')+'</span>'+ 
+          (e.status_code?('<span class="tag">HTTP '+esc(e.status_code)+'</span>'):'')+ 
+          (e.code?('<span class="tag mono">'+esc(e.code)+'</span>'):'')+ 
+          (e.never_trash?'<span class="tag danger">禁删</span>':'')+ 
+          '<span class="tag">次数 <b data-f="count">'+(e.count||0)+'</b></span>'+ 
+          '<span class="tag muted">最近 <span data-f="last">'+esc(last)+'</span></span>'+ 
+        '</div></div>'+ 
+      '</div>'+ 
+      '<div class="err-controls">'+ 
+        '<label>启用<select class="en"><option value="1"'+(e.enabled?' selected':'')+'>开</option><option value="0"'+(!e.enabled?' selected':'')+'>关</option></select></label>'+ 
+        '<label>动作<select class="act">'+['observe','cooldown','candidate','trash'].map(a=>'<option value="'+a+'"'+(e.action===a?' selected':'')+'>'+(ACT_ZH[a]||a)+'</option>').join('')+'</select></label>'+ 
+        '<label>连续 N<input class="num th" type="number" min="1" value="'+(e.threshold||1)+'"/></label>'+ 
+        '<label>冷却秒<input class="num cd" type="number" min="0" value="'+(e.cooldown_seconds||0)+'"/></label>'+ 
+        '<label>备注<input class="note" value="'+esc(e.note||'')+'"/></label>'+ 
+        '<button class="xs primary" data-key="'+esc(e.key)+'" onclick="saveErrorKey(this.getAttribute(\'data-key\'))">保存</button>'+ 
+      '</div>'+ 
+      '<div class="err-sample"><div class="msg">'+esc(fmt.msg||'样本')+'</div>'+esc(fmt.pretty||'（无详细正文）')+'</div>'+ 
+    '</div>';
+  }).join('');
+}
+async function loadErrors(force){
   try{
     const res=await j('/errors');
     ERRORS=res.errors||[];
-    document.getElementById('errMeta').textContent=ERRORS.length+' 种';
-    document.getElementById('errBody').innerHTML=ERRORS.sort((a,b)=>(b.count||0)-(a.count||0)).map((e,i)=>{
-      const id=esc(e.key);
-      return '<tr data-key="'+id+'">'+
-        '<td><div><b>'+esc(e.label||e.key)+'</b></div><div class="mono muted">'+esc(e.key)+'</div><div class="muted">'+(e.source==='builtin'?'内置':'动态采集')+(e.status_code?(' · HTTP '+e.status_code):'')+(e.code?(' · '+e.code):'')+'</div></td>'+
-        '<td><b>'+(e.count||0)+'</b></td>'+
-        '<td class="mono">'+esc((e.last_at||'').replace('T',' ').replace('Z',''))+'</td>'+
-        '<td><select class="en" data-i="'+i+'"><option value="1"'+(e.enabled?' selected':'')+'>开</option><option value="0"'+(!e.enabled?' selected':'')+'>关</option></select></td>'+
-        '<td><select class="act" data-i="'+i+'">'+
-          ['observe','cooldown','candidate','trash'].map(a=>'<option value="'+a+'"'+(e.action===a?' selected':'')+'>'+(ACT_ZH[a]||a)+'</option>').join('')+
-        '</select></td>'+
-        '<td><input class="num th" data-i="'+i+'" type="number" min="1" value="'+(e.threshold||1)+'"/></td>'+
-        '<td><input class="num cd" data-i="'+i+'" type="number" min="0" value="'+(e.cooldown_seconds||0)+'"/></td>'+
-        '<td>'+(e.never_trash?'是':'<input type="checkbox" class="nt" data-i="'+i+'"/>')+'</td>'+
-        '<td><input data-i="'+i+'" class="note" style="width:120px" value="'+esc(e.note||'')+'"/></td>'+
-        '<td class="mono muted" style="max-width:180px;word-break:break-all">'+esc(e.sample||'')+'</td>'+
-        '<td><button class="xs primary" onclick="saveError('+i+')">保存</button></td></tr>';
-    }).join('')||'<tr><td colspan="11" class="muted">还没有采集到错误。有 xAI 失败请求后会自动出现。</td></tr>';
+    document.getElementById('errMeta').textContent=ERRORS.length+' 种'+(force||!ERR_RENDERED?'':' · 静默刷新');
+    renderErrorCards(ERRORS, !!force);
   }catch(e){ toast('加载错误目录失败：'+e.message) }
 }
-async function saveError(i){
-  const e=ERRORS[i]; if(!e) return;
-  const tr=document.querySelector('#errBody tr[data-key="'+CSS.escape(e.key)+'"]') || document.querySelectorAll('#errBody tr')[i];
-  const enabled=tr.querySelector('.en').value==='1';
-  const action=tr.querySelector('.act').value;
-  const threshold=parseInt(tr.querySelector('.th').value||'1',10);
-  const cooldown=parseInt(tr.querySelector('.cd').value||'0',10);
-  const nt=tr.querySelector('.nt'); const never=e.never_trash || (nt?nt.checked:false);
-  const note=tr.querySelector('.note').value;
+async function saveErrorKey(key){
+  const e=(ERRORS||[]).find(x=>x.key===key); if(!e) return;
+  const card=document.querySelector('.err-card[data-key="'+CSS.escape(key)+'"]');
+  if(!card){ toast('找不到错误卡片'); return; }
+  const enabled=card.querySelector('.en').value==='1';
+  const action=card.querySelector('.act').value;
+  const threshold=parseInt(card.querySelector('.th').value||'1',10);
+  const cooldown=parseInt(card.querySelector('.cd').value||'0',10);
+  const note=(card.querySelector('.note').value||'');
+  const never=!!e.never_trash;
   try{
     await j('/errors/policy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
       key:e.key,label:e.label,enabled,action,threshold,cooldown_seconds:cooldown,never_trash:never,note,source:e.source||'user'
     })});
-    toast('已保存：'+(e.label||e.key)); loadErrors();
+    toast('已保存: '+(e.label||e.key));
+    ERR_RENDERED=false; // force next full render after save
+    await loadErrors(true);
   }catch(err){ toast(err.message) }
+}
+async function saveError(i){
+  const e=ERRORS[i]; if(e) return saveErrorKey(e.key);
 }
 async function toggle(field, checked){
   const body={}; body[field]=!!checked;
@@ -463,13 +553,13 @@ async function toggle(field, checked){
   }
 }
 async function applyPreset(name){
-  if(name==='safe-guard' && !confirm('启用「安全防护」？\n\n将打开：自动冷却 + 自动候选\n不会：自动进垃圾箱\n\n适合日常护航，误删风险低。')) return;
-  try{ await j('/preset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}); toast(name==='safe-guard'?'已启用安全防护（冷却+候选）':'已应用仅观察'); await refresh() }catch(e){toast(e.message)}
+  if(name==='safe-guard' && !confirm('启用「安全防护」?\n\n将打开:自动冷却 + 自动候选\n不会:自动进垃圾箱\n\n适合日常护航,误删风险低。')) return;
+  try{ await j('/preset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}); toast(name==='safe-guard'?'已启用安全防护(冷却+候选)':'已应用仅观察'); await refresh() }catch(e){toast(e.message)}
 }
 async function runTick(){ try{ await j('/run-tick',{method:'POST'}); toast('周期任务已执行'); await refresh() }catch(e){toast(e.message)} }
-async function restore(id,enable){ try{ await j('/trash/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,enable})}); toast(enable?'已恢复并启用':'已恢复（禁用）'); await refresh() }catch(e){toast(e.message)} }
-async function purge(id){ if(!confirm('彻底清除后不可恢复，确认？')) return; try{ await j('/trash/purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,confirm:true})}); toast('已清除'); await refresh() }catch(e){toast(e.message)} }
-async function purgeExpired(){ if(!confirm('清理所有到期垃圾箱项？')) return; try{ await j('/trash/purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({expired:true,confirm:true})}); toast('到期项已清理'); await refresh() }catch(e){toast(e.message)} }
+async function restore(id,enable){ try{ await j('/trash/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,enable})}); toast(enable?'已恢复并启用':'已恢复(禁用)'); await refresh() }catch(e){toast(e.message)} }
+async function purge(id){ if(!confirm('彻底清除后不可恢复,确认?')) return; try{ await j('/trash/purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,confirm:true})}); toast('已清除'); await refresh() }catch(e){toast(e.message)} }
+async function purgeExpired(){ if(!confirm('清理所有到期垃圾箱项?')) return; try{ await j('/trash/purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({expired:true,confirm:true})}); toast('到期项已清理'); await refresh() }catch(e){toast(e.message)} }
 function selectedAuths(){return Array.from(document.querySelectorAll('.rowchk:checked')).map(el=>el.getAttribute('data-auth')).filter(Boolean)}
 function selAll(on){
   document.querySelectorAll('.rowchk').forEach(el=>{el.checked=!!on});
@@ -479,7 +569,7 @@ async function bulk(action){
   const auths=selectedAuths();
   if(!auths.length){ toast('请先勾选账号'); return; }
   const label={disable:'禁用',enable:'启用',trash:'移入垃圾箱',cooldown:'冷却'}[action]||action;
-  if(!confirm('对当前勾选的 '+auths.length+' 个账号执行「'+label+'」？'+(action==='trash'?'\n删除会进垃圾箱（可恢复），不是立刻硬删。':''))) return;
+  if(!confirm('对当前勾选的 '+auths.length+' 个账号执行「'+label+'」?'+(action==='trash'?'\n删除会进垃圾箱(可恢复),不是立刻硬删。':''))) return;
   try{
     const res=await j('/accounts/bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,auths,confirm:true})});
     toast(label+' 成功 '+(res.success||0)+' / 失败 '+(res.failed||0));
@@ -487,7 +577,7 @@ async function bulk(action){
   }catch(e){ toast(e.message) }
 }
 async function cooldownSuggested(){
-  if(!confirm('对当前「建议冷却」的 active+free_usage_429 账号一键执行冷却？\n（按默认最长 24h / max_reset_seconds）')) return;
+  if(!confirm('对当前「建议冷却」的 active+free_usage_429 账号一键执行冷却?\n(按默认最长 24h / max_reset_seconds)')) return;
   try{
     const res=await j('/accounts/cooldown-suggested',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true,hours:24})});
     toast('已冷却 '+(res.cooled||0)+' 个账号');

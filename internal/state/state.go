@@ -2,6 +2,7 @@ package state
 
 import (
 	"encoding/json"
+	"html"
 	"os"
 	"path/filepath"
 	"strings"
@@ -426,8 +427,11 @@ func (s *Store) ObserveError(key, label, signal, code, sample, auth, file string
 	o.Count++
 	o.LastAt = time.Now()
 	if sample != "" {
-		if len(sample) > 240 {
-			sample = sample[:240]
+		// upstream / proxies sometimes HTML-escape JSON bodies
+		sample = html.UnescapeString(sample)
+		sample = strings.TrimSpace(sample)
+		if len(sample) > 1200 {
+			sample = sample[:1200]
 		}
 		o.Sample = sample
 	}
