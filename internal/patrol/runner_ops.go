@@ -169,8 +169,21 @@ func (r *Runner) runJob(ctx context.Context, mode Mode) {
 			continue
 		}
 		if res.StatusCode >= 400 {
+			// include short body hint for 404/426 misconfig diagnosis
+			hint := strings.TrimSpace(res.Body)
+			if len(hint) > 120 {
+				hint = hint[:120]
+			}
+			// strip html noise
+			if strings.Contains(strings.ToLower(hint), "<html") {
+				hint = "路径/网关 404（请检查 base_url 是否已含 /v1 被重复拼接）"
+			}
+			msg := "探测返回 HTTP " + itoa(res.StatusCode)
+			if hint != "" {
+				msg += " · " + hint
+			}
 			errs++
-			r.appendLog(res.AuthIndex, label, res.StatusCode, "err", "探测返回 HTTP "+itoa(res.StatusCode), "http_error")
+			r.appendLog(res.AuthIndex, label, res.StatusCode, "err", msg, "http_error")
 			continue
 		}
 		r.appendLog(res.AuthIndex, label, res.StatusCode, "info", "探测完成 HTTP "+itoa(res.StatusCode), "done")

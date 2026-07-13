@@ -106,7 +106,7 @@ func (r *Runner) Run(ctx context.Context, targets []Target) []Result {
 
 func (r *Runner) probeOne(ctx context.Context, t Target) Result {
 	res := Result{AuthIndex: t.AuthIndex}
-	base := strings.TrimRight(t.BaseURL, "/")
+	base := strings.TrimRight(strings.TrimSpace(t.BaseURL), "/")
 	if base == "" {
 		base = "https://api.x.ai"
 	}
@@ -114,9 +114,18 @@ func (r *Runner) probeOne(ctx context.Context, t Target) Result {
 	if model == "" {
 		model = "grok-4.5"
 	}
-	// try /v1/responses then /v1/chat/completions
-	paths := []string{"/v1/responses", "/v1/chat/completions"}
+	// If base already ends with /v1 (common for grok cli-chat-proxy), do NOT prefix paths with /v1 again.
+	// Wrong: https://cli-chat-proxy.grok.com/v1 + /v1/responses => /v1/v1/responses => nginx 404
+	// Right: .../v1 + /responses
+	var paths []string
+	if strings.HasSuffix(strings.ToLower(base), "/v1") {
+		paths = []string{"/responses", "/chat/completions"}
+	} else {
+		paths = []string{"/v1/responses", "/v1/chat/completions"}
+	}
 	var lastErr error
+	var lastCode int
+	var lastBody string
 	for attempt := 0; attempt < 3; attempt++ {
 		for _, p := range paths {
 			code, body, err := r.postProbe(ctx, base+p, model, t.Token)
@@ -125,11 +134,17 @@ func (r *Runner) probeOne(ctx context.Context, t Target) Result {
 				// network: retry
 				continue
 			}
+			lastCode, lastBody = code, body
 			res.StatusCode = code
 			res.Body = body
 			// 5xx retry
 			if code >= 500 {
 				lastErr = fmt.Errorf("upstream %d", code)
+				continue
+			}
+			// 404 on a path: try next path shape (not necessarily dead account)
+			if code == 404 {
+				lastErr = fmt.Errorf("http 404 on %s", p)
 				continue
 			}
 			res.SignalPath = true
@@ -142,6 +157,13 @@ func (r *Runner) probeOne(ctx context.Context, t Target) Result {
 		case <-time.After(time.Duration(attempt+1) * 200 * time.Millisecond):
 		}
 	}
+	// Prefer last HTTP result over generic network error when we did get a response.
+	if lastCode > 0 {
+		res.StatusCode = lastCode
+		res.Body = lastBody
+		res.SignalPath = true
+		return res
+	}
 	if lastErr != nil {
 		res.Err = lastErr.Error()
 	} else {
@@ -151,13 +173,18 @@ func (r *Runner) probeOne(ctx context.Context, t Target) Result {
 }
 
 func (r *Runner) postProbe(ctx context.Context, url, model, token string) (int, string, error) {
+	// Prefer chat/completions-compatible payload; /v1/responses may ignore extra fields or require max_output_tokens.
 	payload := map[string]any{
 		"model": model,
-		"input": "ping",
-		// chat fallback shape also accepted by some gateways if they ignore extra fields
-		"messages": []map[string]string{{"role": "user", "content": "ping"}},
-		"max_tokens": 1,
+		"messages": []map[string]string{
+			{"role": "user", "content": "ping"},
+		},
+		"max_tokens":        1,
+		"max_output_tokens": 1,
+		"stream":            false,
 	}
+	// responses-style field (harmless on chat endpoints that ignore unknown keys)
+	payload["input"] = "ping"
 	b, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
 	if err != nil {
@@ -167,8 +194,10 @@ func (r *Runner) postProbe(ctx context.Context, url, model, token string) (int, 
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	// grok cli-ish headers to reduce 426
-	req.Header.Set("User-Agent", "cpa-xai-sentry/0.1")
+	// Grok CLI proxy rejects missing/outdated CLI version with 426.
+	req.Header.Set("User-Agent", "GrokCLI/0.1.250")
+	req.Header.Set("X-Grok-CLI-Version", "0.1.250")
+	req.Header.Set("x-grok-cli-version", "0.1.250")
 	resp, err := r.HC.Do(req)
 	if err != nil {
 		return 0, "", err
