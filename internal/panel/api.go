@@ -526,14 +526,30 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			cpampCallSum += dayC
 		}
 		switch acc.State {
-		case state.Active:
+		case state.Active, "":
 			summary["active"]++
-		case state.CooldownQuota, state.CooldownSpending, state.CooldownPermission:
+			if acc.LastSignal != "" || streakTotal(acc) > 0 {
+				summary["active_watch"]++
+			} else {
+				summary["active_clean"]++
+			}
+		case state.CooldownQuota:
 			summary["cooldown"]++
+			summary["cooldown_quota"]++
+		case state.CooldownSpending:
+			summary["cooldown"]++
+			summary["cooldown_spending"]++
+		case state.CooldownPermission:
+			summary["cooldown"]++
+			summary["cooldown_permission"]++
 		case state.CandidateDead:
 			summary["candidate"]++
 		case state.UserManual:
-			summary["user_manual"]++
+			if acc.DisableSource == "cpa_file_disabled" || acc.DisableSource == "cpa_disabled" {
+				summary["cpa_disabled"]++
+			} else {
+				summary["user_manual"]++
+			}
 		case state.Trashed, state.Purged:
 			summary["trashed"]++
 		}
@@ -771,10 +787,22 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":         "cpa-xai-sentry",
-		"version":        "0.5.22",
+		"version":        "0.5.23",
 		"mode":           modeOf(*a.Cfg),
 		"mode_label":     modeLabel(modeOf(*a.Cfg)),
 		"summary":        summary,
+		"state_filters": []map[string]any{
+			{"value": "", "label": "全部状态", "count": summary["total"]},
+			{"value": "active_clean", "label": "正常·可用", "count": summary["active_clean"]},
+			{"value": "active_watch", "label": "正常·观察中", "count": summary["active_watch"]},
+			{"value": "cooldown_quota", "label": "429·额度冷却", "count": summary["cooldown_quota"]},
+			{"value": "cooldown_spending", "label": "402·消费冷却", "count": summary["cooldown_spending"]},
+			{"value": "cooldown_permission", "label": "403·权限冷却", "count": summary["cooldown_permission"]},
+			{"value": "candidate_dead", "label": "401·候删", "count": summary["candidate"]},
+			{"value": "user_manual", "label": "永久禁用", "count": summary["user_manual"]},
+			{"value": "cpa_disabled", "label": "CPA已禁用", "count": summary["cpa_disabled"]},
+			{"value": "trashed", "label": "垃圾箱", "count": summary["trashed"]},
+		},
 		"inventory":      inv,
 		"usage":          usage,
 		"signal_counts":  signalCounts,
@@ -1465,7 +1493,7 @@ func (a *API) handlePatrolStatus(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.22",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.23",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 		"cooldown_stats": a.State.CooldownStats(time.Now()),
 	})

@@ -68,7 +68,7 @@ import (
 
 const (
 	pluginID   = "cpa-xai-sentry"
-	pluginVer  = "0.5.22"
+	pluginVer  = "0.5.23"
 	pluginAuth = "local"
 	pluginRepo = "local/cpa-xai-sentry"
 	pluginLogo = ""

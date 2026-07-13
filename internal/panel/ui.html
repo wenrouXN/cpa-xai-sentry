@@ -211,7 +211,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.22</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.23</span></h1>
     </div>
     <div class="top-actions">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -264,17 +264,8 @@ select.act{min-width:100px}input.num{width:70px}
     <div class="toolbar">
       <input id="q" placeholder="搜账号/邮箱/文件/状态/信号" style="flex:1;min-width:180px" oninput="debouncedRefresh()"/>
       <select id="view" onchange="refresh()"><option value="focus">问题账号</option><option value="all">全部观测</option></select>
-      <select id="stateFilter" onchange="refresh()">
+      <select id="stateFilter" onchange="refresh()" title="按当前账号状态动态生成，数量为 0 的不显示">
         <option value="">全部状态</option>
-        <option value="active_clean">正常·可用</option>
-        <option value="active_watch">正常·观察中</option>
-        <option value="cooldown_quota">429·额度冷却</option>
-        <option value="cooldown_spending">402·消费冷却</option>
-        <option value="cooldown_permission">403·权限冷却</option>
-        <option value="candidate_dead">401·候删</option>
-        <option value="user_manual">永久禁用</option>
-        <option value="cpa_disabled">CPA已禁用</option>
-        <option value="trashed">垃圾箱</option>
       </select>
       <select id="signalFilter" style="display:none" onchange="refresh()"><option value=""></option></select>
       <select id="actionFilter" style="display:none" onchange="refresh()"><option value=""></option></select>
@@ -446,6 +437,42 @@ async function j(path, opt){
 function modeBadge(mode,label){ /* removed from header: switches already show mode */ }
 function setSwitch(id,on){const el=document.getElementById(id); if(el) el.checked=!!on}
 function tag(cls,text){return '<span class="tag '+cls+'">'+esc(text)+'</span>'}
+
+function fillStateFilter(filters, summary){
+  const sel=document.getElementById('stateFilter');
+  if(!sel) return;
+  const cur=sel.value||'';
+  // build from API filters; hide zero-count except current selection and "全部"
+  let list=Array.isArray(filters)?filters.slice():[];
+  if(!list.length && summary){
+    list=[
+      {value:'', label:'全部状态', count:summary.total||0},
+      {value:'active_clean', label:'正常·可用', count:summary.active_clean||0},
+      {value:'active_watch', label:'正常·观察中', count:summary.active_watch||0},
+      {value:'cooldown_quota', label:'429·额度冷却', count:summary.cooldown_quota||0},
+      {value:'cooldown_spending', label:'402·消费冷却', count:summary.cooldown_spending||0},
+      {value:'cooldown_permission', label:'403·权限冷却', count:summary.cooldown_permission||0},
+      {value:'candidate_dead', label:'401·候删', count:summary.candidate||0},
+      {value:'user_manual', label:'永久禁用', count:summary.user_manual||0},
+      {value:'cpa_disabled', label:'CPA已禁用', count:summary.cpa_disabled||0},
+      {value:'trashed', label:'垃圾箱', count:summary.trashed||0},
+    ];
+  }
+  // CPA已禁用：仅当有账号时出现（你问还有没有用——有数才显示）
+  const opts=list.filter(f=>{
+    if(!f.value) return true; // 全部
+    if(f.value===cur) return true; // keep current selection visible
+    return (Number(f.count)||0) > 0;
+  });
+  sel.innerHTML=opts.map(f=>{
+    const n=Number(f.count)||0;
+    const lab=f.value? (f.label+(n?(' · '+n):'')) : (f.label||'全部状态');
+    return '<option value="'+esc(f.value||'')+'"'+(String(f.value||'')===cur?' selected':'')+'>'+esc(lab)+'</option>';
+  }).join('');
+  // if current vanished and not empty, reset
+  if(cur && ![...sel.options].some(o=>o.value===cur)) sel.value='';
+}
+
 function streakN(a){
   a=a||{};
   const s=a.streaks||{};
@@ -867,7 +894,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.5.22');
+    document.getElementById('ver').textContent='v'+(st.version||'0.5.23');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -1058,7 +1085,12 @@ function errorStructureKey(list){
 function escSummary(e){
   const tiers=normalizeEsc(e);
   if(!tiers.length) return ACT_ZH[e.action]||e.action||'-';
-  return tiers.map(t=>'≥'+t.streak+(ACT_ZH[t.action]||t.action)).join(' · ');
+  // e.g. ≥3冷却 · ≥15永久禁用
+  return tiers.map(t=>{
+    const act=ACT_ZH[t.action]||t.action;
+    const cd=(t.action==='cooldown' && t.cooldown_seconds)?('('+t.cooldown_seconds+'s)'):'';
+    return '≥'+t.streak+act+cd;
+  }).join(' · ');
 }
 function normalizeEsc(e){
   let tiers=Array.isArray(e.escalations)?e.escalations.slice():[];
@@ -1133,7 +1165,7 @@ function renderErrorCards(list, force){
           (e.never_trash?'<span class="tag danger">禁删</span>':'')+
           '<span class="tag">命中 <b data-f="count">'+(e.count||0)+'</b></span>'+
           '<span class="tag muted">最近 <span data-f="last">'+esc(last)+'</span></span>'+
-          '<span class="tag">动作: '+esc(act)+'</span>'+
+          '<span class="tag'+(String(act).indexOf('永久禁用')>=0?' danger':'')+'">阶梯: '+esc(act)+'</span>'+
         '</div></div></div>'+
       '<div class="err-controls" style="grid-template-columns:auto 1fr auto;align-items:center">'+
         '<label class="sw" title="是否启用该错误策略"><span class="lbl">启用</span><span class="switch"><input class="en-sw" type="checkbox" '+(e.enabled?'checked':'')+'/><span class="slider"></span></span></label>'+
@@ -1144,7 +1176,7 @@ function renderErrorCards(list, force){
         '<button class="xs primary" data-key="'+esc(e.key)+'" onclick="saveErrorKey(this.getAttribute(\'data-key\'))">保存</button>'+
       '</div>'+
       '<div class="esc-box" data-esc="1">'+
-        '<div class="meta" style="font-weight:700;margin-bottom:6px">阶梯动作（可多档：如 3→冷却，15→永久禁用）</div>'+
+        '<div class="meta" style="font-weight:700;margin-bottom:6px">阶梯动作（动作含「永久禁用」；例：≥3冷却 · ≥15永久禁用）</div>'+
         '<div class="esc-list">'+escRowsHTML(e)+'</div>'+
         '<div class="esc-tools"><button type="button" class="xs" onclick="addEscRow(this)">+ 加一档</button><span class="meta">保存后生效 · 命中最高档</span></div>'+
       '</div>'+
