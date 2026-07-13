@@ -2,6 +2,7 @@ package state
 
 import (
 	"encoding/json"
+	"fmt"
 	"html"
 	"os"
 	"path/filepath"
@@ -134,7 +135,9 @@ type MetricsFloor struct {
 	LastCPAMPFailure    int64  `json:"last_cpamp_failure,omitempty"`
 }
 
-const maxLogs = 1000
+const maxLogs = 2000
+const maxErrorHits = 500
+const errorHitRetention = 7 * 24 * time.Hour
 
 func New(path string) *Store {
 	return &Store{
@@ -292,6 +295,15 @@ func (s *Store) Log(entry ActionLog) {
 		entry.At = time.Now()
 	}
 	s.Logs = append(s.Logs, entry)
+	// keep at most 7 days and hard cap
+	cut := time.Now().Add(-errorHitRetention)
+	kept := s.Logs[:0]
+	for _, e := range s.Logs {
+		if e.At.After(cut) {
+			kept = append(kept, e)
+		}
+	}
+	s.Logs = kept
 	if len(s.Logs) > maxLogs {
 		s.Logs = s.Logs[len(s.Logs)-maxLogs:]
 	}
@@ -441,7 +453,6 @@ func (s *Store) SnapshotLogs() []ActionLog {
 	return out
 }
 
-
 func (s *Store) ObserveError(key, label, signal, code, sample, auth, file, source string, status int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -462,7 +473,6 @@ func (s *Store) ObserveError(key, label, signal, code, sample, auth, file, sourc
 	o.Count++
 	o.LastAt = time.Now()
 	if sample != "" {
-		// upstream / proxies sometimes HTML-escape JSON bodies
 		sample = html.UnescapeString(sample)
 		sample = strings.TrimSpace(sample)
 		if len(sample) > 1200 {
@@ -472,7 +482,6 @@ func (s *Store) ObserveError(key, label, signal, code, sample, auth, file, sourc
 	}
 	o.LastAuth = auth
 	o.LastFile = file
-	// per-account hit ring (newest last)
 	hitSample := sample
 	if len(hitSample) > 240 {
 		hitSample = hitSample[:240]
@@ -480,10 +489,79 @@ func (s *Store) ObserveError(key, label, signal, code, sample, auth, file, sourc
 	o.Hits = append(o.Hits, ErrorHit{
 		At: o.LastAt, Auth: auth, File: file, Source: source, Status: status, Sample: hitSample,
 	})
-	const maxHits = 200
-	if len(o.Hits) > maxHits {
-		o.Hits = o.Hits[len(o.Hits)-maxHits:]
+	// retain max 7 days + hard cap
+	cut := time.Now().Add(-errorHitRetention)
+	kept := o.Hits[:0]
+	for _, h := range o.Hits {
+		if h.At.After(cut) {
+			kept = append(kept, h)
+		}
 	}
+	o.Hits = kept
+	if len(o.Hits) > maxErrorHits {
+		o.Hits = o.Hits[len(o.Hits)-maxErrorHits:]
+	}
+}
+
+// ReclassifyErrorKey moves an observed error key (and optional policy) to a new key.
+func (s *Store) ReclassifyErrorKey(from, to, newLabel string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	from = strings.TrimSpace(from)
+	to = strings.TrimSpace(to)
+	if from == "" || to == "" || from == to {
+		return fmt.Errorf("invalid keys")
+	}
+	if s.Observed == nil {
+		s.Observed = map[string]*ObservedError{}
+	}
+	src := s.Observed[from]
+	if src == nil {
+		return fmt.Errorf("source key not found")
+	}
+	dst := s.Observed[to]
+	if dst == nil {
+		dst = &ObservedError{Key: to, Label: newLabel}
+		s.Observed[to] = dst
+	}
+	if newLabel != "" {
+		dst.Label = newLabel
+	}
+	if dst.Label == "" {
+		dst.Label = src.Label
+	}
+	dst.Count += src.Count
+	if src.LastAt.After(dst.LastAt) {
+		dst.LastAt = src.LastAt
+		dst.Sample = src.Sample
+		dst.LastAuth = src.LastAuth
+		dst.LastFile = src.LastFile
+		dst.StatusCode = src.StatusCode
+		dst.Code = src.Code
+		if src.Signal != "" {
+			dst.Signal = src.Signal
+		}
+	}
+	dst.Hits = append(dst.Hits, src.Hits...)
+	if len(dst.Hits) > maxErrorHits {
+		dst.Hits = dst.Hits[len(dst.Hits)-maxErrorHits:]
+	}
+	delete(s.Observed, from)
+	// move policy if present
+	if s.ErrorPolicies != nil {
+		if p, ok := s.ErrorPolicies[from]; ok {
+			p.Key = to
+			if newLabel != "" {
+				p.Label = newLabel
+			}
+			// don't overwrite builtin target unless missing
+			if _, exists := s.ErrorPolicies[to]; !exists {
+				s.ErrorPolicies[to] = p
+			}
+			delete(s.ErrorPolicies, from)
+		}
+	}
+	return nil
 }
 
 func (s *Store) ListObserved() []ObservedError {

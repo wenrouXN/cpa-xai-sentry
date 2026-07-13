@@ -159,15 +159,21 @@ tr:hover td{background:#f5f9ff}
 .err-pop .ep-kv b{color:var(--muted);font-weight:600}
 .err-pop .ep-json{background:#0b1220;color:#e2e8f0;border-radius:10px;padding:10px 12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
 .err-pop .ep-msg{color:#fbbf24;font-weight:600;margin-bottom:8px;white-space:pre-wrap}
-.policy-log{margin-top:8px;max-height:180px;overflow:auto;background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:0}
-.policy-log table{width:100%;border-collapse:collapse;font-size:11.5px}
-.policy-log th,.policy-log td{padding:6px 8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
-.policy-log th{position:sticky;top:0;background:#f1f5f9;color:var(--muted);font-weight:700}
+.policy-log{margin-top:6px;height:168px;overflow:auto;background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:0}
+.policy-log table{width:100%;border-collapse:collapse;font-size:11.5px;table-layout:fixed}
+.policy-log th,.policy-log td{padding:5px 8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;height:28px;line-height:18px}
+.policy-log th{position:sticky;top:0;background:#f1f5f9;color:var(--muted);font-weight:700;z-index:1}
+.policy-log td:nth-child(3){white-space:nowrap}
 .policy-log .pl-empty{color:#94a3b8;padding:12px;text-align:center}
+.policy-pager{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px;font-size:11px;color:var(--muted)}
+.err-title{font-size:15px;font-weight:800;color:#0f172a;letter-spacing:.2px}
+.err-title .err-http{color:#64748b;font-weight:600;font-size:12px;margin-left:6px}
+.err-controls label{display:inline-flex;align-items:center;gap:6px}
+.err-controls .sw-mini{transform:scale(.85);transform-origin:left center}
+.err-actions-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .tag.danger{background:#fef3f2;color:#b42318;border-color:#fecdca}
 .err-card{border:1px solid var(--border);border-radius:12px;background:#fff;padding:10px 12px;margin-bottom:8px}
 .err-head{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start}
-.err-title{font-size:13.5px;font-weight:700}
 .err-meta{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .err-controls{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) auto;gap:8px;align-items:end;margin-top:10px}
 @media(max-width:900px){.err-controls{grid-template-columns:repeat(2,minmax(0,1fr))}}
@@ -183,12 +189,15 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.7</span> <span id="modeBadge" class="badge">模式</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v0.5.8</span> <span id="modeBadge" class="badge">模式</span></h1>
     </div>
     <div class="row" style="align-items:center">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
         <span class="lbl">总开关</span>
         <span class="switch"><input id="swSentry" type="checkbox" onchange="toggle('sentry_enabled',this.checked)"/><span class="slider"></span></span>
+      </label>
+      <label class="sw" title="额度/消费类错误自动冷却"><span class="lbl">自动冷却</span>
+        <span class="switch"><input id="swCool" type="checkbox" onchange="toggle('auto_cooldown',this.checked)"/><span class="slider"></span></span>
       </label>
       <input id="cfgKey" type="password" placeholder="管理密钥" style="width:130px"/>
       <button class="xs" onclick="saveKey()">保存</button>
@@ -201,18 +210,11 @@ select.act{min-width:100px}input.num{width:70px}
     <h2><span>总览</span><span class="meta" id="updatedAt">-</span></h2>
     <div class="kpis" id="kpis"></div>
     <div class="swbar">
-      <label class="sw"><span class="lbl">自动冷却</span>
-        <span class="switch"><input id="swCool" type="checkbox" onchange="toggle('auto_cooldown',this.checked)"/><span class="slider"></span></span>
-      </label>
       <label class="sw"><span class="lbl">自动候选</span>
         <span class="switch"><input id="swCand" type="checkbox" onchange="toggle('auto_candidate',this.checked)"/><span class="slider"></span></span>
       </label>
       <label class="sw"><span class="lbl">自动垃圾箱</span>
         <span class="switch danger"><input id="swDel" type="checkbox" onchange="toggle('auto_delete',this.checked)"/><span class="slider"></span></span>
-      </label>
-      <label class="sw" title="定时主动探测账号是否可用（会消耗额度）">
-        <span class="lbl">主动巡查</span>
-        <span class="switch"><input id="swPatrol" type="checkbox" onchange="toggle('patrol_enabled',this.checked)"/><span class="slider"></span></span>
       </label>
       <span class="meta" id="cfgLine"></span>
       <button class="xs" onclick="applyPreset('observe')" title="关闭自动冷却/候选/垃圾箱，只记录观察">仅观察</button>
@@ -222,12 +224,17 @@ select.act{min-width:100px}input.num{width:70px}
     <div class="patrol-box">
       <div class="patrol-head">
         <div>
-          <b>主动巡查</b>
-          <span class="meta">会真实请求 xAI，消耗免费额度 · 全量只扫已启用 · 仅冷却只扫冷却号</span>
+          <b>巡查中心</b>
+          <span class="meta">定时巡查 + 手动巡查合在一起 · 会真实请求 xAI，消耗免费额度</span>
+          <div class="meta" id="patrolSchedule" style="margin-top:3px">上次：- · 下次：-</div>
         </div>
         <div class="row">
-          <button class="xs primary" onclick="patrolStart('full')" title="只探测当前已启用的 xAI 账号">全量巡查</button>
-          <button class="xs warn" onclick="patrolStart('cooldown')" title="只探测当前冷却中的账号">仅查冷却号</button>
+          <label class="sw" title="开启后按周期自动巡查（会消耗额度）" style="margin:0">
+            <span class="lbl">定时巡查</span>
+            <span class="switch"><input id="swPatrol" type="checkbox" onchange="toggle('patrol_enabled',this.checked)"/><span class="slider"></span></span>
+          </label>
+          <button class="xs primary" onclick="patrolStart('full')" title="只探测当前已启用的 xAI 账号">手动全量</button>
+          <button class="xs warn" onclick="patrolStart('cooldown')" title="只探测当前冷却中的账号">手动查冷却</button>
           <button type="button" class="patrol-toggle" id="btnPatrolCfg" onclick="togglePatrolCfg()" title="展开/收起巡查参数">配置 ▾</button>
           <button type="button" class="patrol-toggle" id="btnPatrolLog" onclick="togglePatrolLog()" title="显示/隐藏巡查日志">日志 ▾</button>
         </div>
@@ -321,7 +328,7 @@ select.act{min-width:100px}input.num{width:70px}
   </div>
 
   <div id="tab-trash" class="tabpanel card" hidden>
-    <h2><span>垃圾箱(可恢复)</span><button class="xs danger" onclick="purgeExpired()">清理到期</button></h2>
+    <h2><span>垃圾箱(可恢复)</span><span class="actions"><button class="xs danger" onclick="purgeExpired()" title="只清理已到期条目">清理到期</button><button class="xs danger" onclick="purgeAllTrash()" title="手动彻底删除全部垃圾箱（不可恢复）">清空垃圾箱</button></span></h2>
     <div class="table-wrap">
       <table>
         <thead><tr><th>账号</th><th>信号</th><th>到期</th><th>操作</th></tr></thead>
@@ -802,7 +809,7 @@ async function refresh(){
     const st=await j('/state?'+qs.toString());
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'0.5.7');
+    document.getElementById('ver').textContent='v'+(st.version||'0.5.8');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -865,7 +872,7 @@ function policyErrorRows(key){
   const known=new Set(Object.keys(SIG_ZH));
   const logs=(LAST_LOGS||[]).filter(l=>{
     const sig=l.signal||'';
-    if(key==='unmatched') return !sig || !known.has(sig) || (l.text||'').toLowerCase().includes('unexpected eof');
+    if(key==='unmatched') return !sig || !known.has(sig) || (l.text||'').toLowerCase().includes('unexpected eof') || (l.text||'').includes('CPA');
     if(key==='http_404') return (l.text||'').includes('404') || sig==='http_404';
     if(key==='code:invalid-argument') return (l.text||'').toLowerCase().includes('invalid-argument') || (l.reason||'').toLowerCase().includes('invalid');
     return sig===key || (l.text||'').includes(key);
@@ -873,7 +880,7 @@ function policyErrorRows(key){
   const by={};
   logs.forEach(l=>{
     const id=l.auth||l.auth_label||'';
-    if(!id) return; // drop global unknown rows
+    if(!id) return;
     if(!by[id]) by[id]={auth:id, label:l.auth_label||l.auth||id, lastAt:l.at||'', reason:l.reason||l.signal_label||l.text||'', hits:0, streak:0, source:l.source_label||l.source||''};
     by[id].hits++;
     if((l.at||'') >= (by[id].lastAt||'')) {
@@ -894,25 +901,43 @@ function policyErrorRows(key){
       r.req=r.hits; r.fail=r.hits;
     }
   });
-  // if no logs, still list accounts currently having this signal
   if(!Object.keys(by).length){
     (LAST_ACCOUNTS||[]).filter(a=>a.last_signal===key).forEach(a=>{
       const streak=(a.streaks&&a.streaks[key])||1;
       by[a.auth_index]={auth:a.auth_index,label:a.display_name||a.email,lastAt:a.updated_at||'',reason:(SIG_ZH[key]||key)+'（账号当前信号）',req:a.day_calls||0,fail:a.day_fail_calls||0,hits:a.day_fail_calls||0,streak:streak,source:'账号状态'};
     });
   }
-  return Object.values(by).sort((a,b)=>(b.lastAt||'').localeCompare(a.lastAt||'')).slice(0,50);
+  return Object.values(by).sort((a,b)=>(b.lastAt||'').localeCompare(a.lastAt||''));
+}
+function policyPageState(key){
+  if(!window.ERR_PAGE) window.ERR_PAGE={};
+  if(!ERR_PAGE[key]) ERR_PAGE[key]=1;
+  return ERR_PAGE[key];
+}
+function setPolicyPage(key, page){
+  if(!window.ERR_PAGE) window.ERR_PAGE={};
+  ERR_PAGE[key]=Math.max(1, page|0);
+  const log=document.querySelector('.err-card[data-key="'+CSS.escape(key)+'"] [data-f="plog"]');
+  if(log) log.innerHTML=policyLogsHTML(key);
 }
 function policyLogsHTML(key){
-  const rows=policyErrorRows(key);
-  if(!rows.length) return '<div class="pl-empty">暂无该策略相关账号报错</div>';
+  const all=policyErrorRows(key);
+  const pageSize=5;
+  const total=all.length;
+  const pages=Math.max(1, Math.ceil(total/pageSize));
+  let page=policyPageState(key);
+  if(page>pages) page=pages;
+  ERR_PAGE[key]=page;
+  const rows=all.slice((page-1)*pageSize, page*pageSize);
   const err=(ERRORS||[]).find(e=>e.key===key)||{};
-  return '<table><thead><tr>'+
-    '<th style="width:88px">时间</th>'+
-    '<th>账号</th>'+
+  const head='<div class="meta" style="margin:2px 0 4px">账号报错明细 · 本页 '+rows.length+' / 共 '+total+' 条 · 命中总计 '+(err.count||0)+'</div>';
+  if(!total) return head+'<div class="pl-empty">暂无该策略相关账号报错</div>';
+  const table='<table><thead><tr>'+
+    '<th style="width:92px">时间</th>'+
+    '<th style="width:150px">账号</th>'+
     '<th>错误信息</th>'+
-    '<th style="width:54px">连续N</th>'+
-    '<th style="width:54px">命中</th>'+
+    '<th style="width:52px">连续N</th>'+
+    '<th style="width:48px">命中</th>'+
     '<th style="width:150px">操作</th>'+
     '</tr></thead><tbody>'+
     rows.map(r=>{
@@ -922,7 +947,7 @@ function policyLogsHTML(key){
       return '<tr>'+
         '<td class="mono">'+esc(r.lastAt||'')+'</td>'+
         '<td title="'+esc(r.label||r.auth||'')+'">'+esc(label)+'</td>'+
-        '<td title="'+esc(msg)+'">'+esc(msg.slice(0,140))+'</td>'+
+        '<td title="'+esc(msg)+'">'+esc(msg.slice(0,120))+'</td>'+
         '<td>'+(r.streak||0)+'</td>'+
         '<td>'+(r.hits||r.fail||0)+'</td>'+
         '<td class="actions">'+
@@ -933,6 +958,13 @@ function policyLogsHTML(key){
       '</tr>';
     }).join('')+
   '</tbody></table>';
+  const pager='<div class="policy-pager">'+
+    '<span>第 '+page+' / '+pages+' 页</span>'+
+    '<span class="actions">'+
+      '<button class="xs" '+(page<=1?'disabled':'')+' onclick="setPolicyPage(\''+esc(key)+'\','+(page-1)+')">上一页</button>'+
+      '<button class="xs" '+(page>=pages?'disabled':'')+' onclick="setPolicyPage(\''+esc(key)+'\','+(page+1)+')">下一页</button>'+
+    '</span></div>';
+  return head+table+pager;
 }
 function logsForPolicy(key){ return policyErrorRows(key); }
 function errorStructureKey(list){
@@ -957,9 +989,11 @@ function renderErrorCards(list, force){
     const last=(e.last_at||'').replace('T',' ').replace('Z','')||'—';
     const act=ACT_ZH[e.action]||e.action||'-';
     const http=httpCodeOf(e.key);
+    const canUnclass = e.key!=='unmatched';
+    const canSplit = e.key==='unmatched';
     return '<div class="err-card" data-key="'+esc(e.key)+'">'+
       '<div class="err-head"><div>'+
-        '<div class="err-title">'+esc(e.label||e.key)+(http?(' · HTTP '+http):'')+'</div>'+
+        '<div class="err-title">'+esc(e.label||e.key)+(http?('<span class="err-http">HTTP '+http+'</span>'):'')+'</div>'+
         '<div class="err-meta">'+
           '<span class="tag">'+(e.source==='builtin'?'内置':'动态')+'</span>'+
           (e.never_trash?'<span class="tag danger">禁删</span>':'')+
@@ -968,13 +1002,17 @@ function renderErrorCards(list, force){
           '<span class="tag">动作: '+esc(act)+'</span>'+
         '</div></div></div>'+
       '<div class="err-controls">'+
-        '<label>启用<select class="en"><option value="1"'+(e.enabled?' selected':'')+'>开</option><option value="0"'+(!e.enabled?' selected':'')+'>关</option></select></label>'+
-        '<label>动作<select class="act">'+['observe','cooldown','candidate','trash'].map(a=>'<option value="'+a+'"'+(e.action===a?' selected':'')+'>'+(ACT_ZH[a]||a)+'</option>').join('')+'</select></label>'+
-        '<label>连续N<input class="num th" type="number" min="1" value="'+(e.threshold||1)+'"/></label>'+
-        '<label>冷却秒<input class="num cd" type="number" min="0" value="'+(e.cooldown_seconds||0)+'"/></label>'+
+        '<label class="sw" title="是否启用该错误策略"><span class="lbl">启用</span><span class="switch"><input class="en-sw" type="checkbox" '+(e.enabled?'checked':'')+' onchange="quickSaveError(\''+esc(e.key)+'\')"/><span class="slider"></span></span></label>'+
+        '<label>动作<select class="act" onchange="quickSaveError(\''+esc(e.key)+'\')">'+['observe','cooldown','candidate','trash'].map(a=>'<option value="'+a+'"'+(e.action===a?' selected':'')+'>'+(ACT_ZH[a]||a)+'</option>').join('')+'</select></label>'+
+        '<label>连续N<input class="num th" type="number" min="1" value="'+(e.threshold||1)+'" onchange="quickSaveError(\''+esc(e.key)+'\')"/></label>'+
+        '<label>冷却秒<input class="num cd" type="number" min="0" value="'+(e.cooldown_seconds||0)+'" onchange="quickSaveError(\''+esc(e.key)+'\')"/></label>'+
         '<button class="xs primary" data-key="'+esc(e.key)+'" onclick="saveErrorKey(this.getAttribute(\'data-key\'))">保存</button>'+
       '</div>'+
-      '<div class="meta" style="margin-top:8px">报错日志</div>'+
+      '<div class="err-actions-row">'+
+        (canSplit?'<button class="xs" onclick="splitUnmatched()">从「未分类」拆成分类…</button>':'')+
+        (canUnclass?'<button class="xs warn" onclick="unclassifyError(\''+esc(e.key)+'\')">取消分类→未分类</button>':'')+
+      '</div>'+
+      '<div class="meta" style="margin-top:8px;font-weight:700;color:#334155">报错日志</div>'+
       '<div class="policy-log" data-f="plog">'+policyLogsHTML(e.key)+'</div>'+
     '</div>';
   }).join('');
@@ -987,11 +1025,12 @@ async function loadErrors(force){
     renderErrorCards(ERRORS, !!force);
   }catch(e){ toast('加载错误目录失败：'+e.message) }
 }
-async function saveErrorKey(key){
+async function saveErrorKey(key, silent){
   const e=(ERRORS||[]).find(x=>x.key===key); if(!e) return;
   const card=document.querySelector('.err-card[data-key="'+CSS.escape(key)+'"]');
   if(!card){ toast('找不到错误卡片'); return; }
-  const enabled=card.querySelector('.en').value==='1';
+  const enSw=card.querySelector('.en-sw');
+  const enabled=enSw?!!enSw.checked:!!e.enabled;
   const action=card.querySelector('.act').value;
   const threshold=parseInt(card.querySelector('.th').value||'1',10);
   const cooldown=parseInt(card.querySelector('.cd').value||'0',10);
@@ -1001,10 +1040,45 @@ async function saveErrorKey(key){
     await j('/errors/policy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
       key:e.key,label:e.label,enabled,action,threshold,cooldown_seconds:cooldown,never_trash:never,note,source:e.source||'user'
     })});
-    toast('已保存: '+(e.label||e.key));
+    if(!silent) toast('已保存: '+(e.label||e.key));
+    e.enabled=enabled; e.action=action; e.threshold=threshold; e.cooldown_seconds=cooldown;
     ERR_RENDERED=false;
     await loadErrors(true);
   }catch(err){ toast(err.message) }
+}
+async function quickSaveError(key){ return saveErrorKey(key, true); }
+async function unclassifyError(key){
+  if(!key || key==='unmatched') return;
+  if(!confirm('把「'+(key)+'」整类移入「未分类错误」？')) return;
+  try{
+    await j('/errors/reclassify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({from:key,to:'unmatched',label:'未分类错误'})});
+    toast('已取消分类');
+    ERR_RENDERED=false; await loadErrors(true);
+  }catch(e){ toast(e.message) }
+}
+async function splitUnmatched(){
+  const to=prompt('把「未分类」拆成新分类 key（如 code:foo 或 http_418）');
+  if(!to) return;
+  const label=prompt('新分类显示名', to)||to;
+  try{
+    await j('/errors/reclassify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({from:'unmatched',to:to.trim(),label:label.trim()})});
+    toast('已拆分为 '+to);
+    ERR_RENDERED=false; await loadErrors(true);
+  }catch(e){ toast(e.message) }
+}
+async function purgeAllTrash(){
+  if(!confirm('确定清空垃圾箱全部条目？不可恢复！')) return;
+  try{
+    const tr=await j('/trash');
+    const items=tr.trash||[];
+    let ok=0, fail=0;
+    for(const it of items){
+      try{ await j('/trash/purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:it.id,confirm:true})}); ok++; }
+      catch(e){ fail++; }
+    }
+    toast('清空完成 成功'+ok+' 失败'+fail);
+    await refresh();
+  }catch(e){ toast(e.message) }
 }
 async function saveError(i){
   const e=ERRORS[i]; if(e) return saveErrorKey(e.key);
@@ -1121,6 +1195,13 @@ async function patrolPoll(){
 }
 function paintPatrol(p){
   p=p||{};
+  const sch=document.getElementById('patrolSchedule');
+  if(sch){
+    const last=p.last_patrol_at||p.finished_at||p.started_at||'-';
+    const next=p.next_patrol_at||'-';
+    const hint=p.next_patrol_hint?(' · '+p.next_patrol_hint):'';
+    sch.textContent='上次巡查：'+last+' · 下次：'+next+hint;
+  }
   const total=Number(p.total||0);
   const probed=Number(p.probed||0);
   const pct=total>0?Math.min(100, Math.round(probed*100/total)):(p.running?0:100);

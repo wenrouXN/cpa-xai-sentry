@@ -55,6 +55,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/health", a.handleHealth)
 	mux.HandleFunc("/errors", a.handleErrors)
 	mux.HandleFunc("/errors/policy", a.handleErrorPolicy)
+	mux.HandleFunc("/errors/reclassify", a.handleErrorReclassify)
 	mux.HandleFunc("/backfill", a.handleBackfill)
 	mux.HandleFunc("/metrics", a.handleMetrics)
 	mux.HandleFunc("/accounts/bulk", a.handleAccountsBulk)
@@ -568,7 +569,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":         "cpa-xai-sentry",
-		"version":        "0.5.7",
+		"version":        "0.5.8",
 		"mode":           modeOf(*a.Cfg),
 		"mode_label":     modeLabel(modeOf(*a.Cfg)),
 		"summary":        summary,
@@ -1199,17 +1200,49 @@ func (a *API) handlePatrolStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handlePatrolStatus(w http.ResponseWriter, r *http.Request) {
-	if a.Patrol == nil {
-		writeJSON(w, 200, map[string]any{"ok": true, "patrol": map[string]any{"running": false, "message": "未就绪"}})
-		return
+	st := map[string]any{"running": false, "message": "未就绪"}
+	if a.Patrol != nil {
+		ps := a.Patrol.Status()
+		b, _ := json.Marshal(ps)
+		_ = json.Unmarshal(b, &st)
 	}
-	writeJSON(w, 200, map[string]any{"ok": true, "patrol": a.Patrol.Status()})
+	// schedule hints from config
+	interval := 3600
+	if a.Cfg != nil && a.Cfg.PatrolInterval > 0 {
+		interval = a.Cfg.PatrolInterval
+	}
+	enabled := a.Cfg != nil && a.Cfg.PatrolEnabled
+	st["patrol_enabled"] = enabled
+	st["patrol_interval"] = interval
+	// last from status finished/started
+	last := ""
+	if v, ok := st["finished_at"].(string); ok && v != "" {
+		last = v
+	} else if v, ok := st["started_at"].(string); ok {
+		last = v
+	}
+	st["last_patrol_at"] = last
+	if enabled && interval > 0 {
+		// best-effort next: now+interval if idle, else unknown
+		running, _ := st["running"].(bool)
+		if !running {
+			st["next_patrol_at"] = time.Now().In(time.FixedZone("CST", 8*3600)).Add(time.Duration(interval) * time.Second).Format("01-02 15:04:05")
+			st["next_patrol_hint"] = "约 " + itoa(interval) + " 秒后（定时轮询估算）"
+		} else {
+			st["next_patrol_at"] = ""
+			st["next_patrol_hint"] = "巡查进行中"
+		}
+	} else {
+		st["next_patrol_at"] = ""
+		st["next_patrol_hint"] = "定时巡查已关闭"
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "patrol": st})
 }
 
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.7",
+		"ok": true, "plugin": "cpa-xai-sentry", "version": "0.5.8",
 		"mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact(),
 		"cooldown_stats": a.State.CooldownStats(time.Now()),
 	})
@@ -1572,6 +1605,36 @@ func actionLabel(a string) string {
 	default:
 		return a
 	}
+}
+
+func (a *API) handleErrorReclassify(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(405)
+		return
+	}
+	var in struct {
+		From  string `json:"from"`
+		To    string `json:"to"`
+		Label string `json:"label"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	in.From = strings.TrimSpace(in.From)
+	in.To = strings.TrimSpace(in.To)
+	if in.To == "" {
+		in.To = "unmatched"
+	}
+	if in.Label == "" && in.To == "unmatched" {
+		in.Label = "未分类错误"
+	}
+	if err := a.State.ReclassifyErrorKey(in.From, in.To, in.Label); err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	_ = a.State.Save()
+	writeJSON(w, 200, map[string]any{"ok": true, "from": in.From, "to": in.To})
 }
 
 func (a *API) handleErrorPolicy(w http.ResponseWriter, r *http.Request) {

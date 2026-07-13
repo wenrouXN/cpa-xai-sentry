@@ -468,7 +468,8 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time) (int, er
 			sample = "CPA auth file disabled + free-usage evidence; synced by maintenance tick"
 			g.State.ObserveError("free_usage_429", "免费额度用尽(429)", "free_usage_429", "subscription:free-usage-exhausted", sample, acc.AuthIndex, acc.FileName, "tick", 429)
 		} else {
-			g.State.ObserveError("http_0_disabled", "CPA已禁用(同步)", "", "cpa_disabled", sample, acc.AuthIndex, acc.FileName, "tick", 0)
+			// non-request / maintenance-only signals go into unmatched bucket
+			g.State.ObserveError("unmatched", "未分类错误", "", "cpa_disabled", sample, acc.AuthIndex, acc.FileName, "tick", 0)
 		}
 		g.State.Log(state.ActionLog{
 			Auth: acc.AuthIndex, Source: "tick", Signal: sig,
