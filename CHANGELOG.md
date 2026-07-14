@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.18
+
+### Align config persistence with official CLIProxyAPI plugin model
+- Panel save dual-writes:
+  1. `runtime-overrides.json` (local)
+  2. CPA host `PUT /v0/management/plugins/cpa-xai-sentry/config` (GET+merge+PUT)
+- Keeps existing host `enabled`/`priority`/secrets via merge.
+
+
 ## 1.1.17
 
 ### Broader runtime-overrides + persist viewer
@@ -242,6 +251,15 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.18
+
+### Align config persistence with official CLIProxyAPI plugin model
+- Panel save dual-writes:
+  1. `runtime-overrides.json` (local)
+  2. CPA host `PUT /v0/management/plugins/cpa-xai-sentry/config` (GET+merge+PUT)
+- Keeps existing host `enabled`/`priority`/secrets via merge.
+
 
 ## 1.1.17
 

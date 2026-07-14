@@ -98,21 +98,36 @@ func normalizePaths(cfg sentrycfg.Config) sentrycfg.Config {
 	return cfg
 }
 
-// PersistPanelConfig writes current switch state so host reconfigure cannot reset them.
+// PersistPanelConfig dual-writes:
+//  1. runtime-overrides.json (local durable knobs)
+//  2. CPA host plugins.configs.cpa-xai-sentry via Management API (official path)
 func (r *Runtime) PersistPanelConfig() error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	path := persist.PathFor(r.Cfg)
-	o := persist.FromConfig(r.Cfg)
-	if err := persist.Save(path, o); err != nil {
+	cfg := r.Cfg
+	cpa := r.CPA
+	r.mu.Unlock()
+
+	path := persist.PathFor(cfg)
+	if err := persist.Save(path, persist.FromConfig(cfg)); err != nil {
 		return err
 	}
-	// keep panel pointer cfg in sync
+	// Official CPA: PUT plugins.configs.<pluginID> (GET+merge inside WritePluginConfig)
+	if cpa != nil {
+		if err := cpa.WritePluginConfig(context.Background(), cfg.HostPluginPatch()); err != nil {
+			hostLog("warn", "host plugin config sync: "+err.Error())
+		}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.Panel != nil && r.Panel.Cfg != nil {
 		*r.Panel.Cfg = r.Cfg
 	}
 	if r.Guard != nil {
 		r.Guard.Cfg = r.Cfg
+	}
+	if r.Patrol != nil {
+		r.Patrol.Cfg = r.Cfg
+		r.Patrol.Guard = r.Guard
 	}
 	return nil
 }
@@ -140,8 +155,13 @@ func (r *Runtime) rebuild(cfg sentrycfg.Config) error {
 		PersistConfig: func(c sentrycfg.Config) error {
 			r.mu.Lock()
 			r.Cfg = c
+			if r.CPA != nil {
+				r.CPA.BaseURL = c.ManagementURL
+				r.CPA.Key = c.ManagementKey
+				r.CPA.AuthDir = c.AuthDir
+			}
 			r.mu.Unlock()
-			return persist.Save(persist.PathFor(c), persist.FromConfig(c))
+			return r.PersistPanelConfig()
 		},
 		GetConfig: func() sentrycfg.Config {
 			r.mu.Lock()

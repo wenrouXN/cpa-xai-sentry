@@ -217,7 +217,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.17</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.18</span></h1>
       <div class="ver-line"><span class="ver-meta" id="cfgLine">维护每30s · 巡查关 · 密钥—</span></div>
     </div>
     <div class="top-actions">
@@ -983,7 +983,7 @@ async function refresh(){
     ]);
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'1.1.17');
+    document.getElementById('ver').textContent='v'+(st.version||'1.1.18');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -1447,9 +1447,11 @@ async function showPersist(){
       state_path:r.state_path,
       overrides_updated_at:r.overrides_updated_at,
       live:r.live,
-      overrides:r.overrides
+      overrides:r.overrides,
+      host_plugin_config:r.host_plugin_config,
+      host_plugin_error:r.host_plugin_error||undefined
     }, null, 2);
-    toast('已加载磁盘持久化信息');
+    toast(r.host_plugin_error?('本地已加载；宿主配置: '+r.host_plugin_error):'已加载本地+宿主配置');
   }catch(e){ toast('读取失败:'+e.message) }
 }
 async function savePatrolCfg(){
@@ -1472,9 +1474,9 @@ async function savePatrolCfg(){
     CFG=await j('/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     PATROL_CFG_DIRTY=false;
     fillPatrolForm(CFG);
-    toast('已保存并持久化（重启不丢）');
+    toast('已保存：本地 overrides + CPA 宿主 plugins.configs');
     const hint=document.getElementById('persistHint');
-    if(hint) hint.textContent='已写入 runtime-overrides · batch='+(CFG.patrol_batch_size||'?');
+    if(hint) hint.textContent='已双写 overrides + 宿主配置 · batch='+(CFG.patrol_batch_size||'?');
   }catch(e){ toast('保存失败:'+e.message) }
 }
 async function patrolStart(mode){

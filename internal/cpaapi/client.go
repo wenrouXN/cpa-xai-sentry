@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -140,6 +141,70 @@ func (c *Client) WriteAuthFileToDir(name string, raw []byte) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// PluginID is the CPA plugins.configs key / binary basename.
+const PluginID = "cpa-xai-sentry"
+
+// GetPluginConfig fetches plugins.configs.<id> from CPA management API.
+func (c *Client) GetPluginConfig(ctx context.Context) (map[string]any, error) {
+	if c == nil || strings.TrimSpace(c.BaseURL) == "" {
+		return nil, fmt.Errorf("management not configured")
+	}
+	path := "/v0/management/plugins/" + PluginID + "/config"
+	b, code, err := c.do(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if code >= 300 {
+		return nil, fmt.Errorf("get plugin config: %d %s", code, truncate(b, 200))
+	}
+	var full map[string]any
+	if err := json.Unmarshal(b, &full); err != nil {
+		return nil, err
+	}
+	if full == nil {
+		full = map[string]any{}
+	}
+	return full, nil
+}
+
+// WritePluginConfig merges patch into CPA host plugin config and PUTs the full block back.
+// Official CPA path: PUT /v0/management/plugins/<id>/config replaces the whole object,
+// so we always GET+merge first (same pattern as cpa plugin examples / quota-guard).
+func (c *Client) WritePluginConfig(ctx context.Context, patch map[string]any) error {
+	if c == nil || strings.TrimSpace(c.BaseURL) == "" || strings.TrimSpace(c.Key) == "" {
+		return fmt.Errorf("management not configured")
+	}
+	full, err := c.GetPluginConfig(ctx)
+	if err != nil {
+		return err
+	}
+	for k, v := range patch {
+		full[k] = v
+	}
+	// host-owned
+	full["enabled"] = true
+	path := "/v0/management/plugins/" + PluginID + "/config"
+	b, code, err := c.do(ctx, http.MethodPut, path, full)
+	if err != nil {
+		return err
+	}
+	if code >= 300 {
+		// try PATCH shallow merge if PUT not allowed
+		if code == 404 || code == 405 {
+			b2, code2, err2 := c.do(ctx, http.MethodPatch, path, patch)
+			if err2 != nil {
+				return err2
+			}
+			if code2 >= 300 {
+				return fmt.Errorf("patch plugin config: %d %s", code2, truncate(b2, 200))
+			}
+			return nil
+		}
+		return fmt.Errorf("put plugin config: %d %s", code, truncate(b, 200))
+	}
+	return nil
 }
 
 func truncate(b []byte, n int) string {

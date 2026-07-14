@@ -4,7 +4,7 @@ package sentrycfg
 type Config struct {
 	Enabled               bool           `yaml:"enabled" json:"enabled"`
 	SentryEnabled         bool           `yaml:"sentry_enabled" json:"sentry_enabled"`
-	AutoCooldown           bool           `yaml:"auto_cooldown" json:"auto_cooldown"`
+	AutoCooldown          bool           `yaml:"auto_cooldown" json:"auto_cooldown"`
 	AutoCandidate         bool           `yaml:"auto_candidate" json:"auto_candidate"`
 	AutoDelete            bool           `yaml:"auto_delete" json:"auto_delete"` // auto-trash
 	CooldownSignals       []string       `yaml:"cooldown_signals" json:"cooldown_signals"`
@@ -15,7 +15,7 @@ type Config struct {
 	MaxResetSeconds       int            `yaml:"max_reset_seconds" json:"max_reset_seconds"`
 	MinResetSeconds       int            `yaml:"min_reset_seconds" json:"min_reset_seconds"`
 	PermissionCooldownSec int            `yaml:"permission_cooldown_seconds" json:"permission_cooldown_seconds"`
-	Auth401CooldownSec      int            `yaml:"auth401_cooldown_seconds" json:"auth401_cooldown_seconds"`
+	Auth401CooldownSec    int            `yaml:"auth401_cooldown_seconds" json:"auth401_cooldown_seconds"`
 	ManagementURL         string         `yaml:"management_url" json:"management_url"`
 	ManagementKey         string         `yaml:"management_key" json:"management_key"`
 	StatePath             string         `yaml:"state_path" json:"state_path"`
@@ -60,7 +60,7 @@ func Default() Config {
 		TickSeconds:           30,
 		MaxResetSeconds:       86400,
 		PermissionCooldownSec: 1800,
-		Auth401CooldownSec:      3600,
+		Auth401CooldownSec:    3600,
 		ManagementURL:         "http://127.0.0.1:8317",
 		// Persist under auth_dir (host-mounted) so panel toggles & state survive container restarts.
 		StatePath:             "/root/.cli-proxy-api/cpa-xai-sentry/state.json",
@@ -137,6 +137,43 @@ func (c Config) Redact() map[string]any {
 		"patrol_auto_model_switch":    c.PatrolAutoModelSwitch,
 		"cpamp_url":                   c.CPAMPURL,
 		"cpamp_admin_key_set":         c.CPAMPAdminKey != "",
+		"cpamp_usage_floor":           c.CPAMPUsageFloor,
+		"reopen_foreign_disabled":     c.ReopenForeignDisabled,
+	}
+}
+
+// HostPluginPatch builds the map written to CPA plugins.configs.cpa-xai-sentry.
+// Includes operational fields; host keeps enabled/priority. Secrets included so
+// GET+merge+PUT does not wipe management_key already present in host YAML.
+func (c Config) HostPluginPatch() map[string]any {
+	return map[string]any{
+		"sentry_enabled":              c.SentryEnabled,
+		"auto_cooldown":               c.AutoCooldown,
+		"auto_candidate":              c.AutoCandidate,
+		"auto_delete":                 c.AutoDelete,
+		"tick_seconds":                c.TickSeconds,
+		"max_reset_seconds":           c.MaxResetSeconds,
+		"min_reset_seconds":           c.MinResetSeconds,
+		"permission_cooldown_seconds": c.PermissionCooldownSec,
+		"auth401_cooldown_seconds":    c.Auth401CooldownSec,
+		"management_url":              c.ManagementURL,
+		"management_key":              c.ManagementKey,
+		"state_path":                  c.StatePath,
+		"auth_dir":                    c.AuthDir,
+		"trash_dir":                   c.TrashDir,
+		"trash_retention_days":        c.TrashRetentionDays,
+		"trash_auto_purge":            c.TrashAutoPurge,
+		"restore_default_disabled":    c.RestoreDefaultDis,
+		"patrol_enabled":              c.PatrolEnabled,
+		"patrol_interval":             c.PatrolInterval,
+		"patrol_timeout":              c.PatrolTimeout,
+		"patrol_concurrency":          c.PatrolConcurrency,
+		"patrol_batch_size":           c.PatrolBatchSize,
+		"patrol_model":                c.PatrolModel,
+		"patrol_proxy_url":            c.PatrolProxyURL,
+		"patrol_auto_model_switch":    c.PatrolAutoModelSwitch,
+		"cpamp_url":                   c.CPAMPURL,
+		"cpamp_admin_key":             c.CPAMPAdminKey,
 		"cpamp_usage_floor":           c.CPAMPUsageFloor,
 		"reopen_foreign_disabled":     c.ReopenForeignDisabled,
 	}
