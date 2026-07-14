@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.26
+
+### Overview KPIs: two rows + 候删/永久禁用
+- Layout: 4 columns × 2 rows.
+- Row1: 可接流量 / 冷却中 / 候删 / 永久禁用.
+- Row2: xAI 总量 / 日池总量 / 日池已用 / 日池剩余.
+
+
 ## 1.1.25
 
 ### Panel header badges + table density
@@ -302,6 +310,14 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.26
+
+### Overview KPIs: two rows + 候删/永久禁用
+- Layout: 4 columns × 2 rows.
+- Row1: 可接流量 / 冷却中 / 候删 / 永久禁用.
+- Row2: xAI 总量 / 日池总量 / 日池已用 / 日池剩余.
+
 
 ## 1.1.25
 
