@@ -217,7 +217,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.18</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.19</span></h1>
       <div class="ver-line"><span class="ver-meta" id="cfgLine">维护每30s · 巡查关 · 密钥—</span></div>
     </div>
     <div class="top-actions">
@@ -983,7 +983,7 @@ async function refresh(){
     ]);
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'1.1.18');
+    document.getElementById('ver').textContent='v'+(st.version||'1.1.19');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -1474,9 +1474,9 @@ async function savePatrolCfg(){
     CFG=await j('/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     PATROL_CFG_DIRTY=false;
     fillPatrolForm(CFG);
-    toast('已保存：本地 overrides + CPA 宿主 plugins.configs');
+    toast('已保存（双向同步）：面板 → 宿主配置 + 本地 overrides');
     const hint=document.getElementById('persistHint');
-    if(hint) hint.textContent='已双写 overrides + 宿主配置 · batch='+(CFG.patrol_batch_size||'?');
+    if(hint) hint.textContent='双向同步已写 · batch='+(CFG.patrol_batch_size||'?')+' · 官方页改也会同步回来';
   }catch(e){ toast('保存失败:'+e.message) }
 }
 async function patrolStart(mode){

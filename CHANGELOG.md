@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.19
+
+### Bidirectional config sync (last-writer-wins)
+- **Panel save** → host `plugins.configs` + `runtime-overrides.json` (unchanged dual-write).
+- **Host reconfigure** (official plugin page / `config.yaml`) → **host wins**, then mirrors into
+  `runtime-overrides.json` so panel no longer stomps host with stale overrides.
+- Removes one-way "overrides always override YAML" that blocked official-page edits.
+
+
 ## 1.1.18
 
 ### Align config persistence with official CLIProxyAPI plugin model
@@ -251,6 +260,15 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.19
+
+### Bidirectional config sync (last-writer-wins)
+- **Panel save** → host `plugins.configs` + `runtime-overrides.json` (unchanged dual-write).
+- **Host reconfigure** (official plugin page / `config.yaml`) → **host wins**, then mirrors into
+  `runtime-overrides.json` so panel no longer stomps host with stale overrides.
+- Removes one-way "overrides always override YAML" that blocked official-page edits.
+
 
 ## 1.1.18
 

@@ -73,12 +73,12 @@ func (r *Runtime) ApplyConfig(cfg sentrycfg.Config) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	cfg = normalizePaths(cfg).Validate()
-	// Host YAML reconfigure must NOT wipe panel toggles.
-	overrides, err := persist.Load(persist.PathFor(cfg))
-	if err != nil {
-		hostLog("warn", "load runtime overrides: "+err.Error())
-	} else {
-		cfg = persist.Apply(cfg, overrides)
+	// Bidirectional last-writer-wins:
+	//  - Panel save  → dual-write host plugins.configs + overrides (PersistPanelConfig)
+	//  - Host/official plugin page / config.yaml reconfigure → host is authority;
+	//    mirror into overrides so the next panel load matches (no overrides stomping host).
+	if err := persist.Save(persist.PathFor(cfg), persist.FromConfig(cfg)); err != nil {
+		hostLog("warn", "mirror host config → overrides: "+err.Error())
 	}
 	if err := r.rebuild(cfg); err != nil {
 		hostLog("error", "apply config failed: "+err.Error())
@@ -98,9 +98,11 @@ func normalizePaths(cfg sentrycfg.Config) sentrycfg.Config {
 	return cfg
 }
 
-// PersistPanelConfig dual-writes:
-//  1. runtime-overrides.json (local durable knobs)
-//  2. CPA host plugins.configs.cpa-xai-sentry via Management API (official path)
+// PersistPanelConfig is the panel "save" path (last writer = panel):
+//  1. runtime-overrides.json
+//  2. CPA host plugins.configs.cpa-xai-sentry (GET+merge+PUT)
+//
+// Host reconfigure path is ApplyConfig (last writer = host → mirrors to overrides).
 func (r *Runtime) PersistPanelConfig() error {
 	r.mu.Lock()
 	cfg := r.Cfg
