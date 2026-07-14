@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.23
+
+### Domain mask: first label only
+- `jnge8hzlj6@lovc.eu.cc` → `jng***j6@l***.eu.cc` (keep `.eu.cc`).
+
 ## 1.1.22
 
 ### Action logs honor mask toggle + domain masking
@@ -282,6 +287,11 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.23
+
+### Domain mask: first label only
+- `jnge8hzlj6@lovc.eu.cc` → `jng***j6@l***.eu.cc` (keep `.eu.cc`).
 
 ## 1.1.22
 

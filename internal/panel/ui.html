@@ -217,7 +217,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.22</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.23</span></h1>
       <div class="ver-line"><span class="ver-meta" id="cfgLine">维护每30s · 巡查关 · 密钥—</span></div>
     </div>
     <div class="top-actions">
@@ -409,17 +409,16 @@ function maskEmail(email){
   if(local.length<=3) local='***';
   else if(local.length<=8) local=local.slice(0,1)+'***'+local.slice(-1);
   else local=local.slice(0,3)+'***'+local.slice(-2);
+  // Mask first domain label only; keep remainder (e.g. lovc.eu.cc → l***.eu.cc)
   const parts=domain.split('.').filter(Boolean);
   if(!parts.length) domain='***';
-  else if(parts.length===1){
-    const p=parts[0];
-    domain=p.length<=2?'***':(p.slice(0,1)+'***');
-  } else {
-    domain=parts.map((p,i)=>{
-      if(i===parts.length-1) return p; // keep tld
-      if(p.length<=2) return '**';
-      return p.slice(0,1)+'***';
-    }).join('.');
+  else {
+    const first=parts[0];
+    const rest=parts.slice(1).join('.');
+    let m;
+    if(first.length<=2) m='**';
+    else m=first.slice(0,1)+'***';
+    domain=rest? (m+'.'+rest) : m;
   }
   return local+'@'+domain;
 }
@@ -1020,7 +1019,7 @@ async function refresh(){
     ]);
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'1.1.22');
+    document.getElementById('ver').textContent='v'+(st.version||'1.1.23');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
