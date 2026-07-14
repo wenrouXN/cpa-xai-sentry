@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.28
+
+### Overview: 日池剩余 subtitle
+- Show remaining pool percent under 日池剩余 (mirrors 日池已用 %).
+
+
 ## 1.1.27
 
 ### Overview 候删 count = candidate + trash
@@ -317,6 +323,12 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.28
+
+### Overview: 日池剩余 subtitle
+- Show remaining pool percent under 日池剩余 (mirrors 日池已用 %).
+
 
 ## 1.1.27
 
