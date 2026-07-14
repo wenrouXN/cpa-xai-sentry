@@ -1,6 +1,6 @@
 # Install & mount guide (CLIProxyAPI)
 
-This document is the **production install path** for `cpa-xai-sentry` v1.0.0+.
+This document is the **production install path** for `cpa-xai-sentry` v1.1.29+.
 
 > Goal: build a Linux amd64 `.so`, place it where CPA loads plugins, mount auth/state/plugins correctly, enable only this sentry (not quota-guard), restart, open panel.
 
@@ -20,7 +20,7 @@ Optional:
 
 | Item | Notes |
 |---|---|
-| CPAMP / usage.sqlite | For per-account day usage bars (read-only mount) |
+| CPAMP / cpa-manager-data | For 最近15次 + 日池 (mount **dir** ro, not only usage.sqlite) |
 | HTTP proxy | If patrol/live traffic needs egress proxy |
 
 ---
@@ -96,8 +96,11 @@ services:
       - ./auths:/root/.cli-proxy-api       # auth files + durable sentry state
       - ./logs:/CLIProxyAPI/logs
       - ./plugins:/CLIProxyAPI/plugins     # plugin .so tree
-      # optional: CPAMP usage DB for day-token display
-      # - ./cpa-manager-data/usage.sqlite:/data/usage.sqlite:ro
+      # CPAMP usage (optional but recommended for 最近15次 / 日池)
+      # Mount the **whole directory** so SQLite WAL/SHM are visible.
+      # Binding only usage.sqlite misses recent events still in usage.sqlite-wal
+      # → account shows 429 cooldown while "最近15次" stays all-green.
+      # - ./cpa-manager-data:/data:ro
     restart: always
 ```
 
@@ -107,7 +110,7 @@ services:
 | `./auths` | `/root/.cli-proxy-api` | xAI auth JSON; **state/trash live under here** |
 | `./plugins` | `/CLIProxyAPI/plugins` | loads `linux/amd64/cpa-xai-sentry.so` |
 | `./logs` | `/CLIProxyAPI/logs` | CPA logs (optional but recommended) |
-| usage.sqlite (ro) | e.g. `/data/usage.sqlite` | optional CPAMP usage |
+| `./cpa-manager-data` (ro) | `/data` | CPAMP usage DB **including** `usage.sqlite-wal` / `-shm` |
 
 **Persistence rule:** put `state_path` / `trash_dir` **under the mounted auth dir**, not inside the container writable layer, or restarts wipe panel state.
 
@@ -259,6 +262,8 @@ Cutover from old guard: see [CUTOVER.md](./CUTOVER.md).
 | No exports in `.so` | built without `-tags cshared` | rebuild with tags |
 | Double disable / fight | quota-guard still on | `cpa-xai-quota-guard.enabled: false` |
 | Patrol 404 HTML | base_url double `/v1` | fix auth `base_url` |
+| 状态已 429 冷却，但「最近15次」全绿 | 只挂了 `usage.sqlite` 主库，看不到 WAL | 改为挂载整个 `cpa-manager-data` → `/data:ro` |
+| 日池/请求数明显落后 CPAMP | 同上，SQLite WAL 未挂进容器 | 同上 |
 
 ---
 

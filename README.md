@@ -129,6 +129,8 @@ volumes:
   - ./auths:/root/.cli-proxy-api          # auth files + durable state/trash
   - ./plugins:/CLIProxyAPI/plugins        # must contain linux/amd64/cpa-xai-sentry.so
   - ./logs:/CLIProxyAPI/logs
+  # CPAMP usage: mount **directory** (not only usage.sqlite) so WAL is visible
+  - ./cpa-manager-data:/data:ro
 ```
 
 **Minimal plugin config** (inside CPA `config.yaml`):

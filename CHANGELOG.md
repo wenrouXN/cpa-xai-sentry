@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.29
+
+### Docs / ops: CPAMP usage mount must include SQLite WAL
+- **Symptom:** account shows 429 cooldown, but 「最近15次」 stays all-green / request counts lag CPAMP.
+- **Cause:** mounting only `usage.sqlite` hides `usage.sqlite-wal` / `-shm` (CPAMP uses WAL mode).
+- **Fix:** mount whole dir `./cpa-manager-data:/data:ro` (documented in INSTALL + README).
+- No plugin logic change required; deploy + recreate container after compose update.
+
+
 ## 1.1.28
 
 ### Overview: 日池剩余 subtitle
@@ -323,6 +332,15 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.29
+
+### Docs / ops: CPAMP usage mount must include SQLite WAL
+- **Symptom:** account shows 429 cooldown, but 「最近15次」 stays all-green / request counts lag CPAMP.
+- **Cause:** mounting only `usage.sqlite` hides `usage.sqlite-wal` / `-shm` (CPAMP uses WAL mode).
+- **Fix:** mount whole dir `./cpa-manager-data:/data:ro` (documented in INSTALL + README).
+- No plugin logic change required; deploy + recreate container after compose update.
+
 
 ## 1.1.28
 
