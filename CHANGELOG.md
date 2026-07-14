@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.24
+
+### Panel layout polish
+- Runtime status `维护每30s · 巡查… · 密钥` sits **inline with version** as a soft badge (not a second line).
+- Account table numeric columns single-line + right-aligned (no stacked 今日 sub-rows).
+
+
 ## 1.1.23
 
 ### Domain mask: first label only
@@ -287,6 +294,13 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.24
+
+### Panel layout polish
+- Runtime status `维护每30s · 巡查… · 密钥` sits **inline with version** as a soft badge (not a second line).
+- Account table numeric columns single-line + right-aligned (no stacked 今日 sub-rows).
+
 
 ## 1.1.23
 

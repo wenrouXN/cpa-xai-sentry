@@ -207,8 +207,10 @@ tr:hover td{background:#f5f9ff}
 .tabpanel[hidden]{display:none!important}
 select.act{min-width:100px}input.num{width:70px}
 .muted{color:var(--muted)}
-.ver-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px}
-.ver-meta{font-size:11.5px;color:var(--muted);font-weight:600;letter-spacing:.01em}
+.badge.meta-soft{background:#f4f7fb;color:#475569;border-color:#d0d7e2;font-weight:600}
+h1 .badge{margin-left:2px;vertical-align:middle}
+.num-cell{display:block;font-variant-numeric:tabular-nums;font-weight:600;font-size:12px;color:#1f2937;white-space:nowrap;line-height:1.2;text-align:right}
+td.num,th.num{text-align:right}
 .patrol-schedule{margin:8px 0 0;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:#f8fafc;font-size:12px;color:var(--muted)}
 </style>
 </head>
@@ -217,8 +219,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.23</span></h1>
-      <div class="ver-line"><span class="ver-meta" id="cfgLine">维护每30s · 巡查关 · 密钥—</span></div>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.24</span> <span id="cfgLine" class="badge meta-soft">维护每30s · 巡查关 · 密钥—</span></h1>
     </div>
     <div class="top-actions">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -287,12 +288,12 @@ select.act{min-width:100px}input.num{width:70px}
             <th style="width:28px"><input type="checkbox" id="chkAll" onchange="selAll(this.checked)"/></th>
             <th>账号</th>
             <th style="width:110px">状态</th>
-            <th style="width:68px">请求总数</th>
-            <th style="width:58px">成功率</th>
+            <th class="num" style="width:88px">请求总数</th>
+            <th class="num" style="width:88px">成功率</th>
             <th style="width:90px">最近15次</th>
-            <th style="width:72px">总计用量</th>
-            <th style="width:72px">今日用量</th>
-            <th style="width:72px">额度占用</th>
+            <th class="num" style="width:72px">总计用量</th>
+            <th class="num" style="width:72px">今日用量</th>
+            <th class="num" style="width:72px">额度占用</th>
             <th style="width:96px" title="CPAMP 最近一次真实请求时间">最后请求</th>
             <th style="width:110px" title="哨兵最近一次动作（冷却/打开/启用等）">最后动作</th>
             <th style="width:88px">恢复时间</th>
@@ -630,10 +631,11 @@ function accountCell(a){
 function totalCallsCell(a){
   const tot=Number(a.total_calls!=null?a.total_calls:a.day_calls||0);
   const day=Number(a.day_calls||0);
-  if(!tot && !day) return '<div class="num-main">-</div>';
-  let html='<div class="num-main">'+tot+'</div>';
-  if(day>0 && day!==tot) html+='<div class="num-sub">今日 '+day+'</div>';
-  return html;
+  if(!tot && !day) return '<span class="num-cell">-</span>';
+  // single line: total · 今day when different
+  let t=String(tot);
+  if(day>0 && day!==tot) t+=' · 今'+day;
+  return '<span class="num-cell" title="总 '+tot+(day?(' / 今日 '+day):'')+'">'+esc(t)+'</span>';
 }
 function rateCell(a){
   const tot=Number(a.total_calls!=null?a.total_calls:0);
@@ -644,14 +646,14 @@ function rateCell(a){
     const base=tot||day;
     rate=base>0?(ok/base*100):null;
   }
-  if(rate==null || (!(tot||day))) return '<div class="num-main">-</div>';
+  if(rate==null || (!(tot||day))) return '<span class="num-cell">-</span>';
   const n=Number(rate);
   const cls=n>=90?'rate-ok':(n>=70?'rate-mid':'rate-bad');
-  let html='<div class="num-main '+cls+'">'+n.toFixed(0)+'%</div>';
+  let t=n.toFixed(0)+'%';
   if(a.day_success_rate!=null && day>0 && tot>day){
-    html+='<div class="num-sub">今日 '+Number(a.day_success_rate).toFixed(0)+'%</div>';
+    t+=' · 今'+Number(a.day_success_rate).toFixed(0)+'%';
   }
-  return html;
+  return '<span class="num-cell '+cls+'" title="成功率">'+esc(t)+'</span>';
 }
 function callsCell(a){
   // 最近15次真实请求：从右到左为新→旧；不足15时左边留灰
@@ -679,13 +681,13 @@ function callsCell(a){
 }
 function totalTokensCell(a){
   const tot=Number(a.total_tokens||0);
-  if(!tot) return '<div class="num-main">-</div>';
-  return '<div class="num-main" title="历史累计 token">'+esc(fmtTok(tot))+'</div>';
+  if(!tot) return '<span class="num-cell">-</span>';
+  return '<span class="num-cell" title="历史累计 token">'+esc(fmtTok(tot))+'</span>';
 }
 function dayTokensCell(a){
   const day=Number(a.day_tokens||0);
-  if(!day) return '<div class="num-main">-</div>';
-  return '<div class="num-main" title="今日 token">'+esc(fmtTok(day))+'</div>';
+  if(!day) return '<span class="num-cell">-</span>';
+  return '<span class="num-cell" title="今日 token">'+esc(fmtTok(day))+'</span>';
 }
 function quotaRatioCell(a){
   // 今日用量 / 24h额度 → 百分比
@@ -696,9 +698,9 @@ function quotaRatioCell(a){
   let used=day>0?day:Number(a.quota_used||0);
   if(!used || !lim){
     if(a.state && String(a.state).indexOf('cooldown')>=0){
-      return '<div class="num-main rate-bad" title="额度冷却/用尽">100%</div>';
+      return '<span class="num-cell rate-bad" title="额度冷却/用尽">100%</span>';
     }
-    return '<div class="num-main">-</div>';
+    return '<span class="num-cell">-</span>';
   }
   let pct=used/lim*100;
   if(pct<0) pct=0;
@@ -706,7 +708,7 @@ function quotaRatioCell(a){
   const cls=pct>=100?'rate-bad':(pct>=80?'rate-mid':'rate-ok');
   const txt=(pct>=100 && pct<1000)?pct.toFixed(0):(pct>=10?pct.toFixed(0):pct.toFixed(1));
   const tip='今日 '+fmtTok(used)+' / 24h额度 '+fmtTok(lim)+' = '+txt+'%';
-  return '<div class="num-main '+cls+'" title="'+esc(tip)+'">'+esc(txt+'%')+'</div>';
+  return '<span class="num-cell '+cls+'" title="'+esc(tip)+'">'+esc(txt+'%')+'</span>';
 }
 function renderAccountRows(list, prevSel){
   prevSel=prevSel||new Set();
@@ -716,12 +718,12 @@ function renderAccountRows(list, prevSel){
     '<td><input type="checkbox" class="rowchk" data-auth="'+esc(a.auth_index)+'"'+(prevSel.has(a.auth_index)?' checked':'')+'/></td>'+
     '<td>'+accountCell(a)+'</td>'+
     '<td>'+stateTag(a.state, a)+'</td>'+
-    '<td>'+totalCallsCell(a)+'</td>'+
-    '<td>'+rateCell(a)+'</td>'+
+    '<td class="num">'+totalCallsCell(a)+'</td>'+
+    '<td class="num">'+rateCell(a)+'</td>'+
     '<td>'+callsCell(a)+'</td>'+
-    '<td>'+totalTokensCell(a)+'</td>'+
-    '<td>'+dayTokensCell(a)+'</td>'+
-    '<td>'+quotaRatioCell(a)+'</td>'+
+    '<td class="num">'+totalTokensCell(a)+'</td>'+
+    '<td class="num">'+dayTokensCell(a)+'</td>'+
+    '<td class="num">'+quotaRatioCell(a)+'</td>'+
     '<td>'+updatedCell(a.request_at||a.updated_at)+'</td>'+
     '<td>'+actionTimeCell(a)+'</td>'+
     '<td>'+timeCell(a.recover_at)+'</td></tr>').join('');
@@ -1019,7 +1021,7 @@ async function refresh(){
     ]);
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'1.1.23');
+    document.getElementById('ver').textContent='v'+(st.version||'1.1.24');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
