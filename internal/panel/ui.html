@@ -219,7 +219,11 @@ td.num,th.num{text-align:right}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.24</span> <span id="cfgLine" class="badge meta-soft">维护每30s · 巡查关 · 密钥—</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.25</span>
+        <span id="cfgTick" class="badge meta-soft">维护每30s</span>
+        <span id="cfgPatrol" class="badge meta-soft">巡查关</span>
+        <span id="cfgKeyBadge" class="badge meta-soft">密钥—</span>
+      </h1>
     </div>
     <div class="top-actions">
       <label class="sw" title="关=不再自动处理；开=按下方开关执行">
@@ -288,8 +292,8 @@ td.num,th.num{text-align:right}
             <th style="width:28px"><input type="checkbox" id="chkAll" onchange="selAll(this.checked)"/></th>
             <th>账号</th>
             <th style="width:110px">状态</th>
-            <th class="num" style="width:88px">请求总数</th>
-            <th class="num" style="width:88px">成功率</th>
+            <th class="num" style="width:88px" title="今日/总数">请求</th>
+            <th class="num" style="width:88px" title="今日成功率/总成功率">成功率</th>
             <th style="width:90px">最近15次</th>
             <th class="num" style="width:72px">总计用量</th>
             <th class="num" style="width:72px">今日用量</th>
@@ -629,13 +633,12 @@ function accountCell(a){
   return '<div class="acc-name" title="'+esc(title)+'">'+esc(name)+'</div>';
 }
 function totalCallsCell(a){
-  const tot=Number(a.total_calls!=null?a.total_calls:a.day_calls||0);
+  const tot=Number(a.total_calls!=null?a.total_calls:0);
   const day=Number(a.day_calls||0);
   if(!tot && !day) return '<span class="num-cell">-</span>';
-  // single line: total · 今day when different
-  let t=String(tot);
-  if(day>0 && day!==tot) t+=' · 今'+day;
-  return '<span class="num-cell" title="总 '+tot+(day?(' / 今日 '+day):'')+'">'+esc(t)+'</span>';
+  // 今日请求数/请求总数
+  const t=day+'/'+(tot||day);
+  return '<span class="num-cell" title="今日 '+day+' / 总 '+(tot||day)+'">'+esc(t)+'</span>';
 }
 function rateCell(a){
   const tot=Number(a.total_calls!=null?a.total_calls:0);
@@ -647,13 +650,17 @@ function rateCell(a){
     rate=base>0?(ok/base*100):null;
   }
   if(rate==null || (!(tot||day))) return '<span class="num-cell">-</span>';
-  const n=Number(rate);
-  const cls=n>=90?'rate-ok':(n>=70?'rate-mid':'rate-bad');
-  let t=n.toFixed(0)+'%';
-  if(a.day_success_rate!=null && day>0 && tot>day){
-    t+=' · 今'+Number(a.day_success_rate).toFixed(0)+'%';
+  let dayRate=a.day_success_rate;
+  if(dayRate==null && day>0){
+    const dok=Number(a.day_success!=null?a.day_success:Math.max(0,day-Number(a.day_fail_calls||0)));
+    dayRate=day>0?(dok/day*100):null;
   }
-  return '<span class="num-cell '+cls+'" title="成功率">'+esc(t)+'</span>';
+  const n=Number(rate);
+  const dn=dayRate!=null?Number(dayRate):n;
+  const cls=n>=90?'rate-ok':(n>=70?'rate-mid':'rate-bad');
+  // 今日成功率/总成功率
+  const t=dn.toFixed(0)+'%/'+n.toFixed(0)+'%';
+  return '<span class="num-cell '+cls+'" title="今日 '+dn.toFixed(0)+'% / 总 '+n.toFixed(0)+'%">'+esc(t)+'</span>';
 }
 function callsCell(a){
   // 最近15次真实请求：从右到左为新→旧；不足15时左边留灰
@@ -846,8 +853,8 @@ function actionTimeCell(a){
   const lab=a.last_action_label||a.last_action||'';
   if(!t && !lab) return '<div class="time-main">-</div>';
   const tip=[lab,t].filter(Boolean).join(' · ');
-  return '<div class="time-main" title="'+esc(tip)+'">'+esc(t||'-')+'</div>'+
-    (lab?('<div class="meta" style="font-size:10px;margin-top:2px">'+esc(lab)+'</div>'):'');
+  // single line: time only; action name only in hover title (no second row)
+  return '<div class="time-main" title="'+esc(tip||'-')+'">'+esc(t||lab||'-')+'</div>';
 }
 function decodeEntities(s){
   if(!s) return '';
@@ -1021,7 +1028,7 @@ async function refresh(){
     ]);
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'1.1.24');
+    document.getElementById('ver').textContent='v'+(st.version||'1.1.25');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -1038,9 +1045,24 @@ async function refresh(){
     j('/patrol/status').then(r=>paintPatrol(r.patrol||{}, r.history||[])).catch(()=>{});
     fillPatrolForm(CFG);
     const patrolMin=CFG.patrol_interval? Math.round((CFG.patrol_interval||0)/60)+'分' : '-';
-    document.getElementById('cfgLine').textContent=
-      '维护每'+(CFG.tick_seconds||30)+'s · 巡查'+(CFG.patrol_enabled?('每'+patrolMin):'关')+
-      ' · 密钥'+(CFG.management_key_set?'✓':'✗');
+    const tickEl=document.getElementById('cfgTick');
+    const patEl=document.getElementById('cfgPatrol');
+    const keyEl=document.getElementById('cfgKeyBadge');
+    if(tickEl) tickEl.textContent='维护每'+(CFG.tick_seconds||30)+'s';
+    if(patEl){
+      patEl.textContent=CFG.patrol_enabled?('巡查每'+patrolMin):'巡查关';
+      patEl.classList.toggle('ok', !!CFG.patrol_enabled);
+      patEl.classList.toggle('meta-soft', !CFG.patrol_enabled);
+    }
+    if(keyEl){
+      const ok=!!CFG.management_key_set;
+      keyEl.textContent=ok?'密钥✓':'密钥✗';
+      keyEl.classList.toggle('ok', ok);
+      keyEl.classList.toggle('danger', !ok);
+      keyEl.classList.toggle('meta-soft', false);
+      if(ok){ keyEl.classList.add('ok'); keyEl.classList.remove('danger'); }
+      else { keyEl.classList.add('danger'); keyEl.classList.remove('ok'); }
+    }
     const coolLine=document.getElementById('coolLine');
     if(coolLine){
       let t='冷却 '+(cool.cooling!=null?cool.cooling:0)+' 个';

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.25
+
+### Panel header badges + table density
+- Split runtime status into 3 badges: 维护 / 巡查 / 密钥.
+- Requests column: `今日/总数`; success rate: `今日%/总%`.
+- Last-action column: time only (action name on hover, no second line).
+
+
 ## 1.1.24
 
 ### Panel layout polish
@@ -294,6 +302,14 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.25
+
+### Panel header badges + table density
+- Split runtime status into 3 badges: 维护 / 巡查 / 密钥.
+- Requests column: `今日/总数`; success rate: `今日%/总%`.
+- Last-action column: time only (action name on hover, no second line).
+
 
 ## 1.1.24
 
