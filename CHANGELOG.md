@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.27
+
+### Overview 候删 count = candidate + trash
+- KPI 候删 = `candidate_dead` + `trashed` (候选删除 + 移入垃圾箱).
+- Subtitle shows split: `候选N+箱M`.
+
+
 ## 1.1.26
 
 ### Overview KPIs: two rows + 候删/永久禁用
@@ -310,6 +317,13 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.27
+
+### Overview 候删 count = candidate + trash
+- KPI 候删 = `candidate_dead` + `trashed` (候选删除 + 移入垃圾箱).
+- Subtitle shows split: `候选N+箱M`.
+
 
 ## 1.1.26
 

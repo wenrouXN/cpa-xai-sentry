@@ -219,7 +219,7 @@ td.num,th.num{text-align:right}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.26</span>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.27</span>
         <span id="cfgTick" class="badge meta-soft">维护每30s</span>
         <span id="cfgPatrol" class="badge meta-soft">巡查关</span>
         <span id="cfgKeyBadge" class="badge meta-soft">密钥—</span>
@@ -616,12 +616,15 @@ function renderKPIs(s, trashCount, cool, inv, usage){
   const xai=inv.auth_xai!=null?inv.auth_xai:(inv.auth_total||0);
   const enabled=inv.auth_enabled!=null?inv.auth_enabled:0;
   const permanent=s.user_manual!=null?s.user_manual:0;
-  const candidate=s.candidate!=null?s.candidate:0;
+  // 候删 = 候选删除(candidate_dead) + 已移入垃圾箱
+  const candOnly=Number(s.candidate||0);
+  const trashed=Number(s.trashed!=null?s.trashed:(trashCount||0));
+  const candidate=candOnly+trashed;
   // two rows × 4: 账号状态行 + 日池行
   const items=[
     ['可接流量', enabled, 'ok', '已开启'],
     ['冷却中', cooling, 'warn', '到期恢复'],
-    ['候删', candidate, 'danger', '401·候选'],
+    ['候删', candidate, 'danger', '候选'+candOnly+'+箱'+trashed],
     ['永久禁用', permanent, 'danger', '不自动恢复'],
     ['xAI 总量', xai, '', '含冷却/禁用'],
     ['日池总量', fmtTok(usage.pool_est||0), 'accent', '全量×2M'],
@@ -1034,7 +1037,7 @@ async function refresh(){
     ]);
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'1.1.26');
+    document.getElementById('ver').textContent='v'+(st.version||'1.1.27');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
