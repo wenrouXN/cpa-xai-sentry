@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.21
+
+### Policy reason strings without parentheses
+- e.g. `策略阶梯永久禁用 · 连续≥6` instead of `策略阶梯=永久禁用(≥6)`.
+- Historical logs humanized on read.
+
+
 ## 1.1.20
 
 ### Action log copy: permanent disable + no parentheses
@@ -268,6 +275,13 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.21
+
+### Policy reason strings without parentheses
+- e.g. `策略阶梯永久禁用 · 连续≥6` instead of `策略阶梯=永久禁用(≥6)`.
+- Historical logs humanized on read.
+
 
 ## 1.1.20
 

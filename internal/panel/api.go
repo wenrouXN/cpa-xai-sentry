@@ -986,7 +986,7 @@ func modeLabel(mode string) string {
 	case "observe":
 		return "仅观察"
 	case "safe-guard":
-		return "安全防护（自动冷却+候选，不自动进垃圾箱）"
+		return "安全防护 · 自动冷却+候选 · 不自动进垃圾箱"
 	case "cooldown":
 		return "自动冷却"
 	case "auto_trash":
@@ -1279,6 +1279,39 @@ func humanizeReason(reason, sigL, action string) string {
 	case "panel bulk/manual", "panel":
 		// handled below too
 		return "面板操作"
+	}
+	// historical policy reason strings with parentheses
+	if strings.HasPrefix(r, "策略阶梯=永久禁用") {
+		// 策略阶梯=永久禁用(≥6) → 策略阶梯永久禁用 · 连续≥6
+		n := strings.TrimSuffix(strings.TrimPrefix(r, "策略阶梯=永久禁用(≥"), ")")
+		if n != r && n != "" {
+			return "策略阶梯永久禁用 · 连续≥" + n
+		}
+		return "策略阶梯永久禁用"
+	}
+	if strings.HasPrefix(r, "策略阶梯=冷却") {
+		n := strings.TrimSuffix(strings.TrimPrefix(r, "策略阶梯=冷却(≥"), ")")
+		if n != r && n != "" {
+			return "策略阶梯冷却 · 连续≥" + n
+		}
+	}
+	if strings.HasPrefix(r, "策略阶梯=候删") {
+		n := strings.TrimSuffix(strings.TrimPrefix(r, "策略阶梯=候删(≥"), ")")
+		if n != r && n != "" {
+			return "策略阶梯候删 · 连续≥" + n
+		}
+	}
+	if strings.HasPrefix(r, "策略=仅观察") {
+		n := strings.TrimSuffix(strings.TrimPrefix(r, "策略=仅观察(≥"), ")")
+		if n != r && n != "" {
+			return "策略仅观察 · 连续≥" + n
+		}
+	}
+	if strings.HasPrefix(r, "策略阶梯=进垃圾箱") {
+		n := strings.TrimSuffix(strings.TrimPrefix(r, "策略阶梯=进垃圾箱(≥"), ")")
+		if n != r && n != "" {
+			return "策略阶梯进垃圾箱 · 连续≥" + n
+		}
 	}
 	if strings.ContainsAny(r, "冷却恢复候选垃圾箱额度权限凭证禁用打开") {
 		return r
@@ -1721,7 +1754,7 @@ func (a *API) handlePatrolStatus(w http.ResponseWriter, r *http.Request) {
 		running, _ := st["running"].(bool)
 		if !running {
 			st["next_patrol_at"] = time.Now().In(time.FixedZone("CST", 8*3600)).Add(time.Duration(interval) * time.Second).Format("01-02 15:04:05")
-			st["next_patrol_hint"] = "约 " + itoa(interval) + " 秒后（定时轮询估算）"
+			st["next_patrol_hint"] = "约 " + itoa(interval) + " 秒后 · 定时轮询估算"
 		} else {
 			st["next_patrol_at"] = ""
 			st["next_patrol_hint"] = "巡查进行中"
@@ -2071,7 +2104,7 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 			if msg == "" {
 				msg = r0.Label
 			}
-			msg = msg + "（" + srcZH + "）"
+			msg = msg + " · " + srcZH
 			shape, shapeLabel, suggestKey := errorsig.ShapeOf(a0.Sample, a0.Status)
 			hits = append(hits, map[string]any{
 				"auth": a0.Auth, "label": label, "file": a0.File,

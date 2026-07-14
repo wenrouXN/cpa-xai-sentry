@@ -9,13 +9,13 @@ import (
 )
 
 type Action struct {
-	Cooldown   bool
-	Candidate  bool
-	Disable    bool // permanent disable
-	Trash      bool
-	Reason     string
-	ErrorKey   string
-	PolicyAct  string
+	Cooldown    bool
+	Candidate   bool
+	Disable     bool // permanent disable
+	Trash       bool
+	Reason      string
+	ErrorKey    string
+	PolicyAct   string
 	CooldownSec int // from matched tier, 0 = use defaults
 }
 
@@ -114,11 +114,11 @@ func decidePolicy(cfg sentrycfg.Config, in Input, p state.ErrorPolicy) Action {
 func applyActionTier(cfg sentrycfg.Config, a Action, act errorsig.Action, neverTrash bool, in Input, th int) Action {
 	switch act {
 	case errorsig.ActionObserve:
-		a.Reason = "策略=仅观察(≥" + itoa(th) + ")"
+		a.Reason = "策略仅观察 · 连续≥" + itoa(th)
 	case errorsig.ActionCooldown:
 		if cfg.AutoCooldown {
 			a.Cooldown = true
-			a.Reason = "策略阶梯=冷却(≥" + itoa(th) + ")"
+			a.Reason = "策略阶梯冷却 · 连续≥" + itoa(th)
 		} else {
 			a.Reason = "策略=冷却但全局自动冷却关闭"
 		}
@@ -126,7 +126,7 @@ func applyActionTier(cfg sentrycfg.Config, a Action, act errorsig.Action, neverT
 		if cfg.AutoCandidate {
 			a.Candidate = true
 			a.Cooldown = true
-			a.Reason = "策略阶梯=候删(≥" + itoa(th) + ")"
+			a.Reason = "策略阶梯候删 · 连续≥" + itoa(th)
 		} else if cfg.AutoCooldown {
 			a.Cooldown = true
 			a.Reason = "策略=候删但全局仅冷却开启"
@@ -137,7 +137,7 @@ func applyActionTier(cfg sentrycfg.Config, a Action, act errorsig.Action, neverT
 		// permanent disable requires master sentry on; not gated by auto_delete
 		if cfg.SentryEnabled {
 			a.Disable = true
-			a.Reason = "策略阶梯=永久禁用(≥" + itoa(th) + ")"
+			a.Reason = "策略阶梯永久禁用 · 连续≥" + itoa(th)
 		} else {
 			a.Reason = "策略=永久禁用但总开关关闭"
 		}
@@ -163,7 +163,7 @@ func applyActionTier(cfg sentrycfg.Config, a Action, act errorsig.Action, neverT
 			a.Trash = true
 			a.Candidate = true
 			a.Cooldown = true
-			a.Reason = "策略阶梯=进垃圾箱(≥" + itoa(th) + ")"
+			a.Reason = "策略阶梯进垃圾箱 · 连续≥" + itoa(th)
 		} else if cfg.AutoCandidate {
 			a.Candidate = true
 			a.Cooldown = true
@@ -193,7 +193,6 @@ func itoa(n int) string {
 	}
 	return string(b[i:])
 }
-
 
 func contains(ss []string, x string) bool {
 	for _, s := range ss {
