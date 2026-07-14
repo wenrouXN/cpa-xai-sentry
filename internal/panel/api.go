@@ -1247,13 +1247,11 @@ func humanizeReason(reason, sigL, action string) string {
 		}
 		return ""
 	case "permission_denied", "permission-denied":
-		return "权限拒绝(403)"
+		return "权限拒绝 403"
 	case "recover_at":
 		return "冷却到期自动恢复"
-	case "panel bulk/manual":
-		return "面板操作"
 	case "cpa_disabled_sync":
-		return "CPA 文件处于禁用（非面板永久禁用）"
+		return "CPA 文件处于禁用，非面板永久禁用"
 	case "foreign_or_unknown_disabled", "foreign_disabled_untracked",
 		"unowned_disabled_self_heal", "unowned_disabled_untracked_self_heal",
 		"unowned_disabled_self_heal_file_only", "unowned_disabled_untracked_file_only":
@@ -1261,7 +1259,7 @@ func humanizeReason(reason, sigL, action string) string {
 	case "owned_disable_was_enabled":
 		return "自有冷却期间文件被打开，已重新关闭"
 	case "align_disabled_quota":
-		return "CPA已禁用额度号对齐为冷却（巡检未探测已禁用文件）"
+		return "CPA已禁用额度号对齐为冷却，全量巡查未探测已禁用文件"
 	case "closed_loop_clean", "half_recovered_residue", "stale_recover_at_only":
 		return "清理半恢复残留状态"
 	case "active_with_future_recover_at":
@@ -1274,8 +1272,13 @@ func humanizeReason(reason, sigL, action string) string {
 		return "文件已启用，清除粘滞「CPA已禁用」标记"
 	case "今日用量自动回补", "今日用量回补":
 		return r
-	case "permanent_disable", "policy_permanent_disable":
-		return "永久禁用"
+	case "permanent_disable":
+		return "面板手动永久禁用"
+	case "policy_permanent_disable":
+		return "策略阶梯触发永久禁用"
+	case "panel bulk/manual", "panel":
+		// handled below too
+		return "面板操作"
 	}
 	if strings.ContainsAny(r, "冷却恢复候选垃圾箱额度权限凭证禁用打开") {
 		return r
@@ -1314,7 +1317,7 @@ func composeLogText(actL, action, sigL, signal, who, reason, srcL, source string
 	switch action {
 	case "cooldown":
 		if source == "tick" && who != "" {
-			return "【冷却】" + who + "（维护对齐）", level
+			return "【冷却】" + who + " · 维护对齐", level
 		}
 		if who != "" && why != "" {
 			return "【冷却】" + who + " · 原因：" + why, level
@@ -1343,7 +1346,7 @@ func composeLogText(actL, action, sigL, signal, who, reason, srcL, source string
 		return "【冷却补关失败】", "err"
 	case "reenable":
 		if who != "" {
-			return "【到期恢复】" + who + " 冷却时间到，已重新启用（状态恢复为正常）", "ok"
+			return "【到期恢复】" + who + " 冷却时间到，已重新启用，状态恢复为正常", "ok"
 		}
 		return "【到期恢复】冷却时间到，已重新启用", "ok"
 	case "reenable_failed":
@@ -1372,9 +1375,9 @@ func composeLogText(actL, action, sigL, signal, who, reason, srcL, source string
 		return "【垃圾箱】已移入", level
 	case "file_disabled_sync":
 		if who != "" {
-			return "【CPA对齐】" + who + " 的凭证文件已禁用 → 标为「CPA已禁用」（不是面板点的永久禁用）", "warn"
+			return "【CPA对齐】" + who + " 的凭证文件已禁用 → 标为「CPA已禁用」，不是面板永久禁用", "warn"
 		}
-		return "【CPA对齐】凭证文件已禁用（非面板永久禁用）", "warn"
+		return "【CPA对齐】凭证文件已禁用，非面板永久禁用", "warn"
 	case "reopen_foreign":
 		if who != "" {
 			return "【自愈打开】" + who + " 属于非自有禁用 → 已打开；下次真实报错再判定是否冷却", "ok"
@@ -1401,16 +1404,21 @@ func composeLogText(actL, action, sigL, signal, who, reason, srcL, source string
 		}
 		return "【清理】半恢复残留", "info"
 	case "manual_disable":
-
-		if who != "" {
-			return "已永久禁用 " + who, level
+		if who != "" && why != "" {
+			return "【永久禁用】" + who + " · 原因：" + why, level
 		}
-		return "已手动禁用账号", level
+		if who != "" {
+			return "【永久禁用】" + who + " · 原因：面板手动永久禁用", level
+		}
+		return "【永久禁用】已执行", level
 	case "manual_enable":
-		if who != "" {
-			return "已在面板手动启用 " + who, level
+		if who != "" && why != "" {
+			return "【手动启用】" + who + " · 原因：" + why, "ok"
 		}
-		return "已手动启用账号", level
+		if who != "" {
+			return "【手动启用】" + who + " · 原因：面板手动启用", "ok"
+		}
+		return "【手动启用】已执行", "ok"
 	case "backfill", "auto_backfill":
 		if why != "" {
 			return why, "ok"
@@ -1432,9 +1440,9 @@ func composeLogText(actL, action, sigL, signal, who, reason, srcL, source string
 		return firstNonEmpty(why, "主动巡查已完成"), "ok"
 	case "observe":
 		if who != "" && why != "" {
-			return "观察到 " + who + " 出现" + why + "（仅记录，未处置）", "info"
+			return "【观察】" + who + " · 原因：" + why + " · 仅记录未处置", "info"
 		}
-		return "记录到异常信号（仅观察）", "info"
+		return "【观察】记录到异常信号，仅记录未处置", "info"
 	}
 	// generic fluent fallback
 	parts := make([]string, 0, 4)
@@ -1518,7 +1526,7 @@ func logSignalZH(s string) string {
 	case "auth_401":
 		return "凭证失效"
 	case "permission_403":
-		return "权限拒绝(403)"
+		return "权限拒绝 403"
 	default:
 		return s
 	}

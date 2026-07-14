@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.20
+
+### Action log copy: permanent disable + no parentheses
+- `manual_disable` now `【永久禁用】账号 · 原因：…` like cooldown/reenable.
+- Reasons: 面板手动永久禁用 / 策略阶梯触发永久禁用.
+- Narrative logs no longer use `()` / `（）` wrappers.
+
+
 ## 1.1.19
 
 ### Bidirectional config sync (last-writer-wins)
@@ -260,6 +268,14 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.20
+
+### Action log copy: permanent disable + no parentheses
+- `manual_disable` now `【永久禁用】账号 · 原因：…` like cooldown/reenable.
+- Reasons: 面板手动永久禁用 / 策略阶梯触发永久禁用.
+- Narrative logs no longer use `()` / `（）` wrappers.
+
 
 ## 1.1.19
 
