@@ -217,7 +217,7 @@ select.act{min-width:100px}input.num{width:70px}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.21</span></h1>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.22</span></h1>
       <div class="ver-line"><span class="ver-meta" id="cfgLine">维护每30s · 巡查关 · 密钥—</span></div>
     </div>
     <div class="top-actions">
@@ -398,26 +398,60 @@ const STATE_ZH={active:'正常·可用',cooldown_quota:'429·额度冷却',coold
 const ACT_ZH={observe:'仅观察',cooldown:'冷却',cooldown_reassert:'冷却补关',reenable:'到期恢复',candidate:'候删',disable:'永久禁用',manual_disable:'永久禁用',manual_enable:'手动启用',trash:'进垃圾箱',wait:'等待恢复',review:'复查',manual:'永久禁用',none:'无',restore_or_purge:'恢复/清除',reopen_foreign:'自愈打开',file_disabled_sync:'CPA禁用对齐',clear_cpa_disabled_tag:'清除禁用标记',scrub_active:'清理残留',repair_cooldown_state:'修复冷却态'};
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2400)}
 function esc(s){return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-// CPAMP-style mask: local part >8 => abc***wxyz@domain
+// Mask local + domain labels (keep TLD). e.g. jnge8hzlj6@lovc.eu.cc → jng***j6@l***.eu.cc
 function maskEmail(email){
   const n=String(email||'').trim();
   if(!n) return '-';
   const at=n.indexOf('@');
   if(at<=0) return maskToken(n);
-  const r=n.slice(0,at), i=n.slice(at);
-  if(r.length<=8) return n;
-  return r.slice(0,3)+'***'+r.slice(-4)+i;
+  let local=n.slice(0,at);
+  let domain=n.slice(at+1);
+  if(local.length<=3) local='***';
+  else if(local.length<=8) local=local.slice(0,1)+'***'+local.slice(-1);
+  else local=local.slice(0,3)+'***'+local.slice(-2);
+  const parts=domain.split('.').filter(Boolean);
+  if(!parts.length) domain='***';
+  else if(parts.length===1){
+    const p=parts[0];
+    domain=p.length<=2?'***':(p.slice(0,1)+'***');
+  } else {
+    domain=parts.map((p,i)=>{
+      if(i===parts.length-1) return p; // keep tld
+      if(p.length<=2) return '**';
+      return p.slice(0,1)+'***';
+    }).join('.');
+  }
+  return local+'@'+domain;
 }
 function maskToken(s){
   const n=String(s||'');
   if(n.length<=8) return n;
   return n.slice(0,3)+'***'+n.slice(-4);
 }
+// Mask emails / xai-*.json identities inside free text (action logs, patrol logs)
+function maskSensitiveText(text){
+  if(!MASKED || text==null || text==='') return text==null?'':String(text);
+  let s=String(text);
+  // xai-email.json first
+  s=s.replace(/xai-([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\.json/gi,(_,em)=>'xai-'+maskEmail(em)+'.json');
+  // bare emails
+  s=s.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, m=>maskEmail(m));
+  return s;
+}
 function dispName(a){
   const full=a.display_name||a.email||a.file_name||a.auth_index||'-';
-  return MASKED ? maskEmail(full) : full;
+  if(!MASKED) return full;
+  // file names with email inside
+  if(/@/.test(full) || /^xai-/i.test(full)) return maskSensitiveText(full);
+  return maskToken(full);
 }
-function dispAuth(s){ return MASKED ? maskEmail(s) : (s||'-'); }
+function dispAuth(s){
+  if(!MASKED) return (s||'-');
+  const n=String(s||'');
+  if(!n) return '-';
+  if(/@/.test(n) || /^xai-/i.test(n)) return maskSensitiveText(n);
+  return maskToken(n);
+}
 function syncMaskBtn(){
   const b=document.getElementById('maskBtn');
   if(!b) return;
@@ -437,6 +471,8 @@ function toggleMask(){
   renderLogs(LAST_LOGS||[]);
   if(CURRENT_TAB==='errors'){ ERR_RENDERED=false; renderErrorCards(ERRORS||[], true); }
   if(CURRENT_TAB==='trash') refreshTrashOnly();
+  // patrol job detail lines also contain emails
+  j('/patrol/status').then(r=>paintPatrol(r.patrol||{}, r.history||[])).catch(()=>{});
   toast(MASKED ? '已切换为脱敏显示' : '已切换为完整显示');
 }
 function getKey(){return (document.getElementById('cfgKey').value||localStorage.getItem(KEY_LS)||'').trim()}
@@ -843,6 +879,7 @@ function logLineHTML(e){
   if(!text || /^[a-z0-9_]+ · /i.test(text) || (text.indexOf(' · ')>=0 && text.split(' · ').length>=3 && !/【|因|已将|已恢复|失败|巡查|维护|打开|标记|冷却|恢复|补关|自愈|对齐/.test(text))){
     text=composeLogClient(e);
   }
+  if(MASKED) text=maskSensitiveText(text);
   const htmlText=esc(text).replace(/([a-z0-9._%+\-*]+@[a-z0-9.\-*]+\.[a-z*]{2,})/ig,'<span class="who">$1</span>');
   return '<div class="ll">'+
     '<div class="lt">'+esc(e.at||'')+'</div>'+
@@ -983,7 +1020,7 @@ async function refresh(){
     ]);
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'1.1.21');
+    document.getElementById('ver').textContent='v'+(st.version||'1.1.22');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -1581,9 +1618,10 @@ function paintPatrol(p, history){
     const logs=j.logs||[];
     const logHtml=logs.length? logs.slice().reverse().slice(0,200).map(l=>{
       const lv=l.level||'info';
-      const who=l.label||l.auth||'';
+      let who=l.label||l.auth||'';
       let msg=l.text||'';
       if(l.code && !String(msg).includes(String(l.code))) msg += ' · HTTP '+l.code;
+      if(MASKED){ who=dispAuth(who); msg=maskSensitiveText(msg); }
       return '<div class="pl"><div class="pt">'+esc(l.at||'')+'</div><div class="pm '+lv+'">'+esc((who?who+' · ':'')+msg)+'</div></div>';
     }).join('') : '<div class="meta" style="padding:8px;color:#93a4c3">无明细日志</div>';
     return '<div class="job-card '+(open?'open':'')+'" data-job="'+id+'">'+

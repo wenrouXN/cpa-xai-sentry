@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.22
+
+### Action logs honor mask toggle + domain masking
+- Mask button now rewrites emails inside action log / patrol log text.
+- Domain labels masked too (e.g. `jng***j6@l***.eu.cc`), not only local-part.
+
+
 ## 1.1.21
 
 ### Policy reason strings without parentheses
@@ -275,6 +282,13 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.22
+
+### Action logs honor mask toggle + domain masking
+- Mask button now rewrites emails inside action log / patrol log text.
+- Domain labels masked too (e.g. `jng***j6@l***.eu.cc`), not only local-part.
+
 
 ## 1.1.21
 
