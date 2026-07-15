@@ -228,7 +228,12 @@ func streakTotal(acc *state.Account) int {
 
 func liveActiveReason(acc *state.Account) string {
 	if acc == nil {
-		return "正常·观察中"
+		return "恢复待观察"
+	}
+	// cool/候删 到期恢复后：在成功请求证明干净之前，统一显示「恢复待观察」
+	// 不再用「正常·429×1」这种容易误解成还在冷却的文案
+	if acc.PendingObserve {
+		return "恢复待观察"
 	}
 	bestK, bestN := "", 0
 	if acc.Streaks != nil {
@@ -242,31 +247,27 @@ func liveActiveReason(acc *state.Account) string {
 	if bestN > 0 {
 		sig = bestK
 	}
-	switch sig {
-	case "permission_403":
-		if bestN > 0 {
-			return "正常·403×" + itoaPanel(bestN)
-		}
-		return "正常·403观察"
-	case "free_usage_429":
-		if bestN > 0 {
-			return "正常·429×" + itoaPanel(bestN)
-		}
-		return "正常·429观察"
-	case "spending_limit_402":
-		return "正常·402观察"
-	case "auth_401":
-		if bestN > 0 {
-			return "正常·401×" + itoaPanel(bestN)
-		}
-		return "正常·401观察"
-	case "code:invalid-argument":
-		return "正常·参数观察"
-	}
+	// 有连续错误计数（未进冷却）：显示阶梯观察，便于看策略进度
 	if bestN > 0 {
-		return "正常·观察×" + itoaPanel(bestN)
+		switch sig {
+		case "permission_403":
+			return "观察·403×" + itoaPanel(bestN)
+		case "free_usage_429":
+			return "观察·429×" + itoaPanel(bestN)
+		case "spending_limit_402":
+			return "观察·402×" + itoaPanel(bestN)
+		case "auth_401":
+			return "观察·401×" + itoaPanel(bestN)
+		case "code:invalid-argument":
+			return "观察·参数×" + itoaPanel(bestN)
+		}
+		return "观察中·×" + itoaPanel(bestN)
 	}
-	return "正常·观察中"
+	// 仅残留 last_signal、无计数：也算待观察（通常会在下次成功清掉）
+	if sig != "" {
+		return "恢复待观察"
+	}
+	return "正常·可用"
 }
 
 func matchStateFilter(acc *state.Account, filter string) bool {
@@ -277,9 +278,10 @@ func matchStateFilter(acc *state.Account, filter string) bool {
 	case "", "all":
 		return true
 	case "active", "active_clean":
-		return (acc.State == state.Active || acc.State == "") && acc.LastSignal == "" && streakTotal(acc) == 0 && acc.DisableSource != "plugin_auto"
-	case "active_watch":
-		return (acc.State == state.Active || acc.State == "") && (acc.LastSignal != "" || streakTotal(acc) > 0)
+		return (acc.State == state.Active || acc.State == "") && !acc.PendingObserve && acc.LastSignal == "" && streakTotal(acc) == 0 && acc.DisableSource != "plugin_auto"
+	case "active_watch", "pending_observe":
+		// 恢复待观察 / 仍在接流的阶梯观察
+		return (acc.State == state.Active || acc.State == "") && (acc.PendingObserve || acc.LastSignal != "" || streakTotal(acc) > 0)
 	case "user_manual", "permanent_disable":
 		return acc.State == state.UserManual && acc.DisableSource != "cpa_file_disabled" && acc.DisableSource != "cpa_disabled"
 	case "cpa_disabled":
@@ -311,7 +313,7 @@ func suggestAction(acc *state.Account) (action, reason string) {
 		return "restore_or_purge", "垃圾箱"
 	}
 	if acc.State == state.Active || acc.State == "" {
-		if n := streakTotal(acc); n > 0 || acc.LastSignal != "" {
+		if acc.PendingObserve || streakTotal(acc) > 0 || acc.LastSignal != "" {
 			return "observe", liveActiveReason(acc)
 		}
 		return "none", "正常·可用"
@@ -445,6 +447,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		ActionAt        any            `json:"action_at,omitempty"`  // last sentry action log
 		LastAction      string         `json:"last_action,omitempty"`
 		LastActionLabel string         `json:"last_action_label,omitempty"`
+		PendingObserve  bool           `json:"pending_observe,omitempty"`
 		ActionMS        int64          `json:"-"`
 		QuotaLimit      int64          `json:"quota_limit,omitempty"`
 		QuotaUsed       int64          `json:"quota_used,omitempty"`
@@ -536,8 +539,11 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		switch acc.State {
 		case state.Active, "":
 			summary["active"]++
-			if acc.LastSignal != "" || streakTotal(acc) > 0 {
+			if acc.PendingObserve || acc.LastSignal != "" || streakTotal(acc) > 0 {
 				summary["active_watch"]++
+				if acc.PendingObserve {
+					summary["pending_observe"]++
+				}
 			} else {
 				summary["active_clean"]++
 			}
@@ -731,6 +737,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			DisableSource: acc.DisableSource, Streaks: acc.Streaks, StreakSummary: streakSum,
 			SuggestedAction: act, Reason: reason, RecoverAt: ra, UpdatedAt: ua,
 			RequestAt: reqAt, ActionAt: actAt, LastAction: acc.LastAction, LastActionLabel: logActionZH(acc.LastAction),
+			PendingObserve: acc.PendingObserve,
 			QuotaLimit: qLimit, QuotaUsed: qUsed, QuotaRemaining: qRem,
 			QuotaSource: qSrc, DayCalls: dayC, DayFailCalls: dayF,
 			DayTokens: dayT, DaySuccess: dayS, DayInputTokens: dayIn, DayOutputTokens: dayOut,
@@ -831,7 +838,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		"state_filters": []map[string]any{
 			{"value": "", "label": "全部状态", "count": summary["total"]},
 			{"value": "active_clean", "label": "正常·可用", "count": summary["active_clean"]},
-			{"value": "active_watch", "label": "正常·观察中", "count": summary["active_watch"]},
+			{"value": "active_watch", "label": "恢复待观察", "count": summary["active_watch"]},
 			{"value": "cooldown_quota", "label": "429·额度冷却", "count": summary["cooldown_quota"]},
 			{"value": "cooldown_spending", "label": "402·消费冷却", "count": summary["cooldown_spending"]},
 			{"value": "cooldown_permission", "label": "403·权限冷却", "count": summary["cooldown_permission"]},

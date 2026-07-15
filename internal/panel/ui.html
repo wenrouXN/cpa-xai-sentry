@@ -219,7 +219,7 @@ td.num,th.num{text-align:right}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.29</span>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.30</span>
         <span id="cfgTick" class="badge meta-soft">维护每30s</span>
         <span id="cfgPatrol" class="badge meta-soft">巡查关</span>
         <span id="cfgKeyBadge" class="badge meta-soft">密钥—</span>
@@ -511,7 +511,7 @@ function fillStateFilter(filters, summary){
     list=[
       {value:'', label:'全部状态', count:summary.total||0},
       {value:'active_clean', label:'正常·可用', count:summary.active_clean||0},
-      {value:'active_watch', label:'正常·观察中', count:summary.active_watch||0},
+      {value:'active_watch', label:'恢复待观察', count:summary.active_watch||0},
       {value:'cooldown_quota', label:'429·额度冷却', count:summary.cooldown_quota||0},
       {value:'cooldown_spending', label:'402·消费冷却', count:summary.cooldown_spending||0},
       {value:'cooldown_permission', label:'403·权限冷却', count:summary.cooldown_permission||0},
@@ -544,27 +544,29 @@ function streakN(a){
   return {n, key};
 }
 function stateLabel(st, a){
-  // 状态码 + 执行动作：正常也不能是空壳
+  // 状态码 + 执行动作：冷却恢复后显示「恢复待观察」，成功后再「正常·可用」
   a=a||{};
   const sig=a.last_signal||'';
   if(st==='active' || st===''){
+    // 1) 冷却/候删到期恢复 → 恢复待观察（等成功请求证明干净）
+    if(a.pending_observe){
+      return {text:'恢复待观察', cls:'observe', tip:'冷却/候删已恢复接流，等待下次成功请求后变为正常·可用；连续计数仍保留供阶梯策略'};
+    }
     const stn=streakN(a);
-    const s=sig || stn.key;
-    if(s==='permission_403' || stn.key==='permission_403'){
-      const n=stn.key==='permission_403'?stn.n:stn.n;
-      return {text: n>0?('正常·403×'+n):'正常·403观察', cls:'observe', tip:'仍在接流，403 连续计数中'};
+    // 2) 仍在接流、有连续错误计数：阶梯观察（未进冷却）
+    if(stn.n>0){
+      const k=stn.key||sig;
+      if(k==='permission_403') return {text:'观察·403×'+stn.n, cls:'observe', tip:'仍在接流，403 连续计数中（阶梯策略）'};
+      if(k==='free_usage_429') return {text:'观察·429×'+stn.n, cls:'observe', tip:'仍在接流，额度相关连续计数（阶梯策略）'};
+      if(k==='spending_limit_402') return {text:'观察·402×'+stn.n, cls:'observe', tip:'仍在接流，消费限额连续计数'};
+      if(k==='auth_401') return {text:'观察·401×'+stn.n, cls:'observe', tip:'仍在接流，凭证异常连续计数'};
+      if(k==='code:invalid-argument') return {text:'观察·参数×'+stn.n, cls:'observe', tip:'仍在接流，参数/上下文问题'};
+      return {text:'观察中·×'+stn.n, cls:'observe', tip:'仍在接流，有错误连续计数'};
     }
-    if(s==='free_usage_429' || stn.key==='free_usage_429'){
-      const n=stn.key==='free_usage_429'?stn.n:stn.n;
-      return {text: n>0?('正常·429×'+n):'正常·429观察', cls:'observe', tip:'仍在接流，有额度相关信号/计数'};
+    // 3) 仅残留 last_signal（无计数）→ 待观察，不再显示「正常·429×1」
+    if(sig){
+      return {text:'恢复待观察', cls:'observe', tip:'已接流但有残留信号，成功请求后清为正常·可用'};
     }
-    if(s==='spending_limit_402') return {text:'正常·402观察', cls:'observe', tip:'仍在接流，有消费限额信号'};
-    if(s==='auth_401' || stn.key==='auth_401'){
-      const n=stn.key==='auth_401'?stn.n:stn.n;
-      return {text: n>0?('正常·401×'+n):'正常·401观察', cls:'observe', tip:'仍在接流，有凭证异常计数'};
-    }
-    if(s==='code:invalid-argument' || stn.key==='code:invalid-argument') return {text:'正常·参数观察', cls:'observe', tip:'仍在接流，参数/上下文问题'};
-    if(stn.n>0 || sig) return {text:'正常·观察中', cls:'observe', tip:'仍在接流，有错误计数或最近信号'};
     return {text:'正常·可用', cls:'active', tip:'干净正常，可接流量'};
   }
   if(st==='cooldown_quota') return {text:'429·额度冷却', cls:'cooldown', tip:'HTTP 429 免费额度用尽 → 冷却'};
@@ -612,21 +614,24 @@ function fmtTok(n){
 }
 function renderKPIs(s, trashCount, cool, inv, usage){
   s=s||{}; cool=cool||{}; inv=inv||{}; usage=usage||{};
-  const cooling=cool.cooling!=null?cool.cooling:(s.cooldown||0);
-  const xai=inv.auth_xai!=null?inv.auth_xai:(inv.auth_total||0);
-  const enabled=inv.auth_enabled!=null?inv.auth_enabled:0;
-  const permanent=s.user_manual!=null?s.user_manual:0;
-  // 候删 = 候选删除(candidate_dead) + 已移入垃圾箱
+  // 方案2：第一行用 CPA 文件口径，拆成可加总到 xAI 总量
+  // 可接=CPA开 · 冷却=哨兵冷却 · 候删=候选+箱 · 禁用=剩余(永禁+CPA关未归类)
+  const xai=Number(inv.auth_xai!=null?inv.auth_xai:(inv.auth_total||0));
+  const enabled=Number(inv.auth_enabled!=null?inv.auth_enabled:0);
+  const cooling=Number(cool.cooling!=null?cool.cooling:(s.cooldown||0));
   const candOnly=Number(s.candidate||0);
   const trashed=Number(s.trashed!=null?s.trashed:(trashCount||0));
-  const candidate=candOnly+trashed;
-  // two rows × 4: 账号状态行 + 日池行
+  const hold=candOnly+trashed; // 候删
+  const permanent=Number(s.user_manual||0);
+  // residual 强制闭合：可接+冷却+候删+禁用 = xAI（避免两套口径加不齐）
+  const residual=Math.max(0, xai - enabled - cooling - hold);
+  const other=Math.max(0, residual - permanent); // CPA 已关但哨兵未归冷却/候删/永禁
   const items=[
-    ['可接流量', enabled, 'ok', '已开启'],
+    ['可接流量', enabled, 'ok', 'CPA已开启'],
     ['冷却中', cooling, 'warn', '到期恢复'],
-    ['候删', candidate, 'danger', '候选'+candOnly+'+箱'+trashed],
-    ['永久禁用', permanent, 'danger', '不自动恢复'],
-    ['xAI 总量', xai, '', '含冷却/禁用'],
+    ['候删', hold, 'danger', '候选'+candOnly+'+箱'+trashed],
+    ['禁用', residual, 'danger', '永禁'+permanent+(other?('+未归类'+other):'')],
+    ['xAI 总量', xai, '', '可接+冷却+候删+禁用'],
     ['日池总量', fmtTok(usage.pool_est||0), 'accent', '全量×2M'],
     ['日池已用', fmtTok(usage.pool_used||0), 'warn', (usage.pool_used_pct!=null? (Number(usage.pool_used_pct).toFixed(1)+'%') : '已用占比')],
     ['日池剩余', fmtTok(usage.pool_remaining||0), 'ok', (usage.pool_used_pct!=null? ((100-Number(usage.pool_used_pct)).toFixed(1)+'%') : '剩余占比')],
@@ -1037,7 +1042,7 @@ async function refresh(){
     ]);
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'1.1.29');
+    document.getElementById('ver').textContent='v'+(st.version||'1.1.30');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};

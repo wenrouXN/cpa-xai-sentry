@@ -27,4 +27,31 @@ func TestResetToActiveClosedLoop(t *testing.T) {
 	if acc.LastSignal != "free_usage_429" {
 		t.Fatalf("last_signal should persist, got %q", acc.LastSignal)
 	}
+	// recover → pending observe until success
+	if !acc.PendingObserve {
+		t.Fatalf("pending_observe should be true after ResetToActive")
+	}
+}
+
+func TestClearPendingObserveAndManualEnable(t *testing.T) {
+	s := New("")
+	s.SetAccountState("a1", CooldownQuota, "plugin_auto")
+	s.ResetToActive("a1")
+	if !s.Get("a1").PendingObserve {
+		t.Fatal("want pending after recover")
+	}
+	s.ClearPendingObserve("a1")
+	if s.Get("a1").PendingObserve {
+		t.Fatal("want cleared")
+	}
+	s.SetAccountState("a2", CooldownPermission, "plugin_auto")
+	s.ResetToActive("a2")
+	s.ClearManualLock("a2")
+	acc := s.Get("a2")
+	if acc.PendingObserve {
+		t.Fatal("panel enable should not leave pending_observe")
+	}
+	if acc.LastSignal != "" {
+		t.Fatalf("panel enable clears signal, got %q", acc.LastSignal)
+	}
 }

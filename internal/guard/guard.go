@@ -136,8 +136,14 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 	if ev.Success || (ev.StatusCode >= 200 && ev.StatusCode < 300) {
 		g.clearStreaksByCountMode(ev.AuthIndex)
 		// closed-loop: successful request while active clears residual error signal
-		if acc := g.State.Get(ev.AuthIndex); acc != nil && acc.State == state.Active && acc.LastSignal != "" {
-			g.State.SetLastSignal(ev.AuthIndex, "")
+		// and ends「恢复待观察」→ 正常·可用
+		if acc := g.State.Get(ev.AuthIndex); acc != nil && (acc.State == state.Active || acc.State == "") {
+			if acc.LastSignal != "" {
+				g.State.SetLastSignal(ev.AuthIndex, "")
+			}
+			if acc.PendingObserve {
+				g.State.ClearPendingObserve(ev.AuthIndex)
+			}
 		}
 		// still try parse remaining from success body if any
 		if q := quota.Parse(ev.Body); q.Limit > 0 || q.Remaining > 0 || q.Used > 0 {

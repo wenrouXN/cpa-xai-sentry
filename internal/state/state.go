@@ -42,6 +42,9 @@ type Account struct {
 	// LastActionAt/LastAction: last sentry action log on this account (cooldown/reopen/...)
 	LastActionAt  time.Time `json:"last_action_at,omitempty"`
 	LastAction    string    `json:"last_action,omitempty"`
+	// PendingObserve: after cool/候删 auto-recover (ResetToActive). UI shows「恢复待观察」
+	// until a successful request proves the account is clean. Ladder streaks stay intact.
+	PendingObserve bool `json:"pending_observe,omitempty"`
 	// Best-effort quota accounting (from error bodies / CPAMP day floors).
 	QuotaLimit     int64     `json:"quota_limit,omitempty"`
 	QuotaUsed      int64     `json:"quota_used,omitempty"`
@@ -369,6 +372,8 @@ func (s *Store) ClearCoolDownResidue(authIndex string) {
 	}
 	acc.RecoverAt = time.Time{}
 	// do not clear LastSignal/Streaks — needed for policy ladders on live accounts
+	// half-recover residue also means "just came back" → pending observe until success
+	acc.PendingObserve = true
 	acc.UpdatedAt = time.Now()
 }
 
@@ -377,6 +382,7 @@ func (s *Store) ClearCoolDownResidue(authIndex string) {
 // IMPORTANT: does NOT clear Streaks — policy ladders (e.g. 403 ≥3 cooldown, ≥15 disable)
 // must survive cool-down cycles. Streaks clear only on successful requests (streak mode)
 // or via ClearAuthStreaks / panel permanent re-enable paths that call ClearManualLock.
+// Marks PendingObserve so UI shows「恢复待观察」until a real success proves clean.
 func (s *Store) ResetToActive(authIndex string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -389,11 +395,26 @@ func (s *Store) ResetToActive(authIndex string) {
 	acc.DisableSource = ""
 	acc.PreDisabled = false
 	acc.RecoverAt = time.Time{}
+	acc.PendingObserve = true
 	// keep LastSignal + Streaks for escalation ladder continuity
 	if acc.Owner == "" {
 		acc.Owner = Owner
 	}
 	acc.UpdatedAt = time.Now()
+}
+
+// ClearPendingObserve marks post-recover watch as done (successful request while Active).
+func (s *Store) ClearPendingObserve(authIndex string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	acc := s.Accounts[authIndex]
+	if acc == nil {
+		return
+	}
+	if acc.PendingObserve {
+		acc.PendingObserve = false
+		acc.UpdatedAt = time.Now()
+	}
 }
 
 func (s *Store) CanAutoReenable(authIndex string) bool {
@@ -433,6 +454,8 @@ func (s *Store) ClearManualLock(authIndex string) {
 	s.mu.Lock()
 	if acc := s.Accounts[authIndex]; acc != nil {
 		acc.LastSignal = ""
+		// operator full reset → clean normal, no「恢复待观察」
+		acc.PendingObserve = false
 	}
 	s.mu.Unlock()
 }
@@ -555,6 +578,11 @@ func (s *Store) SetAccountState(authIndex string, st AccountState, disableSource
 	if disableSource != "" {
 		acc.DisableSource = disableSource
 		acc.Owner = Owner
+	}
+	// re-enter cool/候删/禁用/垃圾箱: leave the post-recover watch phase
+	switch st {
+	case CooldownQuota, CooldownSpending, CooldownPermission, CandidateDead, UserManual, Trashed, Purged:
+		acc.PendingObserve = false
 	}
 	acc.UpdatedAt = time.Now()
 }

@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.1.30
+
+### Overview KPI：CPA 口径可加总
+- 第一行：可接流量(CPA 已开启) / 冷却中 / 候删 / **禁用**。
+- **禁用** = xAI总量 − 可接 − 冷却 − 候删，强制加总闭合；副文案 `永禁N+未归类M`（未归类 = CPA 已关但哨兵未标冷却/候删/永禁）。
+- xAI 总量副文案改为「可接+冷却+候删+禁用」。
+
+### 状态文案：冷却恢复 → 恢复待观察 → 正常
+- 新增 `pending_observe`：冷却/候删 `ResetToActive` 后置 true；面板手动启用清零。
+- UI/API 不再显示易误解的「正常·429×1」：恢复后统一 **恢复待观察**，真实成功请求后 → **正常·可用**。
+- 仍在接流且有阶梯连续计数时显示 **观察·403×N / 观察·429×N**（未进冷却的策略进度）。
+- 成功路径清除 `pending_observe` + residual `last_signal`。
+
+
+
 ## 1.1.29
 
 ### Docs / ops: CPAMP usage mount must include SQLite WAL
