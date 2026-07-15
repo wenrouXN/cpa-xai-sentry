@@ -469,6 +469,14 @@ func (g *Guard) tick(ctx context.Context, manual bool) error {
 	} else {
 		reopened = n
 	}
+	// Active + CPA file still disabled → force open (both periodic + manual).
+	// This closes the residual "未归类" gap after reenable / file rewrite races.
+	healed := 0
+	if n, err := g.healActiveFileDisabled(ctx, now); err != nil {
+		g.State.Log(state.ActionLog{Source: "tick", Action: "heal_active_file_failed", Reason: err.Error()})
+	} else {
+		healed = n
+	}
 	g.pruneDuplicateAccounts()
 	// closed-loop hygiene: Active must be clean (no residual signal/plugin_auto lock)
 	g.scrubDirtyActiveAccounts()
@@ -480,7 +488,6 @@ func (g *Guard) tick(ctx context.Context, manual bool) error {
 	// 立即维护：无论有无变更，都写一条汇总动作日志，避免「点了没日志」
 	if manual {
 		src := "tick_manual"
-		reason := "立即维护完成"
 		parts := []string{}
 		if recovered > 0 {
 			parts = append(parts, "到期恢复"+itoaGuard(recovered))
@@ -488,15 +495,17 @@ func (g *Guard) tick(ctx context.Context, manual bool) error {
 		if reopened > 0 {
 			parts = append(parts, "自愈打开"+itoaGuard(reopened))
 		}
+		if healed > 0 {
+			parts = append(parts, "强制打开"+itoaGuard(healed))
+		}
 		if reasserted > 0 {
 			parts = append(parts, "冷却补关"+itoaGuard(reasserted))
 		}
-		if len(parts) == 0 {
-			reason = "立即维护完成 · 无到期冷却、无非自有禁用需处理"
-		} else {
+		reason := "立即维护完成 · 无到期冷却、无文件需打开"
+		if len(parts) > 0 {
 			reason = "立即维护完成 · " + strings.Join(parts, " · ")
 		}
-		_ = reasserted // reserved if sync returns split counters later
+		_ = reasserted
 		g.State.Log(state.ActionLog{
 			Source: src, Action: "maintenance",
 			Reason: reason,
@@ -594,6 +603,176 @@ func (g *Guard) shouldProtectDisable(acc *state.Account, now time.Time) bool {
 		}
 	}
 	return false
+}
+
+// healActiveFileDisabled opens CPA files that are disabled while sentry still says Active.
+// Root cause of residual KPI「未归类」: reenable/ResetToActive succeeded but file stayed
+// (or was rewritten) disabled — no cool/候删/永禁 ownership, so foreign scan may miss
+// identity or only runs on manual. This path runs every tick (cheap residual fix).
+// Never opens protected cool-downs / permanent disables.
+func (g *Guard) healActiveFileDisabled(ctx context.Context, now time.Time) (int, error) {
+	if g.CPA == nil || g.State == nil {
+		return 0, nil
+	}
+	files, err := g.CPA.ListAuthFiles(ctx)
+	if err != nil {
+		return 0, err
+	}
+	// index disabled xAI files by basename / email / auth_index
+	type fileRef struct {
+		Name string
+	}
+	byKey := map[string]fileRef{}
+	for _, f := range files {
+		if !f.Disabled {
+			continue
+		}
+		name := strings.TrimSpace(f.Name)
+		prov := f.Provider
+		if prov == "" {
+			prov = f.Type
+		}
+		if name == "" || !cpaapi.IsXAIName(name, prov) {
+			// still allow match via id/path
+			if name == "" {
+				name = strings.TrimSpace(f.ID)
+			}
+			if name == "" {
+				name = strings.TrimSpace(f.Path)
+			}
+			if name == "" || !cpaapi.IsXAIName(name, prov) {
+				continue
+			}
+		}
+		base := authFileBase(name)
+		ref := fileRef{Name: name}
+		if base != "" {
+			byKey[base] = ref
+		}
+		if id := authFileBase(f.ID); id != "" {
+			byKey[id] = ref
+		}
+		if p := authFileBase(f.Path); p != "" {
+			byKey[p] = ref
+		}
+		if ai := strings.ToLower(strings.TrimSpace(f.AuthIndex)); ai != "" {
+			byKey["auth:"+ai] = ref
+		}
+		em := strings.ToLower(strings.TrimSpace(f.Email))
+		if em == "" {
+			em = strings.ToLower(strings.TrimSpace(f.Account))
+		}
+		if em == "" {
+			em = emailFromXAIFile(name)
+		}
+		if em != "" {
+			byKey["email:"+em] = ref
+			byKey["xai-"+em+".json"] = ref
+		}
+	}
+	if len(byKey) == 0 {
+		return 0, nil
+	}
+	n := 0
+	for _, acc := range g.State.AccountsSnapshot() {
+		if acc == nil {
+			continue
+		}
+		// only Active (接流态) with no cool ownership
+		if acc.State != state.Active && acc.State != "" {
+			continue
+		}
+		if g.shouldProtectDisable(acc, now) {
+			continue
+		}
+		// resolve disabled file for this account
+		var ref fileRef
+		var ok bool
+		if af := authFileBase(acc.FileName); af != "" {
+			ref, ok = byKey[af]
+		}
+		if !ok {
+			if em := strings.ToLower(strings.TrimSpace(acc.Email)); em != "" {
+				ref, ok = byKey["email:"+em]
+				if !ok {
+					ref, ok = byKey["xai-"+em+".json"]
+				}
+			}
+		}
+		if !ok {
+			if em := emailFromXAIFile(acc.FileName); em != "" {
+				ref, ok = byKey["email:"+em]
+				if !ok {
+					ref, ok = byKey["xai-"+em+".json"]
+				}
+			}
+		}
+		if !ok {
+			if ai := strings.ToLower(strings.TrimSpace(acc.AuthIndex)); ai != "" {
+				ref, ok = byKey["auth:"+ai]
+			}
+		}
+		if !ok || ref.Name == "" || cpaapi.LooksLikeOpaqueID(ref.Name) {
+			continue
+		}
+		// If ANY identity-matched account is owned cool/permanent, do not open the file
+		// (Active duplicate shell must not defeat cool-down protect).
+		baseName := authFileBase(ref.Name)
+		emKey := strings.ToLower(strings.TrimSpace(acc.Email))
+		if emKey == "" {
+			emKey = emailFromXAIFile(acc.FileName)
+		}
+		if emKey == "" {
+			emKey = emailFromXAIFile(ref.Name)
+		}
+		aiKey := strings.ToLower(strings.TrimSpace(acc.AuthIndex))
+		siblingProtected := false
+		for _, other := range g.State.AccountsSnapshot() {
+			if other == nil || other.AuthIndex == acc.AuthIndex {
+				continue
+			}
+			if !g.shouldProtectDisable(other, now) {
+				continue
+			}
+			oaf := authFileBase(other.FileName)
+			oem := strings.ToLower(strings.TrimSpace(other.Email))
+			if oem == "" {
+				oem = emailFromXAIFile(other.FileName)
+			}
+			oai := strings.ToLower(strings.TrimSpace(other.AuthIndex))
+			if (baseName != "" && oaf == baseName) ||
+				(emKey != "" && (oem == emKey || emailFromXAIFile(other.FileName) == emKey)) ||
+				(aiKey != "" && oai == aiKey) {
+				siblingProtected = true
+				break
+			}
+		}
+		if siblingProtected {
+			continue
+		}
+		if err := g.CPA.SetDisabled(ctx, ref.Name, false); err != nil {
+			g.State.Log(state.ActionLog{
+				Auth: acc.AuthIndex, Source: "tick", Action: "heal_active_file_failed",
+				Reason: err.Error(),
+			})
+			continue
+		}
+		// keep Active; mark pending observe so UI shows 恢复待观察 until success
+		g.State.ResetToActive(acc.AuthIndex)
+		if ref.Name != "" {
+			em := strings.ToLower(strings.TrimSpace(acc.Email))
+			if em == "" {
+				em = emailFromXAIFile(ref.Name)
+			}
+			g.State.UpdateMeta(acc.AuthIndex, authFileBase(ref.Name), em, "")
+		}
+		g.State.Log(state.ActionLog{
+			Auth: acc.AuthIndex, Source: "tick", Action: "heal_active_file",
+			Reason: "active_but_file_disabled",
+		})
+		n++
+	}
+	return n, nil
 }
 
 // syncDisabledFromCPA inspects CPA auth files that are currently disabled.

@@ -19,13 +19,14 @@ import (
 func TestTickReopensUnownedDisabledSelfHeal(t *testing.T) {
 	dir := t.TempDir()
 	setToFalse := 0
+	disabled := true
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v0/management/auth-files" && r.Method == http.MethodGet:
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"files": []map[string]any{{
 					"name": "xai-op@lovc.eu.cc.json", "email": "op@lovc.eu.cc",
-					"provider": "xai", "type": "xai", "disabled": true,
+					"provider": "xai", "type": "xai", "disabled": disabled,
 				}},
 			})
 		case r.URL.Path == "/v0/management/auth-files/status":
@@ -33,6 +34,7 @@ func TestTickReopensUnownedDisabledSelfHeal(t *testing.T) {
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			if d, ok := body["disabled"].(bool); ok && !d {
 				setToFalse++
+				disabled = false
 			}
 			w.WriteHeader(200)
 			_, _ = w.Write([]byte(`{"ok":true}`))
@@ -603,6 +605,10 @@ func TestConservativeTickDoesNotOverwriteCooldown(t *testing.T) {
 
 
 func TestAutoTickSkipsForeignScan(t *testing.T) {
+	// v1.1.32+: untracked / sticky CPA已禁用 still manual-only for full foreign scan.
+	// But Active + file disabled residual IS healed on auto Tick (healActiveFileDisabled).
+	// This test keeps the "no cpa_file_disabled mark path on auto" intent via a
+	// UserManual+cpa_file_disabled sticky that heal also skips (not pure Active).
 	dir := t.TempDir()
 	setToFalse := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -630,19 +636,20 @@ func TestAutoTickSkipsForeignScan(t *testing.T) {
 	cfg.ManagementKey = "k"
 	cfg.ReopenForeignDisabled = true
 	st := state.New(filepath.Join(dir, "s.json"))
+	// sticky CPA已禁用 (not pure Active) — heal skips non-Active; foreign scan is manual-only
 	st.Touch("foreign1")
 	st.UpdateMeta("foreign1", "xai-foreign@lovc.eu.cc.json", "foreign@lovc.eu.cc", "")
-	st.SetAccountState("foreign1", state.Active, "")
+	st.SetAccountState("foreign1", state.UserManual, "cpa_file_disabled")
 	_ = st.Save()
 	g := guard.New(cfg, st, trash.New(filepath.Join(dir, "t"), 7, true, st), cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, dir))
-	// auto tick must NOT open
+	// auto tick must NOT open sticky CPA已禁用 (foreign scan still manual-only)
 	if err := g.Tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if setToFalse != 0 {
-		t.Fatalf("auto Tick must not scan foreign disables, opens=%d", setToFalse)
+		t.Fatalf("auto Tick must not scan sticky cpa_file_disabled, opens=%d", setToFalse)
 	}
-	// manual tick opens unowned
+	// manual tick opens unowned sticky
 	if err := g.TickManual(context.Background()); err != nil {
 		t.Fatal(err)
 	}

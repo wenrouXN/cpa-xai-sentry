@@ -1346,8 +1346,10 @@ func composeLogText(actL, action, sigL, signal, who, reason, srcL, source string
 		level = "err"
 	case "cooldown", "candidate", "trash", "delete", "manual_disable", "cooldown_reassert", "file_disabled_sync", "repair_cooldown_state":
 		level = "warn"
-	case "reenable", "manual_enable", "backfill", "auto_backfill", "restore", "reopen_foreign", "clear_cpa_disabled_tag":
+	case "reenable", "manual_enable", "backfill", "auto_backfill", "restore", "reopen_foreign", "clear_cpa_disabled_tag", "heal_active_file":
 		level = "ok"
+	case "heal_active_file_failed":
+		level = "err"
 	}
 	who = strings.TrimSpace(who)
 	reason = strings.TrimSpace(reason)
@@ -1434,6 +1436,16 @@ func composeLogText(actL, action, sigL, signal, who, reason, srcL, source string
 			return "【立即维护】" + why, "info"
 		}
 		return "【立即维护】已执行", "info"
+	case "heal_active_file":
+		if who != "" {
+			return "【强制打开】" + who + " 哨兵已是接流态但 CPA 文件仍关闭 → 已重新打开", "ok"
+		}
+		return "【强制打开】Active+文件关 → 已重新打开", "ok"
+	case "heal_active_file_failed":
+		if who != "" && why != "" {
+			return "【强制打开失败】" + who + "：" + why, "err"
+		}
+		return "【强制打开失败】", "err"
 	case "reopen_foreign_failed":
 		if who != "" && why != "" {
 			return "【自愈打开失败】" + who + "：" + why, "err"
@@ -1538,6 +1550,10 @@ func logActionZH(a string) string {
 		return "自愈打开"
 	case "maintenance":
 		return "立即维护"
+	case "heal_active_file":
+		return "强制打开"
+	case "heal_active_file_failed":
+		return "强制打开失败"
 	case "reopen_foreign_failed":
 		return "自愈打开失败"
 	case "clear_cpa_disabled_tag":

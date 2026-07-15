@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.32
+
+### 闭环：Active + 文件仍关 → 强制打开（消未归类）
+- 根因：到期恢复/自愈后哨兵 Active，但 CPA 文件仍 disabled（文件重写/外部再关/open 未钉死）→ KPI「未归类」。
+- 新增 `healActiveFileDisabled`：每次 tick（定时+立即维护）扫描 **Active 且无 cool 所有权** 但文件 disabled 的号 → `SetDisabled(false)` + 日志 `【强制打开】`。
+- **不**打开自有冷却/永禁/候删（shouldProtectDisable）。
+- 打开后 `pending_observe`，UI 显示恢复待观察直到成功请求。
+
+
+
 ## 1.1.31
 
 ### 状态文案对齐：额度 residual 一律「恢复待观察」
