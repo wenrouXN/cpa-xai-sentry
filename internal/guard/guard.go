@@ -610,6 +610,11 @@ func (g *Guard) shouldProtectDisable(acc *state.Account, now time.Time) bool {
 // (or was rewritten) disabled — no cool/候删/永禁 ownership, so foreign scan may miss
 // identity or only runs on manual. This path runs every tick (cheap residual fix).
 // Never opens protected cool-downs / permanent disables.
+//
+// Anti-spam (v1.1.33): same account at most once per healCooldown (15m) so a sticky
+// disabled file cannot emit 【强制打开】 every 30s tick.
+const healActiveFileCooldown = 15 * time.Minute
+
 func (g *Guard) healActiveFileDisabled(ctx context.Context, now time.Time) (int, error) {
 	if g.CPA == nil || g.State == nil {
 		return 0, nil
@@ -632,17 +637,14 @@ func (g *Guard) healActiveFileDisabled(ctx context.Context, now time.Time) (int,
 		if prov == "" {
 			prov = f.Type
 		}
+		if name == "" {
+			name = strings.TrimSpace(f.ID)
+		}
+		if name == "" {
+			name = strings.TrimSpace(f.Path)
+		}
 		if name == "" || !cpaapi.IsXAIName(name, prov) {
-			// still allow match via id/path
-			if name == "" {
-				name = strings.TrimSpace(f.ID)
-			}
-			if name == "" {
-				name = strings.TrimSpace(f.Path)
-			}
-			if name == "" || !cpaapi.IsXAIName(name, prov) {
-				continue
-			}
+			continue
 		}
 		base := authFileBase(name)
 		ref := fileRef{Name: name}
@@ -684,6 +686,13 @@ func (g *Guard) healActiveFileDisabled(ctx context.Context, now time.Time) (int,
 		}
 		if g.shouldProtectDisable(acc, now) {
 			continue
+		}
+		// rate limit: do not re-heal / re-log same account every 30s tick
+		if !acc.LastActionAt.IsZero() && now.Sub(acc.LastActionAt) < healActiveFileCooldown {
+			switch acc.LastAction {
+			case "heal_active_file", "heal_active_file_failed", "heal_active_file_stuck":
+				continue
+			}
 		}
 		// resolve disabled file for this account
 		var ref fileRef
@@ -758,6 +767,7 @@ func (g *Guard) healActiveFileDisabled(ctx context.Context, now time.Time) (int,
 			continue
 		}
 		// keep Active; mark pending observe so UI shows 恢复待观察 until success
+		// (rate-limited above: same account won't re-log every 30s even if file flips back)
 		g.State.ResetToActive(acc.AuthIndex)
 		if ref.Name != "" {
 			em := strings.ToLower(strings.TrimSpace(acc.Email))
