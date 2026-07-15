@@ -418,6 +418,7 @@ func (g *Guard) tick(ctx context.Context, manual bool) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	now := g.Now()
+	recovered, reopened, reasserted := 0, 0, 0
 	// Best-effort identity refresh so panel can show email/file even for opaque auth_index.
 	if g.Resolver != nil {
 		_ = g.Resolver.Ensure(ctx)
@@ -460,10 +461,13 @@ func (g *Guard) tick(ctx context.Context, manual bool) error {
 			Auth: acc.AuthIndex, Source: "tick", Signal: prevSig,
 			Action: "reenable", Reason: "recover_at",
 		})
+		recovered++
 	}
 	// Owned cool-down reassert; unowned foreign scan only on manual maintenance.
-	if _, err := g.syncDisabledFromCPA(ctx, now, manual); err != nil {
+	if n, err := g.syncDisabledFromCPA(ctx, now, manual); err != nil {
 		g.State.Log(state.ActionLog{Source: "tick", Action: "sync_disabled_failed", Reason: err.Error()})
+	} else {
+		reopened = n
 	}
 	g.pruneDuplicateAccounts()
 	// closed-loop hygiene: Active must be clean (no residual signal/plugin_auto lock)
@@ -473,7 +477,46 @@ func (g *Guard) tick(ctx context.Context, manual bool) error {
 			return err
 		}
 	}
+	// 立即维护：无论有无变更，都写一条汇总动作日志，避免「点了没日志」
+	if manual {
+		src := "tick_manual"
+		reason := "立即维护完成"
+		parts := []string{}
+		if recovered > 0 {
+			parts = append(parts, "到期恢复"+itoaGuard(recovered))
+		}
+		if reopened > 0 {
+			parts = append(parts, "自愈打开"+itoaGuard(reopened))
+		}
+		if reasserted > 0 {
+			parts = append(parts, "冷却补关"+itoaGuard(reasserted))
+		}
+		if len(parts) == 0 {
+			reason = "立即维护完成 · 无到期冷却、无非自有禁用需处理"
+		} else {
+			reason = "立即维护完成 · " + strings.Join(parts, " · ")
+		}
+		_ = reasserted // reserved if sync returns split counters later
+		g.State.Log(state.ActionLog{
+			Source: src, Action: "maintenance",
+			Reason: reason,
+		})
+	}
 	return g.State.Save()
+}
+
+func itoaGuard(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var b [16]byte
+	i := len(b)
+	for n > 0 {
+		i--
+		b[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(b[i:])
 }
 
 

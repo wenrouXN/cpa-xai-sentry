@@ -230,8 +230,7 @@ func liveActiveReason(acc *state.Account) string {
 	if acc == nil {
 		return "恢复待观察"
 	}
-	// cool/候删 到期恢复后：在成功请求证明干净之前，统一显示「恢复待观察」
-	// 不再用「正常·429×1」这种容易误解成还在冷却的文案
+	// cool/候删 到期恢复后：在成功请求证明干净之前，统一「恢复待观察」
 	if acc.PendingObserve {
 		return "恢复待观察"
 	}
@@ -247,15 +246,17 @@ func liveActiveReason(acc *state.Account) string {
 	if bestN > 0 {
 		sig = bestK
 	}
-	// 有连续错误计数（未进冷却）：显示阶梯观察，便于看策略进度
+	// 额度/消费 residual：冷却恢复后几乎总是 ×1，显示「观察·429×1」无信息量且易误解
+	// → 一律「恢复待观察」，等成功请求清掉
+	switch sig {
+	case "free_usage_429", "spending_limit_402":
+		return "恢复待观察"
+	}
+	// 403/401 阶梯：仍在接流、未进冷却时显示连续 N，便于看策略进度
 	if bestN > 0 {
 		switch sig {
 		case "permission_403":
 			return "观察·403×" + itoaPanel(bestN)
-		case "free_usage_429":
-			return "观察·429×" + itoaPanel(bestN)
-		case "spending_limit_402":
-			return "观察·402×" + itoaPanel(bestN)
 		case "auth_401":
 			return "观察·401×" + itoaPanel(bestN)
 		case "code:invalid-argument":
@@ -263,8 +264,13 @@ func liveActiveReason(acc *state.Account) string {
 		}
 		return "观察中·×" + itoaPanel(bestN)
 	}
-	// 仅残留 last_signal、无计数：也算待观察（通常会在下次成功清掉）
-	if sig != "" {
+	// 仅残留 last_signal
+	if acc.LastSignal != "" {
+		return "恢复待观察"
+	}
+	// 刚 reenable / reopen 但还没成功请求：也算待观察（兼容升级前无 pending_observe 的旧数据）
+	switch acc.LastAction {
+	case "reenable", "reopen_foreign":
 		return "恢复待观察"
 	}
 	return "正常·可用"
@@ -1423,6 +1429,11 @@ func composeLogText(actL, action, sigL, signal, who, reason, srcL, source string
 			return "【自愈打开】" + who + " 属于非自有禁用 → 已打开；下次真实报错再判定是否冷却", "ok"
 		}
 		return "【自愈打开】非自有禁用已打开，等待下次真实报错", "ok"
+	case "maintenance":
+		if why != "" {
+			return "【立即维护】" + why, "info"
+		}
+		return "【立即维护】已执行", "info"
 	case "reopen_foreign_failed":
 		if who != "" && why != "" {
 			return "【自愈打开失败】" + who + "：" + why, "err"
@@ -1525,6 +1536,8 @@ func logActionZH(a string) string {
 		return "CPA禁用对齐"
 	case "reopen_foreign":
 		return "自愈打开"
+	case "maintenance":
+		return "立即维护"
 	case "reopen_foreign_failed":
 		return "自愈打开失败"
 	case "clear_cpa_disabled_tag":

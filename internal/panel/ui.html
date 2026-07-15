@@ -219,7 +219,7 @@ td.num,th.num{text-align:right}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.30</span>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.31</span>
         <span id="cfgTick" class="badge meta-soft">维护每30s</span>
         <span id="cfgPatrol" class="badge meta-soft">巡查关</span>
         <span id="cfgKeyBadge" class="badge meta-soft">密钥—</span>
@@ -400,7 +400,7 @@ const SIG_ZH={free_usage_429:'免费额度用尽',spending_limit_402:'消费限�
 const API="/v0/management/cpa-xai-sentry";
 const KEY_LS="cpa-xai-sentry-management-key";
 const STATE_ZH={active:'正常·可用',cooldown_quota:'429·额度冷却',cooldown_spending:'402·消费冷却',cooldown_permission:'403·权限冷却',candidate_dead:'401·候删',user_manual:'永久禁用',trashed:'垃圾箱',purged:'已清除'};
-const ACT_ZH={observe:'仅观察',cooldown:'冷却',cooldown_reassert:'冷却补关',reenable:'到期恢复',candidate:'候删',disable:'永久禁用',manual_disable:'永久禁用',manual_enable:'手动启用',trash:'进垃圾箱',wait:'等待恢复',review:'复查',manual:'永久禁用',none:'无',restore_or_purge:'恢复/清除',reopen_foreign:'自愈打开',file_disabled_sync:'CPA禁用对齐',clear_cpa_disabled_tag:'清除禁用标记',scrub_active:'清理残留',repair_cooldown_state:'修复冷却态'};
+const ACT_ZH={observe:'仅观察',cooldown:'冷却',cooldown_reassert:'冷却补关',reenable:'到期恢复',candidate:'候删',disable:'永久禁用',manual_disable:'永久禁用',manual_enable:'手动启用',trash:'进垃圾箱',wait:'等待恢复',review:'复查',manual:'永久禁用',none:'无',restore_or_purge:'恢复/清除',reopen_foreign:'自愈打开',file_disabled_sync:'CPA禁用对齐',clear_cpa_disabled_tag:'清除禁用标记',scrub_active:'清理残留',repair_cooldown_state:'修复冷却态',maintenance:'立即维护'};
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2400)}
 function esc(s){return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 // Mask local + domain labels (keep TLD). e.g. jnge8hzlj6@lovc.eu.cc → jng***j6@l***.eu.cc
@@ -544,28 +544,28 @@ function streakN(a){
   return {n, key};
 }
 function stateLabel(st, a){
-  // 状态码 + 执行动作：冷却恢复后显示「恢复待观察」，成功后再「正常·可用」
+  // 状态码 + 执行动作
+  // 额度/冷却恢复 → 恢复待观察 → 成功 → 正常·可用
+  // 403/401 阶梯未冷却 → 观察·403×N（策略进度）
   a=a||{};
   const sig=a.last_signal||'';
   if(st==='active' || st===''){
-    // 1) 冷却/候删到期恢复 → 恢复待观察（等成功请求证明干净）
-    if(a.pending_observe){
-      return {text:'恢复待观察', cls:'observe', tip:'冷却/候删已恢复接流，等待下次成功请求后变为正常·可用；连续计数仍保留供阶梯策略'};
-    }
     const stn=streakN(a);
-    // 2) 仍在接流、有连续错误计数：阶梯观察（未进冷却）
+    const k=stn.key||sig;
+    const isQuota=(k==='free_usage_429'||k==='spending_limit_402'||sig==='free_usage_429'||sig==='spending_limit_402');
+    // 恢复待观察：显式 pending / 额度 residual / 刚 reenable·reopen 且无 403 阶梯
+    if(a.pending_observe || isQuota){
+      return {text:'恢复待观察', cls:'observe', tip:'已恢复接流，等待下次成功请求后变为正常·可用；额度 residual 不显示 429×N'};
+    }
+    // 403/401 阶梯（仍在接流）
     if(stn.n>0){
-      const k=stn.key||sig;
       if(k==='permission_403') return {text:'观察·403×'+stn.n, cls:'observe', tip:'仍在接流，403 连续计数中（阶梯策略）'};
-      if(k==='free_usage_429') return {text:'观察·429×'+stn.n, cls:'observe', tip:'仍在接流，额度相关连续计数（阶梯策略）'};
-      if(k==='spending_limit_402') return {text:'观察·402×'+stn.n, cls:'observe', tip:'仍在接流，消费限额连续计数'};
       if(k==='auth_401') return {text:'观察·401×'+stn.n, cls:'observe', tip:'仍在接流，凭证异常连续计数'};
       if(k==='code:invalid-argument') return {text:'观察·参数×'+stn.n, cls:'observe', tip:'仍在接流，参数/上下文问题'};
       return {text:'观察中·×'+stn.n, cls:'observe', tip:'仍在接流，有错误连续计数'};
     }
-    // 3) 仅残留 last_signal（无计数）→ 待观察，不再显示「正常·429×1」
-    if(sig){
-      return {text:'恢复待观察', cls:'observe', tip:'已接流但有残留信号，成功请求后清为正常·可用'};
+    if(sig || a.last_action==='reenable' || a.last_action==='reopen_foreign'){
+      return {text:'恢复待观察', cls:'observe', tip:'已接流但有残留信号或刚恢复，成功请求后清为正常·可用'};
     }
     return {text:'正常·可用', cls:'active', tip:'干净正常，可接流量'};
   }
@@ -580,7 +580,6 @@ function stateLabel(st, a){
   }
   if(st==='trashed') return {text:'垃圾箱', cls:'trash', tip:'已进垃圾箱，可恢复'};
   if(st==='purged') return {text:'已清除', cls:'trash', tip:'已彻底清除'};
-  // fallback by signal when state not specific
   if(sig==='free_usage_429') return {text:'429·额度冷却', cls:'cooldown', tip:sig};
   if(sig==='spending_limit_402') return {text:'402·消费冷却', cls:'cooldown', tip:sig};
   if(sig==='permission_403') return {text:'403·权限冷却', cls:'cooldown', tip:sig};
@@ -1002,6 +1001,7 @@ function composeLogClient(e){
   if(act==='candidate') return who?(why?('【候删】'+who+' · 原因：'+why):('【候删】'+who)):'【候删】';
   if(act==='trash'||act==='delete') return who?(why?('【垃圾箱】'+who+' · 原因：'+why):('【垃圾箱】'+who)):'【垃圾箱】';
   if(act==='reopen_foreign') return who?('【自愈打开】'+who+' 属于非自有禁用 → 已打开；下次真实报错再判定是否冷却'):'【自愈打开】非自有禁用已打开';
+  if(act==='maintenance') return why?('【立即维护】'+why):'【立即维护】已执行';
   if(act==='file_disabled_sync') return who?('【CPA对齐】'+who+' 的凭证文件已禁用 → 标为「CPA已禁用」（不是面板点的永久禁用）'):'【CPA对齐】凭证文件已禁用';
   if(act==='clear_cpa_disabled_tag') return who?('【清标记】'+who+' 文件已是启用状态 → 去掉粘滞的「CPA已禁用」标签'):'【清标记】';
   if(act==='manual_disable') return '【永久禁用】'+(who||'账号')+'（不会自动恢复）';
@@ -1042,7 +1042,7 @@ async function refresh(){
     ]);
     CFG=st.config||{};
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'1.1.30');
+    document.getElementById('ver').textContent='v'+(st.version||'1.1.31');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
