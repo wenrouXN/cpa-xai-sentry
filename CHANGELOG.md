@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.83
+
+### 修 403 候删循环 + 阶梯严重度 + 候删文案
+- **根因**：`permission_403` 阶梯写成 `disable@1 + candidate@5` 时，旧 `Decide` 按「最大 streak 命中」取最后一档 → streak≥5 永远候删；候删又带 30m `recover_at` 自动 reenable 且 streak 保留 → 半小时一轮 `候删↔恢复`。面板把所有 `candidate_dead` 写死成「401·候删」。
+- **policy**：多阶梯在已达标档位中取**动作严重度最高**（disable > trash > candidate > cool > observe），同分再比 streak。
+- **guard**：仅真实 `auth_401` 候删写 `recover_at`；非 401 候删清 recover；tick 对存量非 401 候删 `candidate_hold` 取消自动恢复。
+- **panel/UI**：`candidate_dead` 按 `last_signal` 显示 `401·候删` / `403·候删` / …；筛选标签改为「候删」。
+
 ## 1.1.82
 
 ### 巡查 Guard 刷新 + 分类收紧 + 文档对齐

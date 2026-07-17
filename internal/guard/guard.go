@@ -356,6 +356,8 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 				}
 			}
 			g.State.SetAccountState(ev.AuthIndex, state.CandidateDead, "plugin_auto")
+			// SignalNone path: never stamp short recover (stops 403-style loop for split keys)
+			g.State.SetRecoverAt(ev.AuthIndex, time.Time{})
 			if g.CPA != nil && name != "" && !cpaapi.LooksLikeOpaqueID(name) {
 				_, _, _ = g.ensureAuthDisabled(ctx, name)
 			}
@@ -485,13 +487,20 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 			}
 		}
 		g.State.SetAccountState(ev.AuthIndex, state.CandidateDead, "plugin_auto")
-		// default 候删 window if no recover_at yet
-		if cur := g.State.Get(ev.AuthIndex); cur != nil && cur.RecoverAt.IsZero() {
-			sec := g.Cfg.Auth401CooldownSec
-			if sec <= 0 {
-				sec = 3600
+		// recover_at only for real auth_401 (optional retry / relogin window).
+		// Non-401 候删 (e.g. permission_403 ladder) must NOT auto reenable — that was
+		// the 403→候删→30m recover→再403→候删 loop (UI also mislabeled it 401·候删).
+		if res.Signal == match.SignalAuth401 {
+			if cur := g.State.Get(ev.AuthIndex); cur != nil && cur.RecoverAt.IsZero() {
+				sec := g.Cfg.Auth401CooldownSec
+				if sec <= 0 {
+					sec = 3600
+				}
+				g.State.SetRecoverAt(ev.AuthIndex, g.Now().Add(time.Duration(sec)*time.Second))
 			}
-			g.State.SetRecoverAt(ev.AuthIndex, g.Now().Add(time.Duration(sec)*time.Second))
+		} else {
+			// clear any cool window stamped by the paired Cooldown=true path
+			g.State.SetRecoverAt(ev.AuthIndex, time.Time{})
 		}
 		if name != "" && !cpaapi.LooksLikeOpaqueID(name) {
 			g.State.UpdateMeta(ev.AuthIndex, name, ev.Email, "")
@@ -793,6 +802,22 @@ func (g *Guard) tick(ctx context.Context, manual bool) error {
 	//   cooldown_reassert (close owned cool-down file) + reenable (open because recover_at due)
 	// which showed as 「到期恢复」and「冷却补关」in the same second.
 	//
+	// Hold non-auth_401 候删: clear accidental recover_at so tick cannot re-open them.
+	// (legacy rows entered candidate via 403 ladder with PermissionCooldownSec recover window)
+	for _, acc := range g.State.AccountsSnapshot() {
+		if acc.State != state.CandidateDead || acc.RecoverAt.IsZero() {
+			continue
+		}
+		sig := acc.LastSignal
+		if sig == "" || sig == string(match.SignalAuth401) || sig == "auth_401" {
+			continue
+		}
+		g.State.SetRecoverAt(acc.AuthIndex, time.Time{})
+		g.State.Log(state.ActionLog{
+			Auth: acc.AuthIndex, Source: "tick", Signal: sig,
+			Action: "candidate_hold", Reason: "非401候删取消自动恢复 · 避免候删循环",
+		})
+	}
 	// P2: rate-limit recover opens per tick to avoid expiry tsunami hammering CPA API.
 	const maxRecoverPerTick = 40
 	for _, acc := range g.State.AccountsSnapshot() {
@@ -801,6 +826,14 @@ func (g *Guard) tick(ctx context.Context, manual bool) error {
 		}
 		if acc.RecoverAt.IsZero() || acc.RecoverAt.After(now) {
 			continue
+		}
+		// candidate_dead only auto-recovers for real auth_401 windows
+		if acc.State == state.CandidateDead {
+			sig := acc.LastSignal
+			if sig != string(match.SignalAuth401) && sig != "auth_401" {
+				g.State.SetRecoverAt(acc.AuthIndex, time.Time{})
+				continue
+			}
 		}
 		if !g.State.CanAutoReenable(acc.AuthIndex) {
 			continue

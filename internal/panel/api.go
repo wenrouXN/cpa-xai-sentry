@@ -360,7 +360,7 @@ func suggestAction(acc *state.Account) (action, reason string) {
 	}
 	switch acc.State {
 	case state.CandidateDead:
-		return "trash", "401·候删"
+		return "trash", candidateStatusLabel(acc)
 	case state.CooldownQuota:
 		return "wait", "429·额度冷却"
 	case state.CooldownSpending:
@@ -392,6 +392,32 @@ func suggestAction(acc *state.Account) (action, reason string) {
 		return "cooldown", "402·消费冷却"
 	}
 	return "observe", ""
+}
+
+// candidateStatusLabel: 候删 row text by real last_signal (not always 401).
+func candidateStatusLabel(acc *state.Account) string {
+	if acc == nil {
+		return "候删"
+	}
+	switch acc.LastSignal {
+	case "auth_401":
+		return "401·候删"
+	case "permission_403":
+		return "403·候删"
+	case "free_usage_429":
+		return "429·候删"
+	case "spending_limit_402":
+		return "402·候删"
+	case "":
+		return "候删"
+	default:
+		// compact: strip common prefixes
+		sig := acc.LastSignal
+		if len(sig) > 24 {
+			sig = sig[:24]
+		}
+		return sig + "·候删"
+	}
 }
 
 // inventoryFromCPA counts xAI auth files enabled/disabled (cached ~20s).
@@ -701,7 +727,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			// broad match: email/file/auth/state/signal/action/reason/quota text/tokens
 			stZH := map[string]string{
 				"active": "正常·可用", "cooldown_quota": "429·额度冷却", "cooldown_spending": "402·消费冷却",
-				"cooldown_permission": "403·权限冷却", "candidate_dead": "401·候删", "user_manual": "永久禁用",
+				"cooldown_permission": "403·权限冷却", "candidate_dead": "候删", "user_manual": "永久禁用",
 				"trashed": "垃圾箱", "purged": "已清除",
 			}
 			blob := strings.ToLower(strings.Join([]string{
@@ -976,7 +1002,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			{"value": "cooldown_quota", "label": "429·额度冷却", "count": summary["cooldown_quota"]},
 			{"value": "cooldown_spending", "label": "402·消费冷却", "count": summary["cooldown_spending"]},
 			{"value": "cooldown_permission", "label": "403·权限冷却", "count": summary["cooldown_permission"]},
-			{"value": "candidate_dead", "label": "401·候删", "count": summary["candidate"]},
+			{"value": "candidate_dead", "label": "候删", "count": summary["candidate"]},
 			{"value": "user_manual", "label": "永久禁用", "count": summary["user_manual"]},
 			{"value": "cpa_disabled", "label": "CPA已禁用", "count": summary["cpa_disabled"]},
 			{"value": "trashed", "label": "垃圾箱", "count": summary["trashed"]},

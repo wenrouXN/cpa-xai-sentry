@@ -88,10 +88,23 @@ func decidePolicy(cfg sentrycfg.Config, in Input, p state.ErrorPolicy) Action {
 		return a
 	}
 	tiers := p.NormalizedEscalations()
-	// pick highest tier whose streak threshold is met
+	// Among tiers with streak_actual >= rule.streak, pick the most severe action
+	// (disable > trash > candidate > cool > observe). Tie-break: higher streak.
+	// Prevents inverted ladders like disable@1 + candidate@5 from demoting to 候删 forever.
 	var matched *state.EscalationRule
 	for i := range tiers {
-		if in.Streak >= tiers[i].Streak {
+		if in.Streak < tiers[i].Streak {
+			continue
+		}
+		if matched == nil {
+			matched = &tiers[i]
+			continue
+		}
+		if actionSeverity(tiers[i].Action) > actionSeverity(matched.Action) {
+			matched = &tiers[i]
+			continue
+		}
+		if actionSeverity(tiers[i].Action) == actionSeverity(matched.Action) && tiers[i].Streak > matched.Streak {
 			matched = &tiers[i]
 		}
 	}
@@ -103,6 +116,24 @@ func decidePolicy(cfg sentrycfg.Config, in Input, p state.ErrorPolicy) Action {
 	a.CooldownSec = matched.CooldownSec
 	// never_trash only from panel/policy field — no hard key ban
 	return applyActionTier(cfg, a, errorsig.Action(matched.Action), p.NeverTrash, in, matched.Streak)
+}
+
+// actionSeverity ranks policy actions for multi-tier match (higher = stronger).
+func actionSeverity(act string) int {
+	switch errorsig.Action(act) {
+	case errorsig.ActionDisable:
+		return 50
+	case errorsig.ActionTrash:
+		return 40
+	case errorsig.ActionCandidate:
+		return 30
+	case errorsig.ActionCooldown:
+		return 20
+	case errorsig.ActionObserve:
+		return 10
+	default:
+		return 0
+	}
 }
 
 func applyActionTier(cfg sentrycfg.Config, a Action, act errorsig.Action, neverTrash bool, in Input, th int) Action {
