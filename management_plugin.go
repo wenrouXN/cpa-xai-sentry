@@ -67,6 +67,14 @@ func buildManagementRegistration() managementRegistration {
 			{Method: "POST", Path: "/" + pluginID + "/run-tick", Description: "手动 tick"},
 			{Method: "POST", Path: "/" + pluginID + "/patrol/start", Description: "立即主动巡查"},
 			{Method: "GET", Path: "/" + pluginID + "/patrol/status", Description: "巡查状态/日志"},
+			{Method: "GET", Path: "/" + pluginID + "/register/status", Description: "注册状态/健康"},
+			{Method: "POST", Path: "/" + pluginID + "/register/test", Description: "注册后端连通测试"},
+			{Method: "POST", Path: "/" + pluginID + "/register/start", Description: "手动启动注册"},
+			{Method: "POST", Path: "/" + pluginID + "/register/stop", Description: "停止注册任务"},
+			{Method: "GET", Path: "/" + pluginID + "/register/jobs", Description: "注册任务历史"},
+			{Method: "POST", Path: "/" + pluginID + "/register/success-reset", Description: "重置近窗注册成功率"},
+			{Method: "POST", Path: "/" + pluginID + "/register/relogin", Description: "8788本地账号重登"},
+			{Method: "GET", Path: "/" + pluginID + "/register/relogin/status", Description: "重登任务状态"},
 			{Method: "GET", Path: "/" + pluginID + "/health", Description: "健康检查"},
 			{Method: "POST", Path: "/" + pluginID + "/toggle", Description: "切换开关"},
 			{Method: "POST", Path: "/" + pluginID + "/preset", Description: "应用预设"},
@@ -77,6 +85,7 @@ func buildManagementRegistration() managementRegistration {
 			{Method: "GET", Path: "/" + pluginID + "/metrics", Description: "用量地板/回补指标"},
 			{Method: "POST", Path: "/" + pluginID + "/accounts/bulk", Description: "筛选账号批量禁用/启用/垃圾箱/冷却"},
 			{Method: "POST", Path: "/" + pluginID + "/accounts/cooldown-suggested", Description: "对建议冷却账号一键执行冷却"},
+			{Method: "GET", Path: "/" + pluginID + "/accounts/recent", Description: "账号最近请求时间线（成功+失败）"},
 		},
 	}
 }

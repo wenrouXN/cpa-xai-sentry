@@ -161,8 +161,7 @@ tr:hover td{background:#f5f9ff}
 .sig-main{font-weight:700;font-size:12px}
 .sig-sub{color:var(--muted);font-size:10.5px;margin-top:2px}
 .mask-btn.active{background:#ecf5ff;border-color:#b3d8ff;color:#337ecc}
-.err-pop{position:fixed;z-index:50;display:none;width:min(560px,calc(100vw - 24px));max-height:min(72vh,560px);overflow:auto;background:#fff;border:1px solid #0f172a18;border-radius:12px;box-shadow:0 18px 50px #0f172a2e;padding:0}
-.err-pop.open{display:block}
+/* err-pop early block removed — see unified */
 .err-pop .ep-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px 14px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,#fff,#fafbfc)}
 .err-pop .ep-code{font-size:15px;font-weight:800;color:#c45656;display:flex;align-items:center;gap:8px}
 .err-pop .ep-code .fail-dot{width:8px;height:8px;border-radius:50%;background:#f56c6c}
@@ -173,14 +172,56 @@ tr:hover td{background:#f5f9ff}
 .err-pop .ep-kv b{color:var(--muted);font-weight:600}
 .err-pop .ep-json{background:#0b1220;color:#e2e8f0;border-radius:10px;padding:10px 12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
 .err-pop .ep-msg{color:#fbbf24;font-weight:600;margin-bottom:8px;white-space:pre-wrap}
+.ep-timeline{display:flex;flex-direction:column;gap:0;margin:0 0 4px}
+.ep-tl-row{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid #eef2f7}
+.ep-tl-row:last-child{border-bottom:0}
+.ep-tl-dot{width:10px;height:10px;border-radius:50%;margin-top:4px;flex-shrink:0;background:#22c55e;box-shadow:0 0 0 3px #22c55e22}
+.ep-tl-row.fail .ep-tl-dot{background:#ef4444;box-shadow:0 0 0 3px #ef444422}
+.ep-tl-row.act .ep-tl-dot{background:#3b82f6;box-shadow:0 0 0 3px #3b82f622}
+.ep-tl-main{flex:1;min-width:0}
+.ep-tl-line1{font-size:12px;color:#0f172a;line-height:1.35}
+.ep-tl-sub{font-size:11px;color:#64748b;margin-top:2px;word-break:break-all}
+.ep-tl-err{font-size:11.5px;color:#b42318;margin-top:3px;line-height:1.4;word-break:break-word}
 .policy-log{margin-top:6px;min-height:168px;max-height:280px;overflow:auto;background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:0}
 .policy-log table{width:100%;border-collapse:collapse;font-size:11.5px;table-layout:auto}
 .policy-log th,.policy-log td{padding:6px 8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:middle;line-height:18px}
 .policy-log th{position:sticky;top:0;background:#f1f5f9;color:var(--muted);font-weight:700;z-index:1;white-space:nowrap}
 .policy-log td:nth-child(1),.policy-log td:nth-child(2),.policy-log td:nth-child(3){white-space:nowrap;max-width:180px;overflow:hidden;text-overflow:ellipsis}
-.policy-log td.ops{white-space:nowrap;overflow:visible;min-width:168px}
-.policy-log .ops-wrap{display:inline-flex;flex-wrap:nowrap;gap:4px;align-items:center}
+.policy-log td:nth-child(4){white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:#475569}
+.policy-log td.ops{white-space:nowrap;overflow:visible;min-width:220px}
+.policy-log .ops-wrap{display:inline-flex;flex-wrap:wrap;gap:4px;align-items:center}
 .policy-log .ops-wrap .xs{padding:2px 6px;font-size:11px}
+.policy-log td.tap{cursor:pointer;color:#175cd3!important;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px;-webkit-tap-highlight-color:transparent;font-weight:600}
+.policy-log td.tap:hover{background:#eff8ff;color:#0b4ea2!important}
+.policy-log td.tap:active{background:#dbeafe}
+.policy-log td.msg-cell{max-width:280px;color:#0f172a;font-weight:600}
+
+/* === unified error popup (mask BELOW dialog) === */
+.err-pop-mask{position:fixed;inset:0;z-index:900;background:#0f172a66;display:none}
+.err-pop-mask.open{display:block}
+.err-pop{
+  position:fixed;z-index:910;display:none;
+  width:min(560px,calc(100vw - 24px));
+  max-height:min(78vh,640px);
+  overflow:hidden; /* head fixed, body scrolls */
+  background:#fff;border:1px solid #0f172a18;border-radius:12px;
+  box-shadow:0 18px 50px #0f172a33;padding:0;
+  left:50%;top:50%;transform:translate(-50%,-50%);
+  pointer-events:auto;
+}
+.err-pop.open{display:flex;flex-direction:column}
+.err-pop .ep-head{flex:0 0 auto;display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px 14px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,#fff,#fafbfc)}
+.err-pop .ep-body{flex:1 1 auto;overflow:auto;-webkit-overflow-scrolling:touch;padding:12px 14px;max-height:none}
+.err-pop.mobile-sheet{
+  left:8px!important;right:8px!important;top:auto!important;bottom:12px!important;
+  width:auto!important;max-height:min(85vh,720px)!important;transform:none!important;
+  border-radius:14px 14px 10px 10px
+}
+@media(max-width:700px){
+  .err-pop{width:calc(100vw - 16px);max-height:min(85vh,720px);left:8px;right:8px;top:auto;bottom:12px;transform:none;border-radius:14px 14px 10px 10px}
+}
+
+/* err-pop mid block removed — see unified */
 .policy-log .pl-empty{color:#94a3b8;padding:12px;text-align:center}
 .shape-box{margin:6px 0 8px;padding:8px;border:1px dashed #91caff;border-radius:8px;background:#f5faff}
 .shape-row{display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #e8eef7}
@@ -191,18 +232,64 @@ tr:hover td{background:#f5f9ff}
 .err-title .err-http{color:#64748b;font-weight:600;font-size:12px;margin-left:6px}
 .err-controls label{display:inline-flex;align-items:center;gap:6px}
 .err-controls .sw-mini{transform:scale(.85);transform-origin:left center}
-.esc-box{margin-top:8px;padding:8px;border:1px solid var(--border);border-radius:8px;background:#fafcff}
-.esc-row{display:grid;grid-template-columns:70px 1fr 90px 28px;gap:6px;align-items:center;margin-bottom:6px}
-.esc-row label{font-size:10.5px;color:var(--muted);font-weight:700}
+.esc-box{margin-top:8px;padding:10px;border:1px solid var(--border);border-radius:8px;background:#fafcff}
+.esc-row{display:grid;grid-template-columns:96px minmax(140px,1.2fr) minmax(100px,120px) 36px;gap:10px;align-items:end;margin-bottom:8px;padding:8px;background:#fff;border:1px solid #e8eef7;border-radius:8px}
+.esc-row label{display:flex;flex-direction:column;gap:4px;font-size:10.5px;color:var(--muted);font-weight:700;min-width:0}
+.esc-row .esc-n,.esc-row .esc-cd{width:100%;min-width:0;box-sizing:border-box}
+.esc-row .esc-act{width:100%;min-width:0}
+.esc-row .esc-cd-wrap.hidden{display:none!important}
+.esc-row .esc-del{align-self:end;height:32px;margin-bottom:1px}
 .esc-tools{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px}
-.err-actions-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.err-actions-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;align-items:center}
 .tag.danger{background:#fef3f2;color:#b42318;border-color:#fecdca}
-.err-card{border:1px solid var(--border);border-radius:12px;background:#fff;padding:10px 12px;margin-bottom:8px}
+.err-card{border:1px solid var(--border);border-radius:12px;background:#fff;padding:10px 12px;margin-bottom:8px;border-left:4px solid #94a3b8}
+.err-card.k-429{background:linear-gradient(180deg,#fffbeb 0%,#fff 56px);border-left-color:#f59e0b}
+.err-card.k-402{background:linear-gradient(180deg,#fff7ed 0%,#fff 56px);border-left-color:#ea580c}
+.err-card.k-403{background:linear-gradient(180deg,#f5f3ff 0%,#fff 56px);border-left-color:#7c3aed}
+.err-card.k-401{background:linear-gradient(180deg,#fef2f2 0%,#fff 56px);border-left-color:#ef4444}
+.err-card.k-404{background:linear-gradient(180deg,#f1f5f9 0%,#fff 56px);border-left-color:#64748b}
+.err-card.k-unmatched{background:linear-gradient(180deg,#f8fafc 0%,#fff 56px);border-left-color:#94a3b8;border-style:solid dashed solid solid}
+.err-card.k-other{background:linear-gradient(180deg,#f0f9ff 0%,#fff 56px);border-left-color:#0ea5e9}
+.err-card.collapsed{padding-bottom:8px}
+.err-card.collapsed .err-body{display:none}
+.err-card .err-chev{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid var(--border);border-radius:8px;background:#f8fafc;color:#475569;font-size:12px;cursor:pointer;flex-shrink:0;user-select:none;-webkit-tap-highlight-color:transparent}
+.err-card.collapsed .err-chev{transform:rotate(-90deg)}
+.err-card .err-head{cursor:pointer}
 .err-head{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start}
 .err-meta{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
-.err-controls{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) auto;gap:8px;align-items:end;margin-top:10px}
-@media(max-width:900px){.err-controls{grid-template-columns:repeat(2,minmax(0,1fr))}}
-.err-controls label{display:flex;flex-direction:column;gap:4px;font-size:10.5px;color:var(--muted);font-weight:700}
+/* mobile: tap hint for sample (no hover title) */
+.err-sample-btn{display:inline-flex;align-items:center;gap:4px;border:1px solid #b3d8ff;background:#ecf5ff;color:#175cd3;border-radius:999px;padding:3px 10px;font-size:11px;font-weight:700;cursor:pointer;line-height:1.3;-webkit-tap-highlight-color:transparent}
+.err-sample-btn:active{background:#d9ecff}
+.err-submsg{margin-top:4px;font-size:11.5px;color:#475569;line-height:1.4;word-break:break-word}
+.err-submsg .mono{color:#64748b;font-size:11px}
+.err-title-row{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.err-title-row .err-title{flex:1;min-width:0;cursor:pointer}
+/* err-pop late block removed — see unified */
+.err-controls{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin-top:10px}
+.err-controls .ctrl-en{display:inline-flex;align-items:center;gap:8px;align-self:center}
+.err-controls .ctrl-en .lbl{font-size:12px;font-weight:700;color:#334155}
+.err-controls .ctrl-field{display:flex;flex-direction:row;align-items:center;gap:6px;font-size:11px;color:var(--muted);font-weight:700;min-width:0}
+.err-controls .ctrl-field > span{white-space:nowrap;flex-shrink:0}
+.err-controls .ctrl-field input[type=text],.err-controls .ctrl-field select{
+  min-width:120px;max-width:220px;height:30px;padding:4px 8px;border:1px solid var(--border);
+  border-radius:8px;background:#fff;font-size:12px;font-weight:600;color:#0f172a;box-sizing:border-box
+}
+.err-controls .ctrl-field input.pol-label{min-width:150px;font-weight:700}
+.err-controls .ctrl-field input.pol-dmsg{min-width:170px}
+.err-controls .ctrl-field select.cm{min-width:150px}
+.err-controls .ctrl-save{margin-left:auto;align-self:center}
+.err-controls .btn-unclass{
+  white-space:nowrap;background:#fef3c7!important;border-color:#fbbf24!important;color:#92400e!important;font-weight:700
+}
+.err-controls .btn-unclass:hover,.err-controls .btn-unclass:active{background:#fde68a!important}
+@media(max-width:900px){
+  .err-controls .ctrl-save{margin-left:0}
+  .err-controls .ctrl-field{width:100%}
+  .err-controls .ctrl-field input[type=text],.err-controls .ctrl-field select{flex:1;max-width:none}
+  .esc-row{grid-template-columns:1fr 1fr;gap:8px}
+  .esc-row .esc-del{grid-column:1/-1;justify-self:end}
+  .esc-row .esc-cd-wrap{grid-column:1/-1}
+}
 .err-empty{color:var(--muted);padding:16px;text-align:center}
 .tabpanel[hidden]{display:none!important}
 select.act{min-width:100px}input.num{width:70px}
@@ -219,7 +306,7 @@ td.num,th.num{text-align:right}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.33</span>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.82</span>
         <span id="cfgTick" class="badge meta-soft">维护每30s</span>
         <span id="cfgPatrol" class="badge meta-soft">巡查关</span>
         <span id="cfgKeyBadge" class="badge meta-soft">密钥—</span>
@@ -263,6 +350,7 @@ td.num,th.num{text-align:right}
   <div class="tabs" role="tablist">
     <button type="button" class="active" data-tab="accounts" onclick="switchTab('accounts')">账号实况</button>
     <button type="button" data-tab="patrol" onclick="switchTab('patrol')">巡查</button>
+    <button type="button" data-tab="register" onclick="switchTab('register')">注册</button>
     <button type="button" data-tab="errors" onclick="switchTab('errors')">错误策略</button>
     <button type="button" data-tab="trash" onclick="switchTab('trash')">垃圾箱</button>
   </div>
@@ -314,36 +402,49 @@ td.num,th.num{text-align:right}
       <div class="patrol-head">
         <div>
           <b>巡查中心</b>
-          <span class="meta">会真实请求 xAI，按返回处置 · 全量=哨兵未禁用（可接流）· 仅冷却=哨兵冷却中</span>
+          <span class="meta">会真实请求 xAI · 范围：全部 / 启用 / 冷却 / 永禁 / 候删 / 垃圾箱 · 定时用配置「自动范围」</span>
         </div>
-        <div class="row">
-          <button class="xs primary" onclick="patrolStart('full')" title="探测哨兵侧未禁用（可接流）的号；CPA 文件是否 disabled 不挡探测；按真实 HTTP 结果处置">手动全量</button>
-          <button class="xs warn" onclick="patrolStart('cooldown')" title="只探测当前冷却中的账号">手动查冷却</button>
+        <div class="row" style="flex-wrap:wrap;gap:6px">
+          <button class="xs" onclick="patrolStart('all')" title="探测所有有 token 的 xAI（含冷却/永禁）">手动·全部</button>
+          <button class="xs primary" onclick="patrolStart('enabled')" title="仅哨兵未禁用（可接流）的号；旧名 full">手动·启用</button>
+          <button class="xs warn" onclick="patrolStart('cooldown')" title="仅当前冷却中的账号">手动·冷却</button>
+          <button class="xs danger" onclick="patrolStart('permanent')" title="只扫描永久禁用号：探活200会恢复接流；报错仍走错误策略">手动·永久禁用</button>
+          <button class="xs danger" onclick="patrolStart('candidate')" title="仅候删（candidate_dead）账号">手动·候删</button>
+          <button class="xs" onclick="patrolStart('trash')" title="仅垃圾箱账号（有 token 才探）">手动·垃圾箱</button>
           <button type="button" class="patrol-toggle" id="btnPatrolCfg" onclick="togglePatrolCfg()" title="展开/收起巡查参数">配置 ▾</button>
         </div>
       </div>
       <div class="patrol-schedule" id="patrolSchedule">巡查：上次 - · 下次 - · 定时巡查已关闭</div>
       <div class="patrol-cfg" id="patrolCfgPanel">
+        <div class="meta" style="font-weight:700;margin:2px 0 6px">① 定时巡查</div>
         <div class="patrol-grid">
-          <label>周期(秒)<input id="pInterval" type="number" min="60" step="60" value="3600"/></label>
+          <label>周期(秒)<input id="pInterval" type="number" min="60" step="60" value="3600" title="定时巡查间隔"/></label>
+          <label>自动范围
+            <select id="pMode" title="定时巡查扫哪些号">
+              <option value="all">全部</option>
+              <option value="enabled" selected>启用（可接流）</option>
+              <option value="cooldown">冷却</option>
+              <option value="permanent">永久禁用（探活可恢复）</option>
+              <option value="candidate">候删</option>
+              <option value="trash">垃圾箱</option>
+            </select>
+          </label>
+        </div>
+        <div class="meta" style="font-weight:700;margin:12px 0 6px">② 探测参数</div>
+        <div class="patrol-grid">
           <label>超时(秒)<input id="pTimeout" type="number" min="3" step="1" value="15"/></label>
           <label>并发<input id="pConc" type="number" min="1" max="64" step="1" value="8"/></label>
           <label>每轮上限<input id="pBatch" type="number" min="0" step="1" value="500"/></label>
           <label>模型<input id="pModel" type="text" value="grok-4.5"/></label>
           <label>代理URL<input id="pProxy" type="text" placeholder="可选 http://..."/></label>
-          <label>维护间隔(秒)<input id="pTick" type="number" min="5" step="1" value="30" title="tick_seconds"/></label>
-          <label>403冷却(秒)<input id="p403" type="number" min="60" step="60" value="1800"/></label>
-          <label>401冷却(秒)<input id="p401" type="number" min="60" step="60" value="3600"/></label>
-          <label>最长恢复(秒)<input id="pMaxReset" type="number" min="0" step="60" value="86400"/></label>
-          <label class="sw" style="flex-direction:row;align-items:center;gap:8px;padding-top:18px" title="非自有禁用是否自动打开">
-            <span>自愈打开非自有</span>
-            <input id="pReopen" type="checkbox"/>
-          </label>
+        </div>
+        <div class="meta" style="margin:10px 0 4px;line-height:1.45">
+          冷却/永禁阶梯由「错误策略」决定，不在巡查里配。维护 tick 与 401/403 默认秒数已内置，无需在此改。
         </div>
         <div class="row" style="margin-top:4px">
           <button class="xs primary" onclick="savePatrolCfg()" title="写入 runtime-overrides.json，重启不丢">保存并持久化</button>
           <button class="xs" onclick="showPersist()" title="查看磁盘上的 overrides / 路径">查看持久化</button>
-          <span class="meta" id="persistHint">改完点保存，会写入磁盘</span>
+          <span class="meta" id="persistHint">改完点保存</span>
         </div>
         <pre class="meta" id="persistBox" style="display:none;margin-top:8px;max-height:220px;overflow:auto;background:#0b1220;color:#dbe7ff;padding:8px;border-radius:8px;white-space:pre-wrap"></pre>
       </div>
@@ -357,6 +458,87 @@ td.num,th.num{text-align:right}
       </div>
     </div>
     <div class="job-list" id="patrolJobs"><div class="meta" style="padding:8px">暂无巡查任务记录</div></div>
+  </div>
+
+
+  <div id="tab-register" class="tabpanel card" hidden>
+    <h2>
+      <span>注册</span>
+      <span class="meta" id="regMeta">—</span>
+      <span class="actions" style="margin-left:auto;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <label class="sw" title="总开关：关闭后手动/保底/定时都不跑"><span class="lbl">启用注册</span><span class="switch"><input id="rEnabledTop" type="checkbox" onchange="onRegTopToggle()"/><span class="slider"></span></span></label>
+        <label class="sw" title="可接+冷却低于阈值时自动补号"><span class="lbl">保底注册</span><span class="switch"><input id="rFloorTop" type="checkbox" onchange="onRegTopToggle()"/><span class="slider"></span></span></label>
+        <label class="sw" title="按固定周期注册，与保底独立"><span class="lbl">定时注册</span><span class="switch"><input id="rAutoTop" type="checkbox" onchange="onRegTopToggle()"/><span class="slider"></span></span></label>
+      </span>
+    </h2>
+    <div class="patrol-box" style="margin-top:0">
+      <div class="patrol-head">
+        <div>
+          <b>注册中心</b>
+          <span class="meta">对接云端注册后端 · 测活请用「巡查」· 重登在错误策略操作列</span>
+        </div>
+        <div class="row" style="flex-wrap:wrap;gap:6px">
+          <button class="xs primary" onclick="registerStart()" title="按数量触发注册">手动·注册</button>
+          <button class="xs" onclick="registerTest()" title="登录 + session + CPA 通道">测试连接</button>
+          <button class="xs warn" onclick="registerStop()" title="停止当前注册任务">停止</button>
+          <button type="button" class="patrol-toggle" id="btnRegCfg" onclick="toggleRegCfg()" title="展开/收起配置">配置 ▾</button>
+        </div>
+      </div>
+      <div class="row" style="flex-wrap:wrap;gap:6px;margin:6px 0" id="regHealthRow">
+        <span class="badge meta-soft" id="rhBackend" title="后端连通">后端·—</span>
+        <span class="badge meta-soft" id="rhSession" title="管理会话">会话·—</span>
+        <span class="badge meta-soft" id="rhCPA" title="CPA 上传通道">CPA通道·—</span>
+        <span class="badge meta-soft" id="rhRate" title="点击可重置近窗成功率统计" style="cursor:pointer" onclick="resetRegisterSuccessWindow()">近窗成功率·—</span>
+      </div>
+      <div class="patrol-schedule" id="regSchedule">注册：未启用</div>
+      <div class="patrol-cfg" id="regCfgPanel">
+        <div class="meta" style="font-weight:700;margin:4px 0 6px">① 连接</div>
+        <div class="patrol-grid">
+          <label>后端 URL<input id="rBase" type="text" placeholder="http://192.168.1.68:8788"/></label>
+          <label>管理路径<input id="rAdmin" type="text" value="/admin"/></label>
+          <label>管理密码<input id="rPass" type="password" placeholder="未改则留空" autocomplete="new-password"/></label>
+          <label>超时(秒)<input id="rTimeout" type="number" min="5" step="1" value="30"/></label>
+          <label class="sw" style="flex-direction:row;align-items:center;gap:8px;padding-top:18px" title="只演练不真下发"><span>dry-run</span><input id="rDry" type="checkbox"/></label>
+        </div>
+        <div class="meta" style="font-weight:700;margin:12px 0 6px">② 手动注册</div>
+        <div class="patrol-grid">
+          <label>默认数量<input id="rDefCount" type="number" min="1" step="1" value="10"/></label>
+          <label>单次上限<input id="rMaxCount" type="number" min="1" step="1" value="50"/></label>
+        </div>
+        <div class="meta" style="font-weight:700;margin:12px 0 6px">③ 保底注册 <span class="meta" style="font-weight:500">（可接 + 冷却 &lt; 阈值 → 自动补号，补完后再判，高于阈值则停）</span></div>
+        <div class="patrol-grid">
+          <label>池子阈值<input id="rFloorMin" type="number" min="1" step="1" value="100" title="可接流量+冷却中 的合计下限"/></label>
+          <label>每次补号数<input id="rFloorCount" type="number" min="1" step="1" value="10" title="每次触发注册多少个"/></label>
+          <label>补号间隔(秒)<input id="rFloorInt" type="number" min="60" step="60" value="600" title="两次保底补号之间的最小间隔"/></label>
+        </div>
+        <div class="meta" style="font-weight:700;margin:12px 0 6px">④ 定时注册 <span class="meta" style="font-weight:500">（固定周期，与保底独立；有任务进行中/通道异常/成功率过低会自动跳过）</span></div>
+        <div class="patrol-grid">
+          <label>周期(秒)<input id="rAutoInt" type="number" min="60" step="60" value="3600"/></label>
+          <label>每次数量<input id="rAutoCount" type="number" min="1" step="1" value="10"/></label>
+        </div>
+        <div class="meta" style="font-weight:700;margin:12px 0 6px">⑤ 重登</div>
+        <div class="patrol-grid">
+          <label class="sw" style="flex-direction:row;align-items:center;gap:8px;padding-top:18px" title="云端有密码号；auth_401 候删前先重登"><span>401先重登</span><input id="rRelog401" type="checkbox" checked/></label>
+          <label>重登最大次数<input id="rRelogMax" type="number" min="1" step="1" value="2"/></label>
+          <label>重登并发<input id="rRelogConc" type="number" min="1" max="10" step="1" value="2"/></label>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <button class="xs primary" onclick="saveRegCfg()" title="写入 runtime-overrides + 宿主配置">保存并持久化</button>
+          <span class="meta" id="regPersistHint">顶部开关改完也会写入；密码仅填写时更新</span>
+        </div>
+        <div class="meta" style="margin-top:8px;line-height:1.45" id="regReloginNote">重登说明：—</div>
+      </div>
+      <div class="meta" id="regStatus">空闲</div>
+      <div class="patrol-progress" id="regProgress" style="display:block;margin-top:8px">
+        <div class="patrol-bar-wrap"><div class="patrol-bar" id="regBar"></div></div>
+        <div class="patrol-bar-meta">
+          <span id="regProgText">0 / 0</span>
+          <span id="regProgPct">0%</span>
+        </div>
+      </div>
+      <!-- 任务明细在下方 job-card 里折叠查看，与巡查一致 -->
+    </div>
+    <div class="job-list" id="regJobs"><div class="meta" style="padding:8px">暂无注册任务记录</div></div>
   </div>
 
   <div id="tab-errors" class="tabpanel card" hidden>
@@ -390,6 +572,7 @@ td.num,th.num{text-align:right}
   </div><!-- main-grid -->
 </div>
 <div class="toast" id="toast"></div>
+<div class="err-pop-mask" id="errPopMask" onclick="closeErrPop()"></div>
 <div class="err-pop" id="errPop" role="dialog" aria-modal="true"></div>
 <script>
 let CFG={}, timer=null, LAST_LOGS=[], LAST_ACCOUNTS=[], ERRORS=[], CURRENT_TAB='accounts';
@@ -511,7 +694,9 @@ function fillStateFilter(filters, summary){
     list=[
       {value:'', label:'全部状态', count:summary.total||0},
       {value:'active_clean', label:'正常·可用', count:summary.active_clean||0},
-      {value:'active_watch', label:'恢复待观察', count:summary.active_watch||0},
+      {value:'active_watch', label:'待观察（全部）', count:summary.active_watch||0},
+      {value:'active_watch_idle', label:'正常·待观察', count:summary.active_watch_idle||0},
+      {value:'active_watch_signal', label:'正常·有信号观察', count:summary.active_watch_signal||0},
       {value:'cooldown_quota', label:'429·额度冷却', count:summary.cooldown_quota||0},
       {value:'cooldown_spending', label:'402·消费冷却', count:summary.cooldown_spending||0},
       {value:'cooldown_permission', label:'403·权限冷却', count:summary.cooldown_permission||0},
@@ -543,29 +728,43 @@ function streakN(a){
   Object.keys(s).forEach(k=>{ const v=Number(s[k]||0); if(v>n){ n=v; key=k; } });
   return {n, key};
 }
+function recoverWatchLabel(sig){
+  if(sig==='free_usage_429') return {text:'429·恢复待观察', tip:'额度冷却/残留后已接流，等一次成功请求清为正常·可用'};
+  if(sig==='spending_limit_402') return {text:'402·恢复待观察', tip:'消费冷却后已接流，等一次成功请求清为正常·可用'};
+  if(sig==='permission_403') return {text:'403·恢复待观察', tip:'权限相关恢复后观察中'};
+  if(sig==='auth_401') return {text:'401·恢复待观察', tip:'凭证相关恢复后观察中'};
+  if(sig==='code:invalid-argument') return {text:'参数·恢复待观察', tip:'参数类问题恢复后观察中'};
+  return {text:'正常·待观察', tip:'已接流，等待成功请求确认干净'};
+}
 function stateLabel(st, a){
-  // 状态码 + 执行动作
-  // 额度/冷却恢复 → 恢复待观察 → 成功 → 正常·可用
-  // 403/401 阶梯未冷却 → 观察·403×N（策略进度）
+  // 额度/冷却恢复 → 429·恢复待观察 / 正常·待观察 → 成功 → 正常·可用
+  // 403/401 阶梯未冷却 → 正常·观察·403×N
   a=a||{};
   const sig=a.last_signal||'';
   if(st==='active' || st===''){
     const stn=streakN(a);
     const k=stn.key||sig;
     const isQuota=(k==='free_usage_429'||k==='spending_limit_402'||sig==='free_usage_429'||sig==='spending_limit_402');
-    // 恢复待观察：显式 pending / 额度 residual / 刚 reenable·reopen 且无 403 阶梯
-    if(a.pending_observe || isQuota){
-      return {text:'恢复待观察', cls:'observe', tip:'已恢复接流，等待下次成功请求后变为正常·可用；额度 residual 不显示 429×N'};
+    if(a.pending_observe){
+      const r=recoverWatchLabel(k||sig);
+      return {text:r.text, cls:'observe', tip:r.tip};
     }
-    // 403/401 阶梯（仍在接流）
+    if(isQuota){
+      const r=recoverWatchLabel(k||sig||'free_usage_429');
+      return {text:r.text, cls:'observe', tip:r.tip};
+    }
     if(stn.n>0){
-      if(k==='permission_403') return {text:'观察·403×'+stn.n, cls:'observe', tip:'仍在接流，403 连续计数中（阶梯策略）'};
-      if(k==='auth_401') return {text:'观察·401×'+stn.n, cls:'observe', tip:'仍在接流，凭证异常连续计数'};
-      if(k==='code:invalid-argument') return {text:'观察·参数×'+stn.n, cls:'observe', tip:'仍在接流，参数/上下文问题'};
-      return {text:'观察中·×'+stn.n, cls:'observe', tip:'仍在接流，有错误连续计数'};
+      if(k==='permission_403') return {text:'正常·观察·403×'+stn.n, cls:'observe', tip:'仍在接流，403 连续计数中（阶梯策略）'};
+      if(k==='auth_401') return {text:'正常·观察·401×'+stn.n, cls:'observe', tip:'仍在接流，凭证异常连续计数'};
+      if(k==='code:invalid-argument') return {text:'正常·观察·参数×'+stn.n, cls:'observe', tip:'仍在接流，参数/上下文问题'};
+      return {text:'正常·观察·×'+stn.n, cls:'observe', tip:'仍在接流，有错误连续计数'};
     }
-    if(sig || a.last_action==='reenable' || a.last_action==='reopen_foreign'){
-      return {text:'恢复待观察', cls:'observe', tip:'已接流但有残留信号或刚恢复，成功请求后清为正常·可用'};
+    if(sig){
+      const r=recoverWatchLabel(sig);
+      return {text:r.text, cls:'observe', tip:r.tip};
+    }
+    if(a.last_action==='reenable' || a.last_action==='reopen_foreign' || a.last_action==='heal_active_file'){
+      return {text:'正常·待观察', cls:'observe', tip:'刚恢复/打开，等成功请求后变为正常·可用'};
     }
     return {text:'正常·可用', cls:'active', tip:'干净正常，可接流量'};
   }
@@ -595,13 +794,18 @@ function actionTag(a){const cls=({cooldown:'cooldown',candidate:'candidate',tras
 function switchTab(name){
   CURRENT_TAB=name;
   document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
-  ['accounts','patrol','errors','trash'].forEach(n=>{
+  ['accounts','patrol','register','errors','trash'].forEach(n=>{
     const el=document.getElementById('tab-'+n);
     if(el) el.hidden=(n!==name);
   });
-  if(name==='errors') loadErrors(!ERR_RENDERED);
+  if(name==='errors'){
+    // entering tab: force re-render collapsed (no expand cache)
+    ERR_RENDERED=false;
+    loadErrors(true);
+  }
   if(name==='trash') refreshTrashOnly();
   if(name==='patrol') patrolPoll();
+  if(name==='register'){ fillRegForm(CFG); registerPoll(true); }
   renderLogs(LAST_LOGS);
 }
 function debouncedRefresh(){clearTimeout(timer); timer=setTimeout(refresh,220)}
@@ -631,9 +835,9 @@ function renderKPIs(s, trashCount, cool, inv, usage){
     ['候删', hold, 'danger', '候选'+candOnly+'+箱'+trashed],
     ['禁用', residual, 'danger', '永禁'+permanent+(other?('+未归类'+other):'')],
     ['xAI 总量', xai, '', '可接+冷却+候删+禁用'],
-    ['日池总量', fmtTok(usage.pool_est||0), 'accent', '全量×2M'],
-    ['日池已用', fmtTok(usage.pool_used||0), 'warn', (usage.pool_used_pct!=null? (Number(usage.pool_used_pct).toFixed(1)+'%') : '已用占比')],
-    ['日池剩余', fmtTok(usage.pool_remaining||0), 'ok', (usage.pool_used_pct!=null? ((100-Number(usage.pool_used_pct)).toFixed(1)+'%') : '剩余占比')],
+    ['日池总量', fmtTok(usage.pool_est||0), 'accent', (usage.pool_accounts!=null?('号'+(usage.pool_enabled||0)+'+冷'+(usage.pool_cooldown||0)+'='+usage.pool_accounts+'×2M'):'开启+冷却×2M')],
+    ['日池已用', fmtTok(usage.pool_used||0), 'warn', (usage.pool_used_pct!=null? (Number(usage.pool_used_pct).toFixed(1)+'% · 今日token') : '今日token')],
+    ['日池剩余', fmtTok(usage.pool_remaining||0), 'ok', (usage.pool_used_pct!=null? ((100-Number(usage.pool_used_pct)).toFixed(1)+'% · 总量-已用') : '总量-已用')],
   ];
   document.getElementById('kpis').innerHTML=items.map(([l,v,c,sub])=>
     '<div class="kpi '+(c||'')+'"><span>'+l+'</span><b>'+v+'</b>'+(sub?('<span class="subn">'+esc(sub)+'</span>'):'')+'</div>'
@@ -642,8 +846,8 @@ function renderKPIs(s, trashCount, cool, inv, usage){
 function accountCell(a){
   const name=dispName(a);
   const title=a.display_name||a.email||a.auth_index||'';
-  // single-line only — density lives in dedicated columns
-  return '<div class="acc-name" title="'+esc(title)+'">'+esc(name)+'</div>';
+  const badge=a.can_relogin?' <span class="tag" style="font-size:10px;padding:0 4px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe" title="来自注册云端库存，本地有密码可重登">☁云</span>':'';
+  return '<div class="acc-name" title="'+esc(title)+'">'+esc(name)+badge+'</div>';
 }
 function totalCallsCell(a){
   const tot=Number(a.total_calls!=null?a.total_calls:0);
@@ -748,12 +952,66 @@ function renderAccountRows(list, prevSel){
     '<td>'+actionTimeCell(a)+'</td>'+
     '<td>'+timeCell(a.recover_at)+'</td></tr>').join('');
 }
-function httpCodeOf(sig){
-  if(sig==='free_usage_429') return '429';
-  if(sig==='spending_limit_402') return '402';
-  if(sig==='auth_401') return '401';
-  if(sig==='permission_403') return '403';
+// 显示用：错误码自动拼在中文名前面 → 429·免费额度用尽
+// 存储用：label/display_msg 只存中文（不要带 429·），拆分时也只填中文
+function stripCodePrefix(lab){
+  lab=String(lab||'').trim();
+  lab=lab.replace(/^HTTP\s*(\d{3})\s*[·.\s]*/i,'');
+  lab=lab.replace(/^(\d{3})[·.\s]+/,'');
+  return lab.trim();
+}
+function httpCodeOf(sigOrObj){
+  // accept key string or error row object
+  let e=sigOrObj, key='', status=0;
+  if(e && typeof e==='object'){
+    key=String(e.key||'');
+    status=Number(e.status_code||0)||0;
+  }else{
+    key=String(sigOrObj||'');
+  }
+  if(key==='free_usage_429') return '429';
+  if(key==='spending_limit_402') return '402';
+  if(key==='auth_401') return '401';
+  if(key==='permission_403') return '403';
+  // reason:http_426 / http_426 / reason:http_404
+  let m=key.match(/(?:^|:)http_(\d{3})$/i) || key.match(/^http_(\d{3})$/i);
+  if(m) return m[1];
+  m=key.match(/(?:^|_)(\d{3})$/);
+  if(m && ['401','402','403','404','426','429','500','502','503'].includes(m[1])) return m[1];
+  if(status>=100 && status<=599) return String(status);
+  // from stored label if already has code
+  if(e && typeof e==='object'){
+    const lab=String(e.label||'');
+    m=lab.match(/^(\d{3})[·.]/);
+    if(m) return m[1];
+  }
   return '';
+}
+function policyNameOnly(e){
+  // 纯中文名（不含错误码）
+  let lab=stripCodePrefix((e&&e.label)||'');
+  const key=String((e&&e.key)||'');
+  if(!lab || lab===key){
+    if(key==='any_error') lab='任意错误·连续';
+    else if(key==='unmatched') lab='未分类错误';
+    else if(key==='free_usage_429') lab='免费额度用尽';
+    else if(key==='permission_403') lab='权限拒绝';
+    else if(key==='reason:http_426'||key==='http_426') lab='终端版本过低';
+    else if(key==='spending_limit_402') lab='消费限额';
+    else if(key==='auth_401') lab='凭证失效';
+    else lab=stripCodePrefix(lab||key||'未命名');
+  }
+  return lab||'未命名';
+}
+function policyTitle(e){
+  // 列表标题 = 错误码·中文名（有码才拼；总设置/未分类不加码）
+  const key=String((e&&e.key)||'');
+  if(key==='any_error') return '总设置 · 任意错误·连续';
+  if(key==='unmatched') return '未分类错误';
+  const name=policyNameOnly(e);
+  const code=httpCodeOf(e);
+  if(code) return code+'·'+name;
+  return name;
 }
 function shortSignal(sig){
   return httpCodeOf(sig) || (sig && sig.length>12?sig.slice(0,12)+'…':(sig||''));
@@ -791,66 +1049,279 @@ function parseErrorBody(raw){
 function findAccountByAuth(auth){
   return (LAST_ACCOUNTS||[]).find(a=>a.auth_index===auth) || null;
 }
+function resolveErrorPolicy(sig){
+  // 内置/拆分类统一解析；SIG_ZH 不含 reason:http_426
+  const key=String(sig||'');
+  let err=(ERRORS||[]).find(e=>e.key===key);
+  if(!err && key){
+    // 尝试 reason: 前缀 / 去掉前缀
+    err=(ERRORS||[]).find(e=>e.key==='reason:'+key || e.key===key.replace(/^reason:/,''));
+  }
+  return err||{};
+}
+function findErrorForAccount(a){
+  // 1) last_signal 2) streaks 最大 key 3) ERRORS.account_hits 匹配 auth/email/file
+  if(!a) return {sig:'', err:{}};
+  let sig=a.last_signal||'';
+  if(!sig){
+    const st=a.streaks||{};
+    let best='', n=0;
+    Object.keys(st).forEach(k=>{
+      if(k==='any_error') return;
+      const v=Number(st[k]||0);
+      if(v>n){ n=v; best=k; }
+    });
+    sig=best||'';
+  }
+  let err=resolveErrorPolicy(sig);
+  if((!err || !err.key) || !(err.sample||err.sample_pretty)){
+    const auth=String(a.auth_index||'');
+    const email=String(a.email||a.display_name||'').toLowerCase();
+    const file=String(a.file_name||'').toLowerCase();
+    for(const e of (ERRORS||[])){
+      const hits=e.account_hits||[];
+      const hit=hits.find(h=>{
+        const ha=String(h.auth||'');
+        const hl=String(h.label||'').toLowerCase();
+        const hf=String(h.file||'').toLowerCase();
+        return (auth && ha===auth) || (email && (hl===email || hl.includes(email.split('@')[0]))) || (file && hf && (hf===file || hf.includes(file)));
+      });
+      if(hit){
+        if(!sig) sig=e.key;
+        // prefer this error if sample richer
+        if(!err.key || (e.sample && !err.sample)) err=e;
+        if(e.key===sig) { err=e; break; }
+      }
+    }
+  }
+  if(!err.key && sig) err=resolveErrorPolicy(sig);
+  return {sig, err: err||{}};
+}
 function openAccountError(el){
   // accept button/slot/sigbars wrapper
   const auth = el.getAttribute('data-auth') || (el.closest && el.closest('[data-auth]') && el.closest('[data-auth]').getAttribute('data-auth'));
   const a=findAccountByAuth(auth);
   if(!a){ toast('找不到账号详情'); return; }
-  const sig=a.last_signal||'';
-  const http=httpCodeOf(sig)||'ERR';
-  const err=(ERRORS||[]).find(e=>e.key===sig) || {};
-  const body=parseErrorBody(err.sample||err.sample_pretty||'');
+  const found=findErrorForAccount(a);
+  const sig=found.sig||a.last_signal||'';
+  const err=found.err||resolveErrorPolicy(sig);
+  // 错误码：优先策略 key / status_code，再退到 httpCodeOf
+  const http=httpCodeOf(err.key?err:sig) || httpCodeOf(sig) || (err.status_code?String(err.status_code):'') || '';
+  const sampleRaw=err.sample||err.sample_pretty||a.error_sample||'';
+  const body=parseErrorBody(sampleRaw);
   const fullName=a.display_name||a.email||a.auth_index||'-';
   const name=MASKED?maskEmail(fullName):fullName;
-  const title='HTTP '+http;
-  const sub=(SIG_ZH[sig]||sig||'失败')+(sig?(' · '+sig):'');
+  // 标题：有码用 码·中文；无码用中文/策略名
+  const zhName=stripCodePrefix(err.display_msg||err.sample_msg||a.signal_msg||err.label||SIG_ZH[sig]||policyNameOnly({key:sig,label:sig})||'失败');
+  const title=http?(http+'·'+zhName):zhName;
+  const sub=(a.state?((stateLabel(a.state,a).text)||STATE_ZH[a.state]||a.state):'失败');
   let html='<div class="ep-head"><div><div class="ep-code"><span class="fail-dot"></span>'+esc(title)+'</div><div class="ep-sub">'+esc(sub)+'</div></div><button class="ep-close" onclick="closeErrPop()">×</button></div><div class="ep-body">';
   html+='<div class="ep-kv">'+
     '<b>账号</b><span title="'+esc(fullName)+'">'+esc(name)+'</span>'+
-    '<b>状态</b><span>'+esc(STATE_ZH[a.state]||a.state||'-')+'</span>'+
+    '<b>状态</b><span>'+esc((stateLabel(a.state,a).text)||STATE_ZH[a.state]||a.state||'-')+'</span>'+
+    (http?('<b>错误码</b><span class="mono">'+esc(http)+'</span>'):'')+
+    '<b>错误信息</b><span>'+esc(zhName)+'</span>'+
     '<b>请求</b><span>总 '+(a.total_calls||a.day_calls||0)+' · 今日 '+(a.day_calls||0)+' · 成功 '+(a.day_success!=null?a.day_success:Math.max(0,(a.day_calls||0)-(a.day_fail_calls||0)))+' · 失败 '+(a.day_fail_calls||0)+((a.day_success_rate!=null||a.success_rate!=null)?(' · '+(Number(a.day_success_rate!=null?a.day_success_rate:a.success_rate).toFixed(0))+'%'):'')+'</span>'+
     (a.day_tokens?('<b>token</b><span>'+esc(fmtTok(a.day_tokens))+(a.day_input_tokens||a.day_output_tokens?('（入'+fmtTok(a.day_input_tokens||0)+' / 出'+fmtTok(a.day_output_tokens||0)+'）'):'')+'</span>'):'')+
     ((a.quota_used||a.quota_limit)?('<b>额度</b><span>'+esc(fmtTok(a.quota_used||0)+' / '+fmtTok(a.quota_limit||0))+'</span>'):'')+
-    (body.code?('<b>code</b><span class="mono">'+esc(body.code)+'</span>'):'')+
-    (body.tokens?('<b>报错体</b><span>'+esc(body.tokens)+'</span>'):'')+
+    (body.code?('<b>body.code</b><span class="mono">'+esc(body.code)+'</span>'):'')+
+    (body.tokens?('<b>报错额度</b><span>'+esc(body.tokens)+'</span>'):'')+
     (a.recover_at?('<b>恢复</b><span>'+esc(a.recover_at)+'</span>'):'')+
     (a.usage_source?('<b>来源</b><span>'+esc(a.usage_source)+'</span>'):'')+
   '</div>';
-  if(body.message || body.pretty){
+  if(body.message || body.pretty || sampleRaw){
     const msg=body.message||'';
     let pretty=body.pretty||'';
-    if(msg && pretty && pretty.indexOf(String(msg).slice(0,40))>=0){
+    if(!pretty && sampleRaw){
+      try{ pretty=JSON.stringify(JSON.parse(decodeEntities(sampleRaw)),null,2); }catch(ex){ pretty=cleanSample(sampleRaw); }
+    }
+    if(msg && pretty && pretty.indexOf(String(msg).slice(0,Math.min(40,String(msg).length)))>=0){
       html+='<div class="ep-json">'+esc(pretty)+'</div>';
     }else{
-      html+='<div class="ep-json">'+(msg?('<div class="ep-msg">'+esc(msg)+'</div>'):'')+esc(pretty)+'</div>';
+      html+='<div class="ep-json">'+(msg?('<div class="ep-msg">'+esc(msg)+'</div>'):'')+esc(pretty||cleanSample(sampleRaw)||'')+'</div>';
     }
   }else{
-    html+='<div class="muted">暂无完整失败内容样本。</div>';
+    html+='<div class="muted">暂无完整失败内容样本（可到「错误策略」对应分类查看样本）。</div>';
   }
   html+='</div>';
   showErrPop(html, el);
 }
 function showErrPop(html, anchor){
   const pop=document.getElementById('errPop');
+  const mask=document.getElementById('errPopMask');
+  if(!pop) return;
   pop.innerHTML=html;
+  // center dialog above mask (never sit under mask)
   pop.classList.add('open');
-  const r=anchor.getBoundingClientRect();
-  const w=pop.offsetWidth||480, h=pop.offsetHeight||280;
-  let left=Math.min(window.innerWidth-w-12, Math.max(12, r.left));
-  let top=r.bottom+8;
-  if(top+h>window.innerHeight-8) top=Math.max(12, r.top-h-8);
-  pop.style.left=left+'px';
-  pop.style.top=top+'px';
+  if(mask) mask.classList.add('open');
+  if(window.innerWidth<=700){
+    pop.classList.add('mobile-sheet');
+    pop.style.left=''; pop.style.top=''; pop.style.right=''; pop.style.bottom=''; pop.style.transform='';
+  }else{
+    pop.classList.remove('mobile-sheet');
+    pop.style.left='50%'; pop.style.top='50%'; pop.style.right=''; pop.style.bottom='';
+    pop.style.transform='translate(-50%, -50%)';
+  }
+  // ensure body can scroll
+  const body=pop.querySelector('.ep-body');
+  if(body){ body.style.overflow='auto'; body.style.webkitOverflowScrolling='touch'; body.style.maxHeight=''; }
+  // focus close for a11y
+  const closeBtn=pop.querySelector('.ep-close');
+  if(closeBtn) try{ closeBtn.focus(); }catch(e){}
 }
 function closeErrPop(){
   const pop=document.getElementById('errPop');
-  if(pop){ pop.classList.remove('open'); pop.innerHTML=''; }
+  const mask=document.getElementById('errPopMask');
+  if(pop){
+    pop.classList.remove('open','mobile-sheet');
+    pop.innerHTML='';
+    pop.style.left=''; pop.style.top=''; pop.style.transform='';
+  }
+  if(mask) mask.classList.remove('open');
+}
+// open policy catalog sample (errors tab) — mobile taps this; no hover title needed
+function openPolicyErrorSample(key, anchor){
+  const e=(ERRORS||[]).find(x=>x.key===key);
+  if(!e){ toast('找不到该错误条目'); return; }
+  const http=httpCodeOf(e.key)||(e.status_code?String(e.status_code):'');
+  const body=parseErrorBody(e.sample||e.sample_pretty||e.sample_msg||'');
+  const title=policyTitle(e)||'错误样本';
+  const sub=(e.key||'')+(http?(' · '+http):'');
+  let html='<div class="ep-head"><div><div class="ep-code"><span class="fail-dot"></span>'+esc(title)+'</div><div class="ep-sub">'+esc(sub)+'</div></div><button class="ep-close" type="button" onclick="closeErrPop()">×</button></div><div class="ep-body">';
+  html+='<div class="ep-kv">'+
+    '<b>策略</b><span>'+esc(e.label||e.key||'-')+'</span>'+
+    '<b>key</b><span class="mono">'+esc(e.key||'-')+'</span>'+
+    '<b>来源</b><span>'+esc(e.source==='builtin'?'内置':'动态')+'</span>'+
+    '<b>命中</b><span>'+esc(String(e.count||0))+' 次</span>'+
+    (e.last_at?('<b>最近</b><span>'+esc(String(e.last_at).replace('T',' ').replace('Z',''))+'</span>'):'')+
+    (e.last_auth||e.last_file?('<b>最近账号</b><span>'+esc(MASKED?maskEmail(e.last_auth||e.last_file||''):(e.last_auth||e.last_file||''))+'</span>'):'')+
+    (body.code?('<b>code</b><span class="mono">'+esc(body.code)+'</span>'):'')+
+    (body.tokens?('<b>额度</b><span>'+esc(body.tokens)+'</span>'):'')+
+    (e.action||e.action_label?('<b>动作</b><span>'+esc(e.action_label||ACT_ZH[e.action]||e.action||'-')+'</span>'):'')+
+  '</div>';
+  const dmsg=e.display_msg||e.sample_msg||'';
+  const msg=body.message||'';
+  let pretty=body.pretty||'';
+  if(!pretty && e.sample){
+    try{ pretty=JSON.stringify(JSON.parse(decodeEntities(e.sample)),null,2); }catch(ex){ pretty=cleanSample(e.sample); }
+  }
+  if(dmsg){ html+='<div class="ep-kv"><b>错误信息</b><span>'+esc(dmsg)+'</span>'+(e.split_shape?('<b>形态</b><span class="mono">'+esc(e.split_shape)+'</span>'):'')+'</div>'; }
+  if(msg || pretty){
+    html+='<div class="ep-json">'+(msg && (!pretty || pretty.indexOf(String(msg).slice(0,Math.min(24,String(msg).length)))<0)?('<div class="ep-msg">'+esc(msg)+'</div>'):'')+esc(pretty||msg||'')+'</div>';
+  }else{
+    html+='<div class="muted">暂无完整错误样本（该策略尚未采到 body）。可点「错误样本」或展开报错日志。</div>';
+  }
+  html+='</div>';
+  showErrPop(html, anchor||null);
+}
+// policy log row: account / error message tap detail → recent 15 requests + actions
+async function openPolicyHitDetail(key, auth, anchor){
+  const rows=policyErrorRows(key)||[];
+  const r=rows.find(x=>String(x.auth||'')===String(auth||'')) || rows.find(x=>String(x.label||'')===String(auth||''));
+  const err=(ERRORS||[]).find(e=>e.key===key)||{};
+  if(!r && !err.key && !auth){ toast('找不到该条记录'); return; }
+  const fullName=(r&& (r.label||r.auth)) || auth || '-';
+  const name=MASKED?maskEmail(fullName):fullName;
+  const st = r && r.acc ? stateLabel(r.acc.state||r.state||'', r.acc) : {text: (r&&r.state)?(STATE_ZH[r.state]||r.state):'—', tip:''};
+  const authId=String((r&&r.auth)||auth||'');
+  const file=String((r&&r.file)||(r&&r.acc&&r.acc.file)||'');
+  const account=String((r&&r.acc&&(r.acc.email||r.acc.display_name))||r.label||'');
+  // loading shell
+  let html='<div class="ep-head"><div><div class="ep-code"><span class="fail-dot"></span>最近请求</div><div class="ep-sub">'+esc(name)+(key?(' · '+esc(err.label||key)):'')+'</div></div><button class="ep-close" type="button" onclick="closeErrPop()">×</button></div><div class="ep-body">';
+  html+='<div class="ep-kv">'+
+    '<b>账号</b><span style="word-break:break-all">'+esc(name)+'</span>'+
+    (authId?('<b>auth</b><span class="mono" style="word-break:break-all">'+esc(authId)+'</span>'):'')+
+    '<b>状态</b><span>'+esc(st.text||'—')+'</span>'+
+    (r&&r.model?('<b>最近模型</b><span class="mono">'+esc(r.model)+'</span>'):'')+
+    (r?('<b>策略连续N</b><span>'+esc(String(r.streak||0))+'</span>'):'')+
+  '</div>';
+  html+='<div class="muted" id="epRecentLoad">加载最近 15 次请求…</div>';
+  html+='<div id="epRecentBody"></div>';
+  if(r&&r.auth){
+    const a=esc(r.auth);
+    html+='<div class="err-actions-row" style="margin-top:10px">'+
+      '<button type="button" class="xs" onclick="closeErrPop();bulkOne(\''+a+'\',\'enable\')">启用</button>'+
+      '<button type="button" class="xs warn" onclick="closeErrPop();bulkOne(\''+a+'\',\'cooldown\')">冷却</button>'+
+      '<button type="button" class="xs danger" onclick="closeErrPop();bulkOne(\''+a+'\',\'disable\')">永久禁用</button>'+
+      '<button type="button" class="xs danger" onclick="closeErrPop();bulkOne(\''+a+'\',\'trash\')">垃圾箱</button>'+
+    '</div>';
+  }
+  html+='</div>';
+  showErrPop(html, anchor||null);
+  // fetch timeline
+  try{
+    const qs=new URLSearchParams({limit:'15'});
+    if(authId) qs.set('auth', authId);
+    if(account) qs.set('account', account);
+    if(file) qs.set('file', file);
+    const data=await j('/accounts/recent?'+qs.toString());
+    const loadEl=document.getElementById('epRecentLoad');
+    const bodyEl=document.getElementById('epRecentBody');
+    if(!bodyEl) return;
+    if(loadEl) loadEl.remove();
+    const events=Array.isArray(data.events)?data.events:[];
+    const actions=Array.isArray(data.actions)?data.actions:[];
+    let body='';
+    if(events.length){
+      body+='<div class="meta" style="font-weight:700;margin:4px 0 6px">最近 '+events.length+' 次请求（左旧→右新；绿成功 / 红失败）</div>';
+      body+='<div class="ep-timeline">';
+      // show newest last in list for reading bottom-up? User prefers chronological continuous — list newest at top for scan
+      const rev=events.slice().reverse();
+      rev.forEach((ev,i)=>{
+        const ok=!ev.failed;
+        const st=ok?('OK'+(ev.status?(' '+ev.status):'')):('FAIL'+(ev.status?(' '+ev.status):''));
+        const tok=ev.tokens?(' · '+fmtTok(ev.tokens)+' tok'):'';
+        const model=ev.model||'—';
+        const sum=ev.summary||'';
+        body+='<div class="ep-tl-row '+(ok?'ok':'fail')+'">'+
+          '<div class="ep-tl-dot"></div>'+
+          '<div class="ep-tl-main">'+
+            '<div class="ep-tl-line1"><span class="mono">'+esc(ev.at||'')+'</span> · <b>'+esc(st)+'</b> · <span class="mono">'+esc(model)+'</span>'+esc(tok)+'</div>'+
+            (ev.path?('<div class="ep-tl-sub mono">'+esc(ev.path)+'</div>'):'')+
+            (sum?('<div class="ep-tl-err">'+esc(sum)+'</div>'):'')+
+            (ev.request_id?('<div class="ep-tl-sub mono">rid '+esc(ev.request_id)+'</div>'):'')+
+          '</div>'+
+        '</div>';
+      });
+      body+='</div>';
+    }else{
+      body+='<div class="muted">CPAMP 无该账号最近请求（可能未挂 usage.sqlite 或尚无记录）。</div>';
+      // fallback: green/red from account recent15 booleans if present
+      const acc=(r&&r.acc)||findAccountByAuth(authId);
+      if(acc && Array.isArray(acc.recent15) && acc.recent15.length){
+        const seq=acc.recent15.slice(-15);
+        body+='<div class="meta" style="margin-top:8px">最近15次结果条（无明细）</div><div class="sigbars" style="margin-top:4px">';
+        const pad=15-seq.length;
+        for(let i=0;i<pad;i++) body+='<span class="slot empty"></span>';
+        seq.forEach(ok=>{ body+='<span class="slot '+(ok?'ok':'fail')+'"></span>'; });
+        body+='</div>';
+      }
+    }
+    if(actions.length){
+      body+='<div class="meta" style="font-weight:700;margin:12px 0 6px">哨兵动作日志（最近）</div><div class="ep-timeline">';
+      actions.slice(0,12).forEach(a=>{
+        body+='<div class="ep-tl-row act">'+
+          '<div class="ep-tl-dot act"></div>'+
+          '<div class="ep-tl-main">'+
+            '<div class="ep-tl-line1"><span class="mono">'+esc(a.at||'')+'</span> · <b>'+esc(a.label||a.action||'')+'</b>'+(a.source?(' · '+esc(a.source)):'')+'</div>'+
+            (a.reason?('<div class="ep-tl-sub">'+esc(a.reason)+'</div>'):'')+
+          '</div></div>';
+      });
+      body+='</div>';
+    }
+    bodyEl.innerHTML=body;
+  }catch(e){
+    const loadEl=document.getElementById('epRecentLoad');
+    if(loadEl) loadEl.textContent='加载失败：'+(e.message||e);
+  }
 }
 document.addEventListener('click',function(ev){
   const pop=document.getElementById('errPop');
   if(!pop || !pop.classList.contains('open')) return;
   if(pop.contains(ev.target)) return;
-  if(ev.target.closest && (ev.target.closest('.sigbars') || ev.target.closest('.slot.fail') || ev.target.closest('.reqchip'))) return;
+  if(ev.target.closest && (ev.target.closest('.sigbars') || ev.target.closest('.slot.fail') || ev.target.closest('.reqchip') || ev.target.closest('.err-sample-btn') || ev.target.closest('.err-title') || ev.target.closest('.policy-log td.tap') || ev.target.closest('.policy-log .xs') || ev.target.closest('.err-pop-mask'))) return;
+  // mask handles close; outside click also closes
+  if(ev.target && ev.target.id==='errPopMask') return;
   closeErrPop();
 });
 
@@ -1043,8 +1514,10 @@ async function refresh(){
       j('/logs?'+logQS.toString()).catch(()=>({logs:[],page:{}}))
     ]);
     CFG=st.config||{};
+    // keep register top switches in sync with live config (do not rely on opening 配置)
+    try{ fillRegForm(CFG); }catch(e){}
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'1.1.33');
+    document.getElementById('ver').textContent='v'+(st.version||'1.1.82');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -1111,21 +1584,74 @@ async function refresh(){
 }
 function policyErrorRows(key){
   // Prefer backend account_hits (has source/streak). Fallback to action logs.
+  // Always attach current sentry account state for status column.
+  const findAcc=(auth,label)=>{
+    const al=String(label||'').toLowerCase();
+    const ai=String(auth||'').toLowerCase();
+    return (LAST_ACCOUNTS||[]).find(a=>{
+      const aai=String(a.auth_index||'').toLowerCase();
+      const em=String(a.email||'').toLowerCase();
+      const dn=String(a.display_name||'').toLowerCase();
+      return (ai && aai===ai) || (al && (em===al || dn===al || aai===al)) ||
+        (ai && (em===ai || dn===ai));
+    }) || null;
+  };
+  const attach=(r)=>{
+    // Prefer backend-provided current state on account_hits (full sentry store).
+    // LAST_ACCOUNTS is often focus/problem subset → would show「—」for most rows.
+    if(r.state || r.pending_observe!=null || r.disable_source){
+      r.acc = r.acc || {
+        auth_index: r.auth,
+        email: r.label,
+        state: r.state||'',
+        disable_source: r.disable_source||'',
+        pending_observe: !!r.pending_observe,
+        last_signal: r.last_signal||'',
+        last_action: r.last_action||'',
+        streaks: r.streaks||{},
+      };
+      if(!r.acc.state) r.acc.state=r.state||'';
+    }
+    const acc=findAcc(r.auth, r.label) || (r.file?findAcc(r.file, r.file):null);
+    if(acc){
+      r.acc=acc;
+      r.state=acc.state||r.state||'';
+      r.label=acc.display_name||acc.email||r.label;
+      if(r.req==null) r.req=acc.day_calls||0;
+      if(r.fail==null) r.fail=acc.day_fail_calls||0;
+      if(!r.streak && acc.streaks && (acc.streaks[key]!=null)) r.streak=acc.streaks[key];
+      else if(!r.streak && acc.last_signal===key) r.streak=1;
+    }else if(!r.acc){
+      r.acc=null;
+      r.state=r.state||'';
+    }
+    return r;
+  };
   const err=(ERRORS||[]).find(e=>e.key===key)||{};
   const hits=Array.isArray(err.account_hits)?err.account_hits:[];
   if(hits.length){
-    return hits.map(h=>({
+    // Prefer backend-provided sample on account_hits for detail popup
+    return hits.map(h=>attach({
       auth:h.auth,
       label:h.label||h.auth,
+      file:h.file||'',
       lastAt:h.last_at||'',
       reason:h.message||h.sample||'',
+      sample:h.sample||'',
       req:h.hits||0,
       fail:h.hits||0,
       hits:h.hits||0,
       streak:h.streak||0,
       source:h.source_label||h.source||'',
       status:h.status||0,
-    }));
+      model:h.model||'',
+      state:h.state||'',
+      disable_source:h.disable_source||'',
+      pending_observe:!!h.pending_observe,
+      last_signal:h.last_signal||'',
+      last_action:h.last_action||'',
+      streaks:h.streaks||null,
+    })).sort((a,b)=>(b.lastAt||'').localeCompare(a.lastAt||''));
   }
   const known=new Set(Object.keys(SIG_ZH));
   const logs=(LAST_LOGS||[]).filter(l=>{
@@ -1148,24 +1674,16 @@ function policyErrorRows(key){
     }
   });
   Object.values(by).forEach(r=>{
-    const acc=(LAST_ACCOUNTS||[]).find(a=>a.auth_index===r.auth || a.email===r.label || a.display_name===r.label);
-    if(acc){
-      r.label=acc.display_name||acc.email||r.label;
-      r.req=acc.day_calls||0;
-      r.fail=acc.day_fail_calls||0;
-      if(acc.streaks && (acc.streaks[key]!=null)) r.streak=acc.streaks[key];
-      else if(acc.last_signal===key) r.streak=1;
-    }else{
-      r.req=r.hits; r.fail=r.hits;
-    }
+    attach(r);
+    if(!r.acc){ r.req=r.hits; r.fail=r.hits; }
   });
   if(!Object.keys(by).length){
     (LAST_ACCOUNTS||[]).filter(a=>a.last_signal===key).forEach(a=>{
       const streak=(a.streaks&&a.streaks[key])||1;
-      by[a.auth_index]={auth:a.auth_index,label:a.display_name||a.email,lastAt:a.updated_at||'',reason:(SIG_ZH[key]||key)+'（账号当前信号）',req:a.day_calls||0,fail:a.day_fail_calls||0,hits:a.day_fail_calls||0,streak:streak,source:'账号状态'};
+      by[a.auth_index]=attach({auth:a.auth_index,label:a.display_name||a.email,lastAt:a.updated_at||'',reason:policyTitle({key:key,label:SIG_ZH[key]||key,status_code:0})+'（账号当前信号）',req:a.day_calls||0,fail:a.day_fail_calls||0,hits:a.day_fail_calls||0,streak:streak,source:'账号状态',state:a.state||''});
     });
   }
-  return Object.values(by).sort((a,b)=>(b.lastAt||'').localeCompare(a.lastAt||''));
+  return Object.values(by).map(attach).sort((a,b)=>(b.lastAt||'').localeCompare(a.lastAt||''));
 }
 function policyPageState(key){
   if(!window.ERR_PAGE) window.ERR_PAGE={};
@@ -1213,29 +1731,43 @@ function policyLogsHTML(key){
   const table='<table><thead><tr>'+
     '<th style="width:86px">时间</th>'+
     '<th style="width:140px">账号</th>'+
+    '<th style="width:110px">当前状态</th>'+
+    '<th style="width:110px">模型</th>'+
     '<th>错误信息</th>'+
     '<th style="width:48px">连续N</th>'+
     '<th style="width:42px">命中</th>'+
-    '<th style="min-width:168px">操作</th>'+
+    '<th style="min-width:220px">操作</th>'+
     '</tr></thead><tbody>'+
     rows.map(r=>{
-      let msg=String(r.reason||err.sample_msg||err.label||key);
+      let msg=prettyErrMsg(String(r.reason||err.sample_msg||err.label||key), r.source);
       // strip leftover raw json/html if any
       if(msg.indexOf('{')===0 || msg.indexOf('&#34;')>=0 || msg.toLowerCase().indexOf('<html')>=0){
-        msg=(err.sample_msg||err.label||'错误')+(r.source?('（'+r.source+'）'):'');
+        const src=sourceZH(r.source)||'请求';
+        msg=(err.sample_msg||defaultDisplayMsg(err)||err.label||'错误')+' · '+src;
       }
       const label=dispAuth(r.label||r.auth);
       const auth=esc(r.auth||'');
+      const authRaw=String(r.auth||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+      const keyRaw=String(key||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+      const stCell = r.acc ? stateTag(r.acc.state||r.state||'', r.acc) :
+        (r.state ? '<span class="tag" title="仅错误环记录，账号列表未匹配">'+esc(STATE_ZH[r.state]||r.state)+'</span>' :
+        '<span class="meta">—</span>');
+      const fullMsg=String(r.reason||msg||'');
+      const model=String(r.model||'').trim()||'—';
       return '<tr>'+
         '<td class="mono">'+esc(r.lastAt||'')+'</td>'+
-        '<td title="'+esc(r.label||r.auth||'')+'">'+esc(label)+'</td>'+
-        '<td title="'+esc(msg)+'">'+esc(msg.slice(0,80))+'</td>'+
+        '<td title="'+esc(String(r.label||r.auth||''))+'">'+esc(label)+'</td>'+
+        '<td class="st">'+stCell+'</td>'+
+        '<td class="mono" title="最近错误请求模型">'+esc(model)+'</td>'+
+        '<td class="tap msg-cell" role="button" onclick="openPolicyHitDetail(\''+esc(keyRaw)+'\',\''+esc(authRaw)+'\', this)" title="点击查看最近15次请求">'+esc(msg.slice(0,80))+(fullMsg.length>80?'…':'')+'</td>'+
         '<td>'+(r.streak||0)+'</td>'+
         '<td>'+(r.hits||r.fail||0)+'</td>'+
         '<td class="ops"><div class="ops-wrap">'+
           '<button type="button" class="xs" data-auth="'+auth+'" onclick="bulkOne(this.getAttribute(\'data-auth\'),\'enable\')">启用</button>'+
           '<button type="button" class="xs warn" data-auth="'+auth+'" onclick="bulkOne(this.getAttribute(\'data-auth\'),\'cooldown\')">冷却</button>'+
+          ((r.can_relogin||(findAccountByAuth(auth)||{}).can_relogin)?('<button type="button" class="xs primary" data-auth="'+auth+'" onclick="reloginOne(this.getAttribute(\'data-auth\'))" title="云端库存号·本地有密码">重登</button>'):'')+
           '<button type="button" class="xs danger" data-auth="'+auth+'" onclick="bulkOne(this.getAttribute(\'data-auth\'),\'disable\')">永久禁用</button>'+
+          '<button type="button" class="xs danger" data-auth="'+auth+'" onclick="bulkOne(this.getAttribute(\'data-auth\'),\'trash\')" title="移入垃圾箱（可恢复）">垃圾箱</button>'+
         '</div></td>'+
       '</tr>';
     }).join('')+
@@ -1253,6 +1785,39 @@ function errorStructureKey(list){
   return (list||[]).map(e=>e.key+'|'+(e.enabled?1:0)+'|'+(e.count_mode||'')+'|'+JSON.stringify(e.escalations||[])+'|'+(e.action||'')+'|'+(e.threshold||0)+'|'+policyErrorRows(e.key).length).sort().join(';');
 }
 
+function defaultDisplayMsg(e){
+  if(!e) return '';
+  let s=String(e.sample_msg||'').trim();
+  if(s){
+    s=s.replace(/\s*·\s*(请求|巡查|维护同步|面板|用量回补|回补)\s*$/,'');
+    return s;
+  }
+  let lab=String(e.label||e.key||'').trim();
+  lab=lab.replace(/^\d{3}·/,'');
+  return lab;
+}
+function sourceZH(src){
+  const s=String(src||'').trim();
+  if(!s) return '';
+  const map={usage:'请求',patrol:'巡查',tick:'维护同步',panel:'面板',cpamp:'用量回补',backfill:'用量回补',
+    cpamp_analytics:'用量回补',cpamp_fail_body:'用量回补',cpamp_day_tokens:'用量回补',
+    '请求':'请求','巡查':'巡查','维护同步':'维护同步','面板':'面板','回补':'用量回补','用量回补':'用量回补'};
+  if(map[s]) return map[s];
+  if(/cpamp|backfill/i.test(s)) return '用量回补';
+  return s;
+}
+function prettyErrMsg(msg, src){
+  let m=String(msg||'').trim();
+  // replace english source suffix · cpamp / · backfill
+  m=m.replace(/\s*·\s*(cpamp(?:_[a-z0-9]+)?|backfill)\s*$/i, (x,g)=>' · '+sourceZH(g));
+  m=m.replace(/\s*·\s*回补\s*$/,' · 用量回补');
+  // if still looks raw, append chinese source
+  const zh=sourceZH(src);
+  if(zh && !m.includes(zh) && !/·\s*(请求|巡查|维护同步|面板|用量回补)\s*$/.test(m)){
+    // don't force if msg already complete
+  }
+  return m;
+}
 function escSummary(e){
   const tiers=normalizeEsc(e);
   if(!tiers.length) return ACT_ZH[e.action]||e.action||'-';
@@ -1277,12 +1842,28 @@ function normalizeEsc(e){
 function escRowsHTML(e){
   const tiers=normalizeEsc(e);
   const acts=['observe','cooldown','candidate','disable','trash'];
-  return tiers.map((t,i)=>'<div class="esc-row">'+
-    '<label>连续≥<input class="num esc-n" type="number" min="1" value="'+t.streak+'"/></label>'+
-    '<label>动作<select class="esc-act">'+acts.map(a=>'<option value="'+a+'"'+(t.action===a?' selected':'')+'>'+(ACT_ZH[a]||a)+'</option>').join('')+'</select></label>'+
-    '<label>冷却秒<input class="num esc-cd" type="number" min="0" value="'+(t.cooldown_seconds||0)+'" title="仅冷却动作有用"/></label>'+
-    '<button type="button" class="xs" title="删除此档" onclick="this.closest(\'.esc-row\').remove()">×</button>'+
-  '</div>').join('');
+  return tiers.map((t,i)=>{
+    const needCd=(t.action==='cooldown'||t.action==='candidate');
+    return '<div class="esc-row">'+
+      '<label>连续≥<input class="num esc-n" type="number" min="1" value="'+t.streak+'"/></label>'+
+      '<label>动作<select class="esc-act" onchange="onEscActChange(this)">'+acts.map(a=>'<option value="'+a+'"'+(t.action===a?' selected':'')+'>'+(ACT_ZH[a]||a)+'</option>').join('')+'</select></label>'+
+      '<label class="esc-cd-wrap'+(needCd?'':' hidden')+'">冷却秒<input class="num esc-cd" type="number" min="0" value="'+(t.cooldown_seconds||0)+'" title="冷却/候删可用"/></label>'+
+      '<button type="button" class="xs esc-del" title="删除此档" onclick="this.closest(\'.esc-row\').remove()">×</button>'+
+    '</div>';
+  }).join('');
+}
+function onEscActChange(sel){
+  const row=sel.closest('.esc-row');
+  if(!row) return;
+  const wrap=row.querySelector('.esc-cd-wrap');
+  if(!wrap) return;
+  const act=sel.value||'observe';
+  const need=(act==='cooldown'||act==='candidate');
+  wrap.classList.toggle('hidden', !need);
+  if(!need){
+    const inp=wrap.querySelector('.esc-cd');
+    if(inp) inp.value='0';
+  }
 }
 function addEscRow(btn){
   const box=btn.closest('.esc-box');
@@ -1292,19 +1873,34 @@ function addEscRow(btn){
   const div=document.createElement('div');
   div.className='esc-row';
   div.innerHTML='<label>连续≥<input class="num esc-n" type="number" min="1" value="1"/></label>'+
-    '<label>动作<select class="esc-act">'+acts.map(a=>'<option value="'+a+'">'+(ACT_ZH[a]||a)+'</option>').join('')+'</select></label>'+
-    '<label>冷却秒<input class="num esc-cd" type="number" min="0" value="0"/></label>'+
-    '<button type="button" class="xs" onclick="this.closest(\'.esc-row\').remove()">×</button>';
+    '<label>动作<select class="esc-act" onchange="onEscActChange(this)">'+acts.map(a=>'<option value="'+a+'">'+(ACT_ZH[a]||a)+'</option>').join('')+'</select></label>'+
+    '<label class="esc-cd-wrap hidden">冷却秒<input class="num esc-cd" type="number" min="0" value="0"/></label>'+
+    '<button type="button" class="xs esc-del" onclick="this.closest(\'.esc-row\').remove()">×</button>';
   list.appendChild(div);
 }
 function readEscalations(card){
   const rows=[...card.querySelectorAll('.esc-row')];
   if(!rows.length) return [];
-  return rows.map(r=>({
-    streak: Math.max(1, parseInt(r.querySelector('.esc-n')?.value||'1',10)),
-    action: r.querySelector('.esc-act')?.value||'observe',
-    cooldown_seconds: Math.max(0, parseInt(r.querySelector('.esc-cd')?.value||'0',10))
-  })).sort((a,b)=>a.streak-b.streak);
+  return rows.map(r=>{
+    const action=r.querySelector('.esc-act')?.value||'observe';
+    let cd=Math.max(0, parseInt(r.querySelector('.esc-cd')?.value||'0',10));
+    if(action!=='cooldown' && action!=='candidate') cd=0;
+    return {
+      streak: Math.max(1, parseInt(r.querySelector('.esc-n')?.value||'1',10)),
+      action,
+      cooldown_seconds: cd
+    };
+  }).sort((a,b)=>a.streak-b.streak);
+}
+function errCardToneClass(key){
+  if(key==='any_error') return '';
+  if(key==='free_usage_429' || /429/.test(key)) return 'k-429';
+  if(key==='spending_limit_402' || /402/.test(key)) return 'k-402';
+  if(key==='permission_403' || /403/.test(key)) return 'k-403';
+  if(key==='auth_401' || /401/.test(key)) return 'k-401';
+  if(key==='http_404' || /404/.test(key)) return 'k-404';
+  if(key==='unmatched') return 'k-unmatched';
+  return 'k-other';
 }
 
 function renderErrorCards(list, force){
@@ -1315,50 +1911,102 @@ function renderErrorCards(list, force){
       if(!card) return;
       const c=card.querySelector('[data-f="count"]'); if(c) c.textContent=String(e.count||0);
       const t=card.querySelector('[data-f="last"]'); if(t) t.textContent=(e.last_at||'').replace('T',' ').replace('Z','')||'—';
-      const log=card.querySelector('[data-f="plog"]'); if(log) log.innerHTML=policyLogsHTML(e.key);
+      const log=card.querySelector('[data-f="plog"]'); if(log && !card.classList.contains('collapsed')) log.innerHTML=policyLogsHTML(e.key);
     });
     return;
   }
   ERR_SNAPSHOT=snap; ERR_RENDERED=true;
   const box=document.getElementById('errBody');
   if(!(list||[]).length){ box.innerHTML='<div class="err-empty">还没有采集到错误。</div>'; return; }
-  box.innerHTML=list.slice().sort((a,b)=>(b.count||0)-(a.count||0)).map((e)=>{
+  const expanded=loadErrExpanded();
+  // pin any_error first, unmatched last (backend also sorts; keep client stable)
+  const sorted=list.slice().sort((a,b)=>{
+    if(a.key==='any_error') return -1;
+    if(b.key==='any_error') return 1;
+    if(a.key==='unmatched') return 1;
+    if(b.key==='unmatched') return -1;
+    return (b.count||0)-(a.count||0);
+  });
+  box.innerHTML=sorted.map((e)=>{
     const last=(e.last_at||'').replace('T',' ').replace('Z','')||'—';
     const act=escSummary(e);
-    const http=httpCodeOf(e.key);
-    const builtin=['free_usage_429','spending_limit_402','auth_401','permission_403','http_404','code:invalid-argument'];
-    const canUnclass = e.key!=='unmatched' && builtin.indexOf(e.key)<0 && e.source!=='builtin';
-    return '<div class="err-card" data-key="'+esc(e.key)+'">'+
-      '<div class="err-head"><div>'+
-        '<div class="err-title">'+esc(e.label||e.key)+(http?('<span class="err-http">HTTP '+http+'</span>'):'')+'</div>'+
-        '<div class="err-meta">'+
-          '<span class="tag">'+(e.source==='builtin'?'内置':'动态')+'</span>'+
-          (e.never_trash?'<span class="tag danger">禁删</span>':'')+
-          '<span class="tag">命中 <b data-f="count">'+(e.count||0)+'</b></span>'+
-          '<span class="tag muted">最近 <span data-f="last">'+esc(last)+'</span></span>'+
-          '<span class="tag'+(String(act).indexOf('永久禁用')>=0?' danger':'')+'">阶梯: '+esc(act)+'</span>'+
-        '</div></div></div>'+
-      '<div class="err-controls" style="grid-template-columns:auto 1fr auto;align-items:center">'+
-        '<label class="sw" title="是否启用该错误策略"><span class="lbl">启用</span><span class="switch"><input class="en-sw" type="checkbox" '+(e.enabled?'checked':'')+'/><span class="slider"></span></span></label>'+
-        '<label>计数方式<select class="cm">'+
-          '<option value="streak"'+( (!e.count_mode||e.count_mode==='streak')?' selected':'')+'>连续(成功清零)</option>'+
-          '<option value="total"'+(e.count_mode==='total'||e.count_mode==='accumulate'?' selected':'')+'>累计(成功不清)</option>'+
-        '</select></label>'+
-        '<button class="xs primary" data-key="'+esc(e.key)+'" onclick="saveErrorKey(this.getAttribute(\'data-key\'))">保存</button>'+
+    // any_error / unmatched cannot dump into unmatched; all other classes (incl. builtins) can
+    const canUnclass = e.key!=='unmatched' && e.key!=='any_error';
+    const isGlobal=e.key==='any_error';
+    const isOpen=!!expanded[e.key];
+    const title=isGlobal?('总设置 · '+policyTitle(e)) : policyTitle(e);
+    const tone=isGlobal?'err-card-global':errCardToneClass(e.key);
+    return '<div class="err-card '+tone+(isOpen?'':' collapsed')+'" data-key="'+esc(e.key)+'">'+
+      '<div class="err-head" onclick="toggleErrCard(\''+esc(e.key)+'\', event)">'+
+        '<div style="display:flex;gap:8px;align-items:flex-start;flex:1;min-width:0">'+
+          '<span class="err-chev" title="展开/折叠">▼</span>'+
+          '<div style="flex:1;min-width:0">'+
+            '<div class="err-title-row">'+
+              '<div class="err-title" title="点击展开/折叠">'+esc(title)+'</div>'+
+              (isGlobal?'':'<button type="button" class="err-sample-btn" onclick="event.stopPropagation();openPolicyErrorSample(\''+esc(e.key)+'\', this)">错误样本</button>')+
+            '</div>'+
+            '<div class="err-meta">'+
+              (isGlobal?'<span class="tag danger">总设置</span>':'')+
+              (isGlobal?'':'<span class="tag">命中 <b data-f="count">'+(e.count||0)+'</b></span>')+
+              (isGlobal?'':'<span class="tag muted">最近 <span data-f="last">'+esc(last)+'</span></span>')+
+              '<span class="tag'+(String(act).indexOf('永久禁用')>=0?' danger':'')+'">阶梯: '+esc(act)+'</span>'+
+              (e.enabled?'':'<span class="tag muted">已关闭</span>')+
+            '</div>'+
+            ((!isGlobal && (e.display_msg||e.sample_msg||e.sample))?('<div class="err-submsg" title="错误信息/样本">'+esc(String(e.display_msg||e.sample_msg||'').slice(0,80))+(function(){const raw=cleanSample(e.sample||''); if(!raw) return ''; const short=raw.replace(/\s+/g,' ').slice(0,120); return short?(' · <span class="mono">'+esc(short)+(raw.length>120?'…':'')+'</span>'):'';})()+'</div>'):'')+
+          '</div>'+
+        '</div>'+
       '</div>'+
-      '<div class="esc-box" data-esc="1">'+
-        '<div class="meta" style="font-weight:700;margin-bottom:6px">阶梯动作（动作含「永久禁用」；例：≥3冷却 · ≥15永久禁用）</div>'+
-        '<div class="esc-list">'+escRowsHTML(e)+'</div>'+
-        '<div class="esc-tools"><button type="button" class="xs" onclick="addEscRow(this)">+ 加一档</button><span class="meta">保存后生效 · 命中最高档</span></div>'+
+      '<div class="err-body">'+
+        (isGlobal?'<div class="meta" style="margin:6px 0 0;line-height:1.45">不管错误类型，连续失败达到 N 次按下方阶梯处置。与单类策略比<strong>更强才覆盖</strong>。默认关闭。成功请求会清零连续计数。</div>':'')+
+                '<div class="err-controls">'+
+          '<div class="ctrl-en">'+
+            '<label class="sw" title="是否启用该错误策略"><span class="lbl">启用</span><span class="switch"><input class="en-sw" type="checkbox" '+(e.enabled?'checked':'')+'/><span class="slider"></span></span></label>'+
+            (canUnclass?'<button type="button" class="xs warn btn-unclass" onclick="unclassifyError(\''+esc(e.key)+'\',\''+esc(e.label||e.key)+'\')" title="整类并入未分类">降回未分类</button>':'')+
+          '</div>'+
+          '<label class="ctrl-field"><span>显示名称</span><input class="pol-label" type="text" value="'+esc(policyNameOnly(e))+'" placeholder="只填中文，如：免费额度用尽（错误码自动加在前面）" title="不要填 429· 前缀，系统自动加错误码"/></label>'+
+          '<label class="ctrl-field"><span>错误信息</span><input class="pol-dmsg" type="text" value="'+esc(stripCodePrefix(e.display_msg||defaultDisplayMsg(e)||''))+'" placeholder="系统默认：'+esc(stripCodePrefix(defaultDisplayMsg(e)||'—'))+'" title="报错日志短中文；不要带错误码前缀"/></label>'+
+          '<label class="ctrl-field"><span>计数</span><select class="cm">'+
+            '<option value="streak"'+((!e.count_mode||e.count_mode==='streak')?' selected':'')+'>连续(成功清零)</option>'+
+            '<option value="total"'+(e.count_mode==='total'||e.count_mode==='accumulate'?' selected':'')+'>累计(成功不清)</option>'+
+          '</select></label>'+
+          '<button class="xs primary ctrl-save" data-key="'+esc(e.key)+'" onclick="saveErrorKey(this.getAttribute(\'data-key\'))">保存</button>'+
+        '</div>'+
+'<div class="esc-box" data-esc="1">'+
+          '<div class="meta" style="font-weight:700;margin-bottom:6px">'+(isGlobal?'任意错误阶梯（例：≥5冷却 · ≥20永久禁用）':'阶梯动作（动作含「永久禁用」；例：≥3冷却 · ≥15永久禁用）')+'</div>'+
+          '<div class="esc-list">'+escRowsHTML(e)+'</div>'+
+          '<div class="esc-tools"><button type="button" class="xs" onclick="addEscRow(this)">+ 加一档</button><span class="meta">保存后生效 · 命中最高档 · 仅观察不显示冷却秒</span></div>'+
+        '</div>'+
+        (e.key==='unmatched'?'<div class="err-actions-row"><span class="meta">在下方「可拆分错误形态」里点拆成此类，拆分时可自定义名称与策略 key</span></div>':'')+
+        (isGlobal?'':'<div class="meta" style="margin-top:8px;font-weight:700;color:#334155">报错日志</div>'+
+        '<div class="policy-log" data-f="plog">'+(isOpen?policyLogsHTML(e.key):'')+'</div>')+
       '</div>'+
-      '<div class="err-actions-row">'+
-        (e.key==='unmatched'?'<span class="meta">在下方「可拆分错误形态」里点拆成此类</span>':'')+
-        (canUnclass?'<button class="xs warn" onclick="unclassifyError(\''+esc(e.key)+'\',\''+esc(e.label||e.key)+'\')">降回未分类</button>':'')+
-      '</div>'+
-      '<div class="meta" style="margin-top:8px;font-weight:700;color:#334155">报错日志</div>'+
-      '<div class="policy-log" data-f="plog">'+policyLogsHTML(e.key)+'</div>'+
     '</div>';
   }).join('');
+}
+function loadErrExpanded(){
+  // never persist expand across tab switches / full re-render — always default collapsed
+  try{ localStorage.removeItem('cpa_err_expanded'); }catch(e){}
+  return {};
+}
+function saveErrExpanded(map){
+  // expand state is session-only (DOM); no localStorage
+}
+function toggleErrCard(key, ev){
+  if(ev && ev.target && ev.target.closest && (ev.target.closest('button')||ev.target.closest('input')||ev.target.closest('select')||ev.target.closest('a'))) return;
+  const card=document.querySelector('.err-card[data-key="'+CSS.escape(key)+'"]');
+  if(!card) return;
+  const map=loadErrExpanded();
+  const open=card.classList.contains('collapsed');
+  if(open){
+    card.classList.remove('collapsed');
+    map[key]=true;
+    const log=card.querySelector('[data-f="plog"]');
+    if(log && !log.innerHTML) log.innerHTML=policyLogsHTML(key);
+  }else{
+    card.classList.add('collapsed');
+    delete map[key];
+  }
+  saveErrExpanded(map);
 }
 async function loadErrors(force){
   try{
@@ -1375,6 +2023,9 @@ async function saveErrorKey(key, silent){
   const enSw=card.querySelector('.en-sw');
   const enabled=enSw?!!enSw.checked:!!e.enabled;
   const count_mode=(card.querySelector('.cm')?.value)||'streak';
+  // 只存中文；列表用 policyTitle 自动拼 错误码·名称
+  const label=stripCodePrefix((card.querySelector('.pol-label')?.value||policyNameOnly(e)||key).trim()||key);
+  const display_msg=stripCodePrefix((card.querySelector('.pol-dmsg')?.value||'').trim());
   let escalations=readEscalations(card);
   if(!escalations.length){
     escalations=[{streak:e.threshold||1, action:e.action||'observe', cooldown_seconds:e.cooldown_seconds||0}];
@@ -1387,35 +2038,64 @@ async function saveErrorKey(key, silent){
   const note=e.note||'';
   const never=!!e.never_trash;
   try{
-    await j('/errors/policy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-      key:e.key,label:e.label,enabled,action,threshold,cooldown_seconds:cooldown,
+    const body={
+      key:e.key,label,display_msg,enabled,action,threshold,cooldown_seconds:cooldown,
       count_mode, escalations, never_trash:never, note, source:e.source||'user'
-    })});
-    if(!silent) toast('已保存: '+(e.label||e.key)+' · '+escalations.map(x=>'≥'+x.streak+(ACT_ZH[x.action]||x.action)).join(' / '));
+    };
+    // keep split routing fingerprint (otherwise 426 等拆分类保存后失效)
+    if(e.split_shape) body.split_shape=e.split_shape;
+    else if(String(e.key||'').startsWith('reason:')) body.split_shape=String(e.key).slice('reason:'.length);
+    await j('/errors/policy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(!silent) toast('已保存: '+label+' · '+escalations.map(x=>'≥'+x.streak+(ACT_ZH[x.action]||x.action)).join(' / '));
     e.enabled=enabled; e.action=action; e.threshold=threshold; e.cooldown_seconds=cooldown;
-    e.count_mode=count_mode; e.escalations=escalations;
+    e.count_mode=count_mode; e.escalations=escalations; e.label=label; e.display_msg=display_msg;
     ERR_RENDERED=false;
     await loadErrors(true);
   }catch(err){ toast(err.message) }
 }
 async function quickSaveError(key){ return saveErrorKey(key, true); }
 async function unclassifyError(key, label){
-  if(!key || key==='unmatched') return;
+  if(!key || key==='unmatched' || key==='any_error') return;
   const name=label||key;
-  if(!confirm('把分类「'+name+'」整类降回「未分类」？\n\n之后可在未分类里再按错误形态拆开。')) return;
+  if(!confirm('把分类「'+name+'」整类降回「未分类」？\n\n命中记录会并入未分类，可再按形态拆开。\n降回后：新的同类错误先记入未分类（内置卡不会自动种回），直到你从形态再拆出。')) return;
   try{
     await j('/errors/reclassify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({from:key,to:'unmatched',label:'未分类错误'})});
     toast('已降回未分类：'+name);
     ERR_RENDERED=false; await loadErrors(true);
   }catch(e){ toast(e.message) }
 }
+function sanitizePolicyKey(s){
+  s=String(s||'').trim().toLowerCase();
+  s=s.replace(/\s+/g,'_').replace(/[^a-z0-9:_\-\.]+/g,'').replace(/_+/g,'_');
+  if(s.length>64) s=s.slice(0,64);
+  return s;
+}
 async function splitShape(shape, suggestKey, label){
   if(!shape){ toast('形态为空'); return; }
-  const name=label||suggestKey||shape;
-  if(!confirm('把未分类里的「'+name+'」拆成独立分类？\n\n默认动作：仅观察\n可稍后在该分类卡片改冷却/候删。')) return;
+  const defKey=suggestKey||('reason:'+shape);
+  // 推断错误码：http_426 → 426；free_usage_429 → 429
+  const codeGuess=httpCodeOf({key:defKey, label:label||'', status_code:0}) || httpCodeOf({key:shape}) || '';
+  const defName=stripCodePrefix(label||shape||'未命名');
+  const nameIn=prompt(
+    '拆成新分类 — 只填中文名称\n（错误码会自动加在前面'+(codeGuess?('，如 '+codeGuess+'·'+defName):'')+'）\n不要手写 429· / 403· 前缀',
+    defName
+  );
+  if(nameIn===null) return;
+  const name=stripCodePrefix(String(nameIn||'').trim()||defName);
+  const msgIn=prompt('错误信息短文案（报错日志）\n只填中文，例如：消费限额 / 权限拒绝 / 终端版本过低\n留空=用显示名称', name);
+  if(msgIn===null) return;
+  const display_msg=stripCodePrefix(String(msgIn||'').trim());
+  // key 默认自动用 suggest（reason:http_426），不再强制手填
+  let to=sanitizePolicyKey(defKey);
+  if(!to){ toast('策略 key 无效'); return; }
+  if(to==='unmatched'||to==='any_error'){ toast('不能拆到 reserved key'); return; }
+  const code=httpCodeOf({key:to, label:name}) || codeGuess;
+  const titlePreview=code?(code+'·'+name):name;
+  if(!confirm('确认拆分？\n列表标题：'+titlePreview+'（与 429·免费额度用尽 同风格）\n错误信息：'+(display_msg||name||'（系统默认）')+'\n\n内部路由自动生成，无需关心\n默认动作：仅观察（可稍后改阶梯）')) return;
   try{
-    const r=await j('/errors/reclassify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({from:'unmatched',to:(suggestKey||('reason:'+shape)),label:name,shape:shape})});
-    toast('已拆分「'+name+'」'+(r.moved!=null?(' · 移动 '+r.moved+' 条'):''));
+    const r=await j('/errors/reclassify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({from:'unmatched',to:to,label:name,display_msg:display_msg,shape:shape})});
+    toast('已拆分「'+(code?(code+'·'+name):name)+'」'+(r.moved!=null?(' · 移动 '+r.moved+' 条'):'')+' · key='+to);
+    const map=loadErrExpanded(); map[to]=true; saveErrExpanded(map);
     ERR_RENDERED=false; await loadErrors(true);
   }catch(e){ toast(e.message) }
 }
@@ -1497,16 +2177,17 @@ function fillPatrolForm(cfg){
   set('pBatch', cfg.patrol_batch_size!=null?cfg.patrol_batch_size:500);
   set('pModel', cfg.patrol_model||'grok-4.5');
   set('pProxy', cfg.patrol_proxy_url||'');
-  set('pTick', cfg.tick_seconds||30);
-  set('p403', cfg.permission_cooldown_seconds||1800);
-  set('p401', cfg.auth401_cooldown_seconds||3600);
-  set('pMaxReset', cfg.max_reset_seconds!=null?cfg.max_reset_seconds:86400);
-  const re=document.getElementById('pReopen');
-  if(re && document.activeElement!==re) re.checked=!!cfg.reopen_foreign_disabled;
+  const modeEl=document.getElementById('pMode');
+  if(modeEl && document.activeElement!==modeEl){
+    let m=String(cfg.patrol_mode||'enabled').toLowerCase();
+    if(m==='full'||m==='active') m='enabled';
+    if(!['all','enabled','cooldown','permanent','candidate','trash'].includes(m)) m='enabled';
+    modeEl.value=m;
+  }
   syncPatrolPanels();
 }
 function markPatrolDirty(){ PATROL_CFG_DIRTY=true; }
-['pInterval','pTimeout','pConc','pBatch','pModel','pProxy','pTick','p403','p401','pMaxReset','pReopen'].forEach(id=>{
+['pInterval','pTimeout','pConc','pBatch','pModel','pProxy','pMode'].forEach(id=>{
   // bound after DOM ready via refresh; also attach now if present
   const el=document.getElementById(id);
   if(el){ el.addEventListener('input', markPatrolDirty); el.addEventListener('change', markPatrolDirty); }
@@ -1541,30 +2222,39 @@ async function savePatrolCfg(){
       patrol_batch_size: Number(document.getElementById('pBatch').value||500),
       patrol_model: (document.getElementById('pModel').value||'grok-4.5').trim(),
       patrol_proxy_url: (document.getElementById('pProxy').value||'').trim(),
-      tick_seconds: Number(document.getElementById('pTick')?.value||30),
-      permission_cooldown_seconds: Number(document.getElementById('p403')?.value||1800),
-      auth401_cooldown_seconds: Number(document.getElementById('p401')?.value||3600),
-      max_reset_seconds: Number(document.getElementById('pMaxReset')?.value||86400),
-      reopen_foreign_disabled: !!document.getElementById('pReopen')?.checked,
+      patrol_mode: (document.getElementById('pMode')?.value||'enabled').trim(),
     };
     CFG=await j('/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     PATROL_CFG_DIRTY=false;
     fillPatrolForm(CFG);
-    toast('已保存（双向同步）：面板 → 宿主配置 + 本地 overrides');
+    toast('已保存（双向同步）：面板 → 宿主配置 + 本地 overrides · 自动范围='+(CFG.patrol_mode||body.patrol_mode));
     const hint=document.getElementById('persistHint');
-    if(hint) hint.textContent='双向同步已写 · batch='+(CFG.patrol_batch_size||'?')+' · 官方页改也会同步回来';
+    if(hint) hint.textContent='双向同步已写 · mode='+(CFG.patrol_mode||body.patrol_mode)+' · batch='+(CFG.patrol_batch_size||'?');
   }catch(e){ toast('保存失败:'+e.message) }
+}
+function patrolModeLabel(mode){
+  const m=String(mode||'enabled').toLowerCase();
+  if(m==='all') return '全部';
+  if(m==='cooldown'||m==='cool') return '冷却';
+  if(m==='permanent'||m==='manual') return '永久禁用';
+  if(m==='candidate'||m==='候删') return '候删';
+  if(m==='trash'||m==='trashed'||m==='垃圾箱') return '垃圾箱';
+  if(m==='full'||m==='enabled'||m==='active') return '启用';
+  return m||'启用';
 }
 async function patrolStart(mode){
   try{
     // save current form first so run uses latest knobs
     if(PATROL_CFG_OPEN) await savePatrolCfg();
-    const r=await j('/patrol/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:mode||'full'})});
+    const m=mode||'enabled';
+    const ok=window.confirm('确认启动巡查？\n范围：'+patrolModeLabel(m)+'\n\n会真实请求 xAI，可能消耗额度。\n误触请点取消。');
+    if(!ok) return;
+    const r=await j('/patrol/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:m})});
     // when running, auto show progress; keep log closed unless user opened it
     paintPatrol(r.patrol||{}, []);
-    toast(mode==='cooldown'?'已启动：仅查冷却号':'已启动：全量（哨兵未禁用号 · 实探 · 按真实结果）');
+    toast('已启动手动巡查 · 范围：'+patrolModeLabel(m));
     if(PATROL_TIMER) clearInterval(PATROL_TIMER);
-    PATROL_TIMER=setInterval(patrolPoll, 1200);
+    PATROL_TIMER=setInterval(patrolPoll, 800);
     patrolPoll();
   }catch(e){ toast('巡查启动失败:'+e.message) }
 }
@@ -1572,14 +2262,30 @@ async function patrolPoll(){
   try{
     const r=await j('/patrol/status');
     paintPatrol(r.patrol||{}, r.history||[]);
+    // while running: refresh account table + action log so each probe's HandleUsage shows up live
+    if(r.patrol&&r.patrol.running){
+      try{
+        const qs=new URLSearchParams({view:document.getElementById('view')?.value||'focus'});
+        const q=(document.getElementById('q')?.value||'').trim(); if(q) qs.set('q',q);
+        const stf=document.getElementById('stateFilter')?.value; if(stf) qs.set('state',stf);
+        const logQS=new URLSearchParams({limit:String(LOG_LIMIT||80), offset:'0'});
+        if(q) logQS.set('q', q);
+        const [st, lg]=await Promise.all([
+          j('/state?'+qs.toString()),
+          j('/logs?'+logQS.toString()).catch(()=>({logs:[],page:{}}))
+        ]);
+        if(st){
+          renderKPIs(st.summary, st.trash_count||0, st.cooldown_stats||{}, st.inventory||{}, st.usage||{});
+          fillStateFilter(st.state_filters, st.summary);
+          const prevSel=typeof selectedAuths==='function'? selectedAuths():[];
+          if(st.accounts) renderAccountRows(st.accounts, prevSel);
+        }
+        if(lg&&lg.logs) renderLogs(lg.logs);
+      }catch(e){}
+    }
     if(!(r.patrol&&r.patrol.running)){
       if(PATROL_TIMER){ clearInterval(PATROL_TIMER); PATROL_TIMER=null; }
-      // refresh accounts/logs after finish (avoid loop if already on patrol tab)
-      if(CURRENT_TAB!=='patrol') await refresh();
-      else {
-        // still refresh logs lightly
-        try{ const st=await j('/state?view=focus'); renderLogs(st.logs||LAST_LOGS); }catch(e){}
-      }
+      await refresh();
     }
   }catch(e){}
 }
@@ -1590,7 +2296,9 @@ function paintPatrol(p, history){
     const last=p.last_patrol_at||p.finished_at||p.started_at||'-';
     const next=p.next_patrol_at||'-';
     const hint=p.next_patrol_hint?(' · '+p.next_patrol_hint):'';
-    sch.textContent='巡查：上次 '+last+' · 下次 '+next+hint;
+    const modeLab=patrolModeLabel((CFG&&CFG.patrol_mode)||p.patrol_mode||p.mode||'enabled');
+    const on=(CFG&&CFG.patrol_enabled)?'开':'关';
+    sch.textContent='巡查：上次 '+last+' · 下次 '+next+hint+' · 定时'+on+' · 自动范围 '+modeLab;
   }
   const total=Number(p.total||0);
   const probed=Number(p.probed||0);
@@ -1618,25 +2326,29 @@ function paintPatrol(p, history){
   if(bar) bar.style.width=pct+'%';
   if(pt) pt.textContent=probed+' / '+total+(p.running?' · 进行中':'');
   if(pp) pp.textContent=pct+'%';
-  // job list: current running + history
+  // job list: current running + history (keep every finished job)
   const box=document.getElementById('patrolJobs');
   if(!box) return;
   const jobs=[];
+  // When finished, patrol status often mirrors newest history entry — avoid double-push
+  // only if started_at+finished_at+mode all match. Never drop other history by bare id
+  // (after restart both jobs could be named job-1 historically).
+  const curKey=(p.started_at||'')+'|'+(p.finished_at||'')+'|'+(p.mode||'');
   if(p.running || (p.logs&&p.logs.length) || p.finished_at || p.started_at){
-    jobs.push(Object.assign({}, p, {id: p.id||'current', _current: !!p.running}));
+    jobs.push(Object.assign({}, p, {id: p.id||('current-'+curKey), _current: !!p.running}));
   }
   (history||[]).forEach(h=>{
     if(!h) return;
-    // skip duplicate of current finished snapshot
-    if(p.id && h.id===p.id && !p.running) return;
-    if(!p.running && p.started_at && h.started_at===p.started_at && h.finished_at===p.finished_at) return;
+    const hk=(h.started_at||'')+'|'+(h.finished_at||'')+'|'+(h.mode||'');
+    // skip only exact same snapshot as the top "current" card
+    if(!p.running && curKey && hk===curKey) return;
     jobs.push(h);
   });
-  // dedupe by id/started
+  // dedupe by started_at+mode+finished_at (not bare id)
   const seen=new Set();
   const uniq=[];
   jobs.forEach(j=>{
-    const k=j.id||(j.started_at+'|'+j.finished_at+'|'+j.mode);
+    const k=(j.started_at||'')+'|'+(j.finished_at||'')+'|'+(j.mode||'')+'|'+(j.id||'');
     if(seen.has(k)) return;
     seen.add(k); uniq.push(j);
   });
@@ -1645,17 +2357,18 @@ function paintPatrol(p, history){
     return;
   }
   if(!window.PATROL_OPEN_JOBS) window.PATROL_OPEN_JOBS=new Set();
-  // auto-open current running
-  uniq.forEach(j=>{ if(j.running||j._current) PATROL_OPEN_JOBS.add(j.id||'current'); });
+  // auto-open current running; keep previously opened cards
+  uniq.forEach(j=>{ if(j.running||j._current) PATROL_OPEN_JOBS.add(j.id||j.started_at||'current'); });
   box.innerHTML=uniq.slice(0,30).map(j=>{
-    const id=esc(j.id||'job');
-    const open=PATROL_OPEN_JOBS.has(j.id||'current') || PATROL_OPEN_JOBS.has(j.id);
-    const mode=j.mode==='cooldown'?'仅冷却号':'全量';
+    const id=esc(j.id||((j.started_at||'')+'-'+(j.mode||'job')));
+    const openKey=j.id||j.started_at||'current';
+    const open=PATROL_OPEN_JOBS.has(openKey) || PATROL_OPEN_JOBS.has(j.id) || PATROL_OPEN_JOBS.has(j.started_at);
+    const mode=patrolModeLabel(j.mode);
     const state=j.running?'进行中':(j.message||'完成');
     const title=(j.started_at||'-')+' · '+mode+' · '+state;
     const sub='目标 '+(j.total||0)+' · 探测 '+(j.probed||0)+' · 存活 '+(j.alive||0)+' · 冷却信号 '+(j.cooldown||0)+' · 异常 '+(j.errors||0)+(j.finished_at?(' · 结束 '+j.finished_at):'');
     const logs=j.logs||[];
-    const logHtml=logs.length? logs.slice().reverse().slice(0,200).map(l=>{
+    const logHtml=logs.length? logs.slice().reverse().slice(0,300).map(l=>{
       const lv=l.level||'info';
       let who=l.label||l.auth||'';
       let msg=l.text||'';
@@ -1686,6 +2399,35 @@ function selAll(on){
   document.querySelectorAll('.rowchk').forEach(el=>{el.checked=!!on});
   const all=document.getElementById('chkAll'); if(all) all.checked=!!on;
 }
+
+async function bulkRelogin(){
+  const auths=selectedAuths();
+  if(!auths.length){ toast('请先勾选账号'); return; }
+  const emails=[];
+  for(const id of auths){
+    const a=findAccountByAuth(id);
+    if(a&&a.can_relogin){
+      if(a.email) emails.push(a.email);
+    }
+  }
+  if(!emails.length){ toast('勾选中没有云端可重登账号（需本地有密码）'); return; }
+  if(!confirm('对 '+emails.length+' 个云端库存账号发起重登？')) return;
+  try{
+    const r=await j('/register/relogin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({emails, auths})});
+    toast('已发起重登 · 本地'+(r.result&&r.result.local?r.result.local.length:emails.length)+' · 跳过'+(r.result&&r.result.skipped?r.result.skipped.length:0));
+  }catch(e){ toast('重登失败:'+e.message) }
+}
+async function reloginOne(auth){
+  const a=findAccountByAuth(auth);
+  if(!a||!a.can_relogin){ toast('该账号不是云端可重登号（需本地有密码）'); return; }
+  try{
+    const body={auths:[auth]};
+    if(a.email) body.emails=[a.email];
+    await j('/register/relogin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    toast('已发起重登 · '+(a.email||auth));
+  }catch(e){ toast('重登失败:'+e.message) }
+}
+
 async function bulk(action){
   const auths=selectedAuths();
   if(!auths.length){ toast('请先勾选账号'); return; }
@@ -1727,6 +2469,252 @@ const saved=localStorage.getItem(KEY_LS)||''; if(saved) document.getElementById(
 syncMaskBtn();
 syncPatrolPanels();
 refresh(); setInterval(refresh,8000);
+
+let REG_CFG_OPEN=false, REG_LOG_OPEN=false, REG_TIMER=null, REG_LAST=null;
+function syncRegPanels(){
+  const p=document.getElementById('regCfgPanel');
+  const b=document.getElementById('btnRegCfg');
+  if(p){
+    p.classList.toggle('open', !!REG_CFG_OPEN);
+    // also clear any leftover inline style from old toggle
+    if(p.style) p.style.display='';
+  }
+  if(b) b.textContent=REG_CFG_OPEN?'配置 ▴':'配置 ▾';
+}
+function toggleRegCfg(){
+  REG_CFG_OPEN=!REG_CFG_OPEN;
+  syncRegPanels();
+  if(REG_CFG_OPEN) fillRegForm(CFG);
+}
+function healthBadge(el, level, label, tip){
+  if(!el) return;
+  const map={ok:'#16a34a',warn:'#d97706',error:'#dc2626',unknown:'#64748b'};
+  const zh={ok:'正常',warn:'警告',error:'异常',unknown:'未知'};
+  el.textContent=label+'·'+(zh[level]||level||'—');
+  el.style.background=(level==='ok')?'#ecfdf5':(level==='warn')?'#fffbeb':(level==='error')?'#fef2f2':'#f1f5f9';
+  el.style.color=map[level]||'#64748b';
+  el.style.border='1px solid '+(map[level]||'#cbd5e1')+'33';
+  el.title=tip||'';
+}
+function fillRegForm(cfg){
+  cfg=cfg||CFG||{};
+  const set=(id,v)=>{const el=document.getElementById(id); if(!el) return; if(el.type==='checkbox') el.checked=!!v; else if(document.activeElement!==el) el.value=(v==null?'':v);};
+  set('rEnabledTop', cfg.register_enabled);
+  set('rFloorTop', cfg.register_floor_enabled);
+  set('rAutoTop', cfg.register_auto_enabled);
+  set('rBase', cfg.register_base_url||'http://192.168.1.68:8788');
+  set('rAdmin', cfg.register_admin_base||'/admin');
+  set('rPass', '');
+  const passEl=document.getElementById('rPass');
+  if(passEl && document.activeElement!==passEl) passEl.placeholder=cfg.register_password_set?'已设置，留空不改':'未设置';
+  set('rTimeout', cfg.register_timeout_sec||30);
+  set('rDefCount', cfg.register_manual_default_count||10);
+  set('rMaxCount', cfg.register_manual_max_count||50);
+  set('rFloorMin', cfg.register_floor_min_pool||100);
+  set('rFloorCount', cfg.register_floor_count||10);
+  set('rFloorInt', cfg.register_floor_interval_sec||600);
+  set('rAutoInt', cfg.register_auto_interval_sec||3600);
+  set('rAutoCount', cfg.register_auto_count||10);
+  set('rDry', cfg.register_dry_run);
+  set('rRelog401', cfg.register_relogin_on_auth401!==false);
+  set('rRelogMax', cfg.register_relogin_max_streak||2);
+  set('rRelogConc', cfg.register_relogin_concurrency||2);
+  syncRegPanels();
+}
+async function saveRegCfg(){
+  try{
+    const body={
+      register_enabled: !!document.getElementById('rEnabledTop')?.checked,
+      register_base_url: (document.getElementById('rBase')?.value||'').trim(),
+      register_admin_base: (document.getElementById('rAdmin')?.value||'/admin').trim(),
+      register_timeout_sec: Number(document.getElementById('rTimeout')?.value||30),
+      register_manual_default_count: Number(document.getElementById('rDefCount')?.value||10),
+      register_manual_max_count: Number(document.getElementById('rMaxCount')?.value||50),
+      register_floor_enabled: !!document.getElementById('rFloorTop')?.checked,
+      register_floor_min_pool: Number(document.getElementById('rFloorMin')?.value||100),
+      register_floor_count: Number(document.getElementById('rFloorCount')?.value||10),
+      register_floor_interval_sec: Number(document.getElementById('rFloorInt')?.value||600),
+      register_auto_enabled: !!document.getElementById('rAutoTop')?.checked,
+      register_auto_interval_sec: Number(document.getElementById('rAutoInt')?.value||3600),
+      register_auto_count: Number(document.getElementById('rAutoCount')?.value||10),
+      register_auto_only_when_idle: true,
+      register_auto_require_health_ok: true,
+      register_auto_pause_on_low_success: true,
+      register_require_cpa_ok: true,
+      register_dry_run: !!document.getElementById('rDry')?.checked,
+      register_relogin_on_auth401: !!document.getElementById('rRelog401')?.checked,
+      register_relogin_max_streak: Number(document.getElementById('rRelogMax')?.value||2),
+      register_relogin_concurrency: Number(document.getElementById('rRelogConc')?.value||2),
+    };
+    const pw=(document.getElementById('rPass')?.value||'').trim();
+    if(pw) body.register_password=pw;
+    const raw=await j('/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    // accept flat Redact or {config, persist_error}
+    const cfg=(raw && raw.config && typeof raw.config==='object')? raw.config : raw;
+    if(cfg && typeof cfg==='object'){ CFG=Object.assign(CFG||{}, cfg); }
+    fillRegForm(CFG);
+    if(raw && raw.persist_error){
+      toast('配置已应用，但持久化失败：'+raw.persist_error);
+      const hint=document.getElementById('regPersistHint');
+      if(hint) hint.textContent='持久化失败：'+raw.persist_error;
+      return;
+    }
+    toast('注册配置已保存 · 保底'+(CFG.register_floor_enabled?'开':'关')+' · 定时'+(CFG.register_auto_enabled?'开':'关'));
+    const hint=document.getElementById('regPersistHint');
+    if(hint) hint.textContent='已写入 overrides + 宿主 · 日池阈值(保底)='+(CFG.register_floor_min_pool||'?')+' · 补号'+(CFG.register_floor_count||'?');
+  }catch(e){ toast('保存失败:'+e.message) }
+}
+function paintRegister(st, history){
+  REG_LAST=st||{};
+  const h=st.health||{};
+  const sw=st.success_window||{};
+  healthBadge(document.getElementById('rhBackend'), h.backend, '后端', h.backend_msg||'');
+  healthBadge(document.getElementById('rhSession'), h.session, '会话', h.session_msg||'');
+  healthBadge(document.getElementById('rhCPA'), h.cpa, 'CPA通道', (h.cpa_msg||'')+(h.remote_backend?(' · remote='+h.remote_backend):''));
+  const rateLevel=sw.level||'unknown';
+  healthBadge(document.getElementById('rhRate'), rateLevel, '近窗成功率', (sw.label||'样本不足')+' · 点击可重置');
+  const sch=document.getElementById('regSchedule');
+  if(sch) sch.textContent=st.schedule||'注册：—';
+  const note=document.getElementById('regReloginNote');
+  if(note) note.textContent='重登说明：'+(st.relogin_note||'仅 8788 本地有真实 xAI 密码的账号可重登；非本机无密码号不可重登。');
+  const cur=st.current||null;
+  const stEl=document.getElementById('regStatus');
+  const meta=document.getElementById('regMeta');
+  let total=0, done=0, running=false;
+  if(cur){
+    total=Number(cur.total||cur.count_requested||0);
+    done=Number(cur.done||0);
+    running=cur.status==='running';
+    if(stEl) stEl.textContent=(running?'进行中':'')+ (cur.message?(' · '+cur.message):(' · '+ (cur.status||''))) + (cur.batch_id?(' · '+cur.batch_id):'');
+    if(meta) meta.textContent=running? (done+'/'+total) : (cur.status||'—');
+  }else{
+    if(stEl) stEl.textContent=st.enabled?'空闲':'未启用';
+    if(meta) meta.textContent=st.enabled?'就绪':'关';
+  }
+  // indeterminate when running but done=0
+  let pct=0;
+  if(total>0) pct=Math.min(100, Math.round(done*100/total));
+  else if(running) pct=8; // pulse start
+  const bar=document.getElementById('regBar');
+  if(bar){
+    bar.style.width=pct+'%';
+    bar.style.background=running?'linear-gradient(90deg,#409eff,#66b1ff)':(cur&&cur.status==='failed'?'#f56c6c':'linear-gradient(90deg,#409eff,#66b1ff)');
+  }
+  const pt=document.getElementById('regProgText');
+  if(pt){
+    const succ=cur?Number(cur.success||0):0;
+    const fail=cur?Number(cur.failed||0):0;
+    pt.textContent=running?(`${done||0} / ${total||0} · 成功${succ} 失败${fail}`):((cur?(`${done||0}/${total||0} · ${cur.status||''}`):'0 / 0'));
+  }
+  const pp=document.getElementById('regProgPct');
+  if(pp) pp.textContent=pct+'%';
+  // jobs: same collapsible job-card style as patrol
+  const box=document.getElementById('regJobs');
+  if(box){
+    let list=Array.isArray(history)?history.slice():[];
+    if(cur){
+      list=[{...cur, _current: cur.status==='running'}, ...list.filter(j=>j.id!==cur.id)];
+    }
+    if(!window.REG_OPEN_JOBS) window.REG_OPEN_JOBS=new Set();
+    if(running && cur){
+      REG_OPEN_JOBS.add(cur.id||cur.started_at||'current');
+    }
+    if(!list.length){
+      box.innerHTML='<div class="meta" style="padding:8px">暂无注册任务 · 点开每条可看该次注册日志（与右侧动作日志分开）</div>';
+    }else{
+      box.innerHTML=list.slice(0,30).map(j=>{
+        const src=j.source==='floor'?'保底':(j.source==='auto'?'定时':(j.source==='remote'?'同步':'手动'));
+        const id=esc(j.id||((j.started_at||'')+'-'+(j.source||'job')));
+        const openKey=j.id||j.started_at||'current';
+        const open=REG_OPEN_JOBS.has(openKey)||REG_OPEN_JOBS.has(j.id)||!!j._current;
+        const state=j.status==='running'||j._current?'进行中':(j.status||'完成');
+        const title=(j.started_at||'-')+' · '+src+' · '+state;
+        const sub='进度 '+(j.done||0)+'/'+(j.total||j.count_requested||0)+' · 成功 '+(j.success||0)+' · 失败 '+(j.failed||0)+(j.batch_id?(' · '+j.batch_id):'')+(j.finished_at?(' · 结束 '+j.finished_at):'');
+        const logs=Array.isArray(j.logs)?j.logs:[];
+        const logHtml=logs.length? logs.slice().reverse().slice(0,200).map(l=>{
+          const lv=l.level||'info';
+          return '<div class="pl"><div class="pt">'+esc(l.at||'')+'</div><div class="pm '+lv+'">'+esc(l.text||'')+'</div></div>';
+        }).join('') : '<div class="meta" style="padding:8px;color:#93a4c3">'+(j.message?esc(j.message):'无明细日志')+'</div>';
+        return '<div class="job-card '+(open?'open':'')+'" data-job="'+id+'">'+
+          '<div class="job-head" onclick="toggleRegJob(this)">'+
+            '<div><span class="job-chev">▸</span><span class="jh-title">'+esc(title)+'</span></div>'+
+            '<div class="jh-meta">'+esc(sub)+'</div>'+
+          '</div>'+
+          '<div class="job-body"><div class="patrol-log" style="max-height:220px;border-radius:0">'+logHtml+'</div></div>'+
+        '</div>';
+      }).join('');
+    }
+  }
+}
+function toggleRegJob(el){
+  const card=el.closest('.job-card');
+  if(!card) return;
+  const id=card.getAttribute('data-job')||'';
+  if(!window.REG_OPEN_JOBS) window.REG_OPEN_JOBS=new Set();
+  const open=card.classList.toggle('open');
+  if(open) REG_OPEN_JOBS.add(id); else REG_OPEN_JOBS.delete(id);
+}
+async function resetRegisterSuccessWindow(){
+  if(!confirm('重置近窗注册成功率？\n会清空面板侧最近注册任务统计（不影响 8788 已注册账号）。')) return;
+  try{
+    const r=await j('/register/success-reset',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    toast('已重置近窗成功率');
+    registerPoll(true);
+  }catch(e){ toast('重置失败:'+e.message) }
+}
+async function registerPoll(force){
+  try{
+    const st=await j('/register/status');
+    let hist=[];
+    try{ const hj=await j('/register/jobs'); hist=hj.history||[]; }catch(e){}
+    paintRegister(st, hist);
+    if(st.current && st.current.status==='running'){
+      if(REG_TIMER) clearInterval(REG_TIMER);
+      REG_TIMER=setInterval(()=>registerPoll(false), 800);
+    }else if(REG_TIMER && !force){
+      clearInterval(REG_TIMER); REG_TIMER=null;
+    }
+  }catch(e){
+    const sch=document.getElementById('regSchedule');
+    if(sch) sch.textContent='注册：加载失败 '+e.message;
+  }
+}
+async function registerTest(){
+  try{
+    if(REG_CFG_OPEN) await saveRegCfg();
+    const r=await j('/register/test',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    paintRegister(r.status||{}, (await j('/register/jobs').catch(()=>({history:[]}))).history||[]);
+    const h=r.health||{};
+    toast('连接检测：后端'+h.backend+' · 会话'+h.session+' · CPA '+h.cpa);
+  }catch(e){ toast('测试失败:'+e.message) }
+}
+async function registerStart(){
+  try{
+    if(REG_CFG_OPEN) await saveRegCfg();
+    const def=Number(document.getElementById('rDefCount')?.value||CFG.register_manual_default_count||10);
+    const max=Number(document.getElementById('rMaxCount')?.value||CFG.register_manual_max_count||50);
+    let n=prompt('注册数量（1-'+max+'）', String(def));
+    if(n==null) return;
+    n=Number(n);
+    if(!n||n<1){ toast('数量无效'); return; }
+    if(n>max) n=max;
+    if(!confirm('确认手动注册 '+n+' 个账号？\n\n将请求云端注册后端，可能耗时数分钟。')) return;
+    await j('/register/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({count:n})});
+    toast('已启动注册 · count='+n);
+    REG_LOG_OPEN=true; syncRegPanels();
+    if(REG_TIMER) clearInterval(REG_TIMER);
+    REG_TIMER=setInterval(()=>registerPoll(false), 800);
+    registerPoll(true);
+  }catch(e){ toast('启动失败:'+e.message) }
+}
+async function registerStop(){
+  try{
+    await j('/register/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    toast('已请求停止');
+    registerPoll(true);
+  }catch(e){ toast('停止失败:'+e.message) }
+}
+
 </script>
 </body>
 </html>

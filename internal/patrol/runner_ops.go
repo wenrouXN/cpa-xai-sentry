@@ -14,14 +14,61 @@ import (
 )
 
 // Mode selects which accounts to probe.
-// full = currently enabled xAI only
-// cooldown = plugin_auto cooling accounts only
+//
+//	all        = every xAI with a token (any sentry state)
+//	enabled    = sentry not cool/候删/永禁/垃圾箱 (旧名 full)
+//	cooldown   = sentry cool-down only
+//	permanent  = sentry permanent disable (user_manual) only
+//	candidate  = sentry 候删 (candidate_dead) only
+//	trash      = sentry 垃圾箱 (trashed) only
 type Mode string
 
 const (
-	ModeFull     Mode = "full"
-	ModeCooldown Mode = "cooldown"
+	ModeAll       Mode = "all"
+	ModeEnabled   Mode = "enabled" // legacy alias: "full"
+	ModeFull      Mode = "full"    // = enabled (kept for old clients)
+	ModeCooldown  Mode = "cooldown"
+	ModePermanent Mode = "permanent"
+	ModeCandidate Mode = "candidate"
+	ModeTrash     Mode = "trash"
 )
+
+// ParseMode normalizes user/API input to a known Mode. Unknown → enabled.
+func ParseMode(s string) Mode {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "all", "全部", "any":
+		return ModeAll
+	case "enabled", "full", "active", "启用", "可接流":
+		return ModeEnabled
+	case "cooldown", "cool", "spending", "冷却":
+		return ModeCooldown
+	case "permanent", "manual", "disabled", "user_manual", "永久禁用", "永禁":
+		return ModePermanent
+	case "candidate", "候删", "候选", "candidate_dead":
+		return ModeCandidate
+	case "trash", "trashed", "垃圾箱", "箱":
+		return ModeTrash
+	default:
+		return ModeEnabled
+	}
+}
+
+func ModeLabel(m Mode) string {
+	switch ParseMode(string(m)) {
+	case ModeAll:
+		return "全部"
+	case ModeCooldown:
+		return "冷却"
+	case ModePermanent:
+		return "永久禁用"
+	case ModeCandidate:
+		return "候删"
+	case ModeTrash:
+		return "垃圾箱"
+	default:
+		return "启用"
+	}
+}
 
 type Status struct {
 	Running    bool      `json:"running"`
@@ -59,7 +106,7 @@ var (
 	jobSeq     int
 )
 
-const maxJobHistory = 30
+const maxJobHistory = 10
 
 // historyPath is set once from sentry state dir so job history survives restarts.
 var historyPath string
@@ -144,6 +191,41 @@ func (r *Runner) History() []Status {
 	return out
 }
 
+
+// HistoryPage returns a paginated slice of recent finished jobs.
+// limit=0 means default 10, max 50. offset is 0-based.
+// maxLogs caps logs per job (0 = no logs, -1 = all logs).
+func (r *Runner) HistoryPage(limit, offset, maxLogs int) ([]Status, int) {
+	jobMu.Lock()
+	defer jobMu.Unlock()
+	total := len(jobHistory)
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= total {
+		return []Status{}, total
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	out := make([]Status, end-offset)
+	for i, j := offset, 0; i < end; i, j = i+1, j+1 {
+		s := jobHistory[i]
+		if maxLogs >= 0 && len(s.Logs) > maxLogs {
+			s.Logs = s.Logs[:maxLogs]
+		}
+		out[j] = s
+	}
+	return out, total
+}
+
 func (r *Runner) Start(ctx context.Context, mode Mode) (Status, error) {
 	jobMu.Lock()
 	if jobStatus.Running {
@@ -152,16 +234,19 @@ func (r *Runner) Start(ctx context.Context, mode Mode) (Status, error) {
 		return st, nil
 	}
 	if mode == "" {
-		mode = ModeFull
+		mode = ModeEnabled
 	}
+	mode = ParseMode(string(mode))
 	jobSeq++
-	id := "job-" + itoa(jobSeq)
+	// Unique across process restarts: timestamp + seq (old "job-1" collided after reload
+	// and UI dropped history entries sharing the same id).
+	id := "job-" + time.Now().In(time.FixedZone("CST", 8*3600)).Format("20060102-150405") + "-" + itoa(jobSeq)
 	jobStatus = Status{
 		Running:   true,
 		Mode:      string(mode),
 		ID:        id,
 		StartedAt: time.Now().In(time.FixedZone("CST", 8*3600)).Format("01-02 15:04:05"),
-		Message:   "巡查进行中",
+		Message:   "巡查进行中 · " + ModeLabel(mode),
 	}
 	jobLogs = nil
 	jobMu.Unlock()
@@ -175,6 +260,7 @@ func (r *Runner) runJob(ctx context.Context, mode Mode) {
 		jobMu.Lock()
 		jobStatus.Running = false
 		jobStatus.FinishedAt = time.Now().In(time.FixedZone("CST", 8*3600)).Format("01-02 15:04:05")
+		r.patrolFinishedAt = time.Now()
 		if jobStatus.Message == "巡查进行中" {
 			jobStatus.Message = "巡查完成"
 		}
@@ -191,6 +277,12 @@ func (r *Runner) runJob(ctx context.Context, mode Mode) {
 		jobMu.Unlock()
 	}()
 
+	// Refresh Guard reference from Runtime to avoid stale pointer after rebuild.
+	if r.GetGuard != nil {
+		if fresh := r.GetGuard(); fresh != nil {
+			r.Guard = fresh
+		}
+	}
 	if r == nil || r.Guard == nil {
 		r.appendLog("", "", 0, "err", "runtime 未就绪", "")
 		jobMu.Lock()
@@ -211,81 +303,52 @@ func (r *Runner) runJob(ctx context.Context, mode Mode) {
 	jobMu.Lock()
 	jobStatus.Total = len(targets)
 	jobMu.Unlock()
-	r.appendLog("", "", 0, "info", "开始巡查 · 模式="+string(mode)+" · 探测目标="+itoa(len(targets)), "start")
+	r.appendLog("", "", 0, "info", "开始巡查 · 模式="+ModeLabel(mode)+"("+string(mode)+") · 探测目标="+itoa(len(targets)), "start")
 	if r.Guard.State != nil {
 		r.Guard.State.Log(state.ActionLog{
 			Source: "patrol", Action: "patrol_start",
-			Reason: "mode=" + string(mode) + " probe=" + itoa(len(targets)),
+			Reason: "mode=" + string(mode) + " label=" + ModeLabel(mode) + " probe=" + itoa(len(targets)),
 		})
 	}
 	if len(targets) == 0 {
-		r.appendLog("", "", 0, "warn", "没有可巡查目标（全量=哨兵未禁用且可接流；仅冷却=哨兵冷却中）", "")
+		r.appendLog("", "", 0, "warn", "没有可巡查目标（模式="+ModeLabel(mode)+"：全部/启用/冷却/永禁/候删/垃圾箱）", "")
 		return
 	}
 
-	// run probes (existing Run feeds HandleUsage with real status/body)
+	// run probes (existing Run feeds HandleUsage with real status/body;
+	// each probe also appends job log live via appendProbeResultLive)
 	results := r.Run(ctx, targets)
 	alive, cool, sig, errs := 0, 0, 0, 0
 	// cool = free-usage/402 cool-down signals from real probe
 	// sig  = 401/403 auth signals (fed to policy)
+	// recount from results for final summary (live counters already bumped)
 	for _, res := range results {
-		label := res.AuthIndex
-		// find target label
-		for _, t := range targets {
-			if t.AuthIndex == res.AuthIndex {
-				if t.Email != "" {
-					label = t.Email
-				} else if t.FileName != "" {
-					label = t.FileName
-				}
-				break
-			}
-		}
 		if res.Err != "" {
 			errs++
-			r.appendLog(res.AuthIndex, label, res.StatusCode, "err", "探测失败："+res.Err, "probe_error")
 			continue
 		}
 		if res.StatusCode >= 200 && res.StatusCode < 300 {
 			alive++
-			r.appendLog(res.AuthIndex, label, res.StatusCode, "ok", "探测存活", "alive")
 			continue
 		}
 		body := strings.ToLower(res.Body)
 		if res.StatusCode == 429 || strings.Contains(body, "free-usage") {
 			cool++
-			r.appendLog(res.AuthIndex, label, res.StatusCode, "warn", "探测到免费额度用尽，已交策略处理", "cooldown")
 			continue
 		}
 		if res.StatusCode == 402 {
 			cool++
-			r.appendLog(res.AuthIndex, label, res.StatusCode, "warn", "探测到消费限额，已交策略处理", "cooldown")
 			continue
 		}
 		if res.StatusCode == 401 || res.StatusCode == 403 {
 			sig++
-			r.appendLog(res.AuthIndex, label, res.StatusCode, "warn", "探测到权限/凭证异常 HTTP "+itoa(res.StatusCode)+"，已交策略处理", "signal")
 			continue
 		}
 		if res.StatusCode >= 400 {
-			hint := strings.TrimSpace(res.Body)
-			if len(hint) > 120 {
-				hint = hint[:120]
-			}
-			if strings.Contains(strings.ToLower(hint), "<html") {
-				hint = "路径/网关 404（请检查 base_url 是否已含 /v1 被重复拼接）"
-			}
-			msg := "探测返回 HTTP " + itoa(res.StatusCode)
-			if hint != "" {
-				msg += " · " + hint
-			}
 			errs++
-			r.appendLog(res.AuthIndex, label, res.StatusCode, "err", msg, "http_error")
 			continue
 		}
-		// unexpected 3xx etc. — count as other so totals add up
 		errs++
-		r.appendLog(res.AuthIndex, label, res.StatusCode, "info", "探测完成 HTTP "+itoa(res.StatusCode), "done")
 	}
 	probeN := len(results)
 	msg := "完成：探测" + itoa(probeN) + " · 存活" + itoa(alive) + " · 冷却信号" + itoa(cool) + " · 权限信号" + itoa(sig) + " · 异常" + itoa(errs)
@@ -308,11 +371,14 @@ func (r *Runner) runJob(ctx context.Context, mode Mode) {
 
 
 func (r *Runner) collectTargets(ctx context.Context, mode Mode) []Target {
+	mode = ParseMode(string(mode))
 	out := make([]Target, 0, 64)
-	// Sentry-side "disabled for traffic" = cool-down / 候删 / 永久禁用 / 垃圾箱.
-	// Full patrol = NOT these (哨兵未禁用、仍可能接流). Real HTTP probe; no synthetic 429.
-	blocked := map[string]*state.Account{} // by auth/email/file
-	cooling := map[string]*state.Account{}
+	// Sentry-side buckets for mode filters.
+	blocked := map[string]*state.Account{}   // cool/候删/永禁/垃圾箱 — not "enabled"
+	cooling := map[string]*state.Account{}   // cool-down only
+	permanent := map[string]*state.Account{} // user_manual permanent only
+	candidates := map[string]*state.Account{} // 候删
+	trashed := map[string]*state.Account{}   // 垃圾箱
 	if r.Guard != nil && r.Guard.State != nil {
 		for _, acc := range r.Guard.State.AccountsSnapshot() {
 			keys := []string{}
@@ -326,17 +392,29 @@ func (r *Runner) collectTargets(ctx context.Context, mode Mode) []Target {
 				keys = append(keys, strings.ToLower(strings.TrimSpace(acc.FileName)))
 			}
 			isCool := acc.State == state.CooldownQuota || acc.State == state.CooldownSpending || acc.State == state.CooldownPermission
-			// Full-patrol "sentry disabled" = not schedulable for new traffic.
-			isBlocked := isCool ||
-				acc.State == state.CandidateDead ||
-				acc.State == state.UserManual ||
-				acc.State == state.Trashed ||
-				acc.State == state.Purged ||
-				acc.DisableSource == "user_manual"
-			// Active + residual plugin_auto tag remains probeable
+			isPerm := acc.State == state.UserManual || acc.DisableSource == "user_manual"
+			isCand := acc.State == state.CandidateDead
+			isTrash := acc.State == state.Trashed || acc.State == state.Purged
+			// "enabled" mode excludes anything not schedulable for new traffic
+			isBlocked := isCool || isCand || isPerm || isTrash
 			if isCool {
 				for _, k := range keys {
 					cooling[k] = acc
+				}
+			}
+			if isPerm {
+				for _, k := range keys {
+					permanent[k] = acc
+				}
+			}
+			if isCand {
+				for _, k := range keys {
+					candidates[k] = acc
+				}
+			}
+			if isTrash {
+				for _, k := range keys {
+					trashed[k] = acc
 				}
 			}
 			if isBlocked {
@@ -353,6 +431,18 @@ func (r *Runner) collectTargets(ctx context.Context, mode Mode) []Target {
 		ids = r.Guard.Resolver.All()
 	}
 	seenTarget := map[string]bool{}
+	inMap := func(m map[string]*state.Account, aiKey, emKey, fnKey string) bool {
+		if aiKey != "" && m[aiKey] != nil {
+			return true
+		}
+		if emKey != "" && m[emKey] != nil {
+			return true
+		}
+		if fnKey != "" && m[fnKey] != nil {
+			return true
+		}
+		return false
+	}
 	for _, id := range ids {
 		if !cpaapi.IsXAIName(id.FileName, id.Provider) {
 			continue
@@ -387,10 +477,15 @@ func (r *Runner) collectTargets(ctx context.Context, mode Mode) []Target {
 		emKey := strings.ToLower(strings.TrimSpace(id.Email))
 		fnKey := strings.ToLower(strings.TrimSpace(id.FileName))
 		aiKey := strings.ToLower(strings.TrimSpace(authIdx))
+		if sentryAcc != nil {
+			aiKey = strings.ToLower(strings.TrimSpace(sentryAcc.AuthIndex))
+		}
 		switch mode {
-		case ModeFull:
-			// 全量 = 哨兵侧未禁用（可接流）：Active / 无状态；不含冷却/候删/永禁/垃圾箱
-			// CPA 文件是否 disabled 不作为排除条件 — 有 token 就实探，结果按真实 HTTP 走策略
+		case ModeAll:
+			// every xAI with token — no state filter
+		case ModeEnabled, ModeFull:
+			// 启用 = 哨兵侧未禁用（可接流）：Active / 无状态；不含冷却/候删/永禁/垃圾箱
+			// CPA 文件是否 disabled 不作为排除条件 — 有 token 就实探
 			if sentryAcc != nil {
 				if _, ok := blocked[strings.ToLower(strings.TrimSpace(sentryAcc.AuthIndex))]; ok {
 					continue
@@ -405,25 +500,28 @@ func (r *Runner) collectTargets(ctx context.Context, mode Mode) []Target {
 						continue
 					}
 				}
-			} else {
-				// no sentry row: only skip if listed as blocked under email/file/auth keys
-				if (aiKey != "" && blocked[aiKey] != nil) || (emKey != "" && blocked[emKey] != nil) || (fnKey != "" && blocked[fnKey] != nil) {
-					continue
-				}
+			} else if inMap(blocked, aiKey, emKey, fnKey) {
+				continue
 			}
 		case ModeCooldown:
-			// 仅冷却 = 哨兵冷却中的号（可含 CPA disabled）
-			ok := false
-			if aiKey != "" && cooling[aiKey] != nil {
-				ok = true
+			if !inMap(cooling, aiKey, emKey, fnKey) {
+				continue
 			}
-			if emKey != "" && cooling[emKey] != nil {
-				ok = true
+		case ModePermanent:
+			if !inMap(permanent, aiKey, emKey, fnKey) {
+				continue
 			}
-			if fnKey != "" && cooling[fnKey] != nil {
-				ok = true
+		case ModeCandidate:
+			if !inMap(candidates, aiKey, emKey, fnKey) {
+				continue
 			}
-			if !ok {
+		case ModeTrash:
+			if !inMap(trashed, aiKey, emKey, fnKey) {
+				continue
+			}
+		default:
+			// same as enabled
+			if inMap(blocked, aiKey, emKey, fnKey) {
 				continue
 			}
 		}
@@ -465,13 +563,62 @@ func (r *Runner) appendLog(auth, label string, code int, level, text, action str
 		Auth: auth, Label: label, Code: code, Level: level, Text: text, Action: action,
 	}
 	jobLogs = append(jobLogs, line)
-	if len(jobLogs) > 300 {
-		jobLogs = jobLogs[len(jobLogs)-300:]
+	if len(jobLogs) > 500 {
+		jobLogs = jobLogs[len(jobLogs)-500:]
 	}
 	jobStatus.Logs = append([]LogLine(nil), jobLogs...)
 	if level == "err" {
 		jobStatus.LastError = text
 	}
+}
+
+// appendProbeResultLive writes one job log line as soon as a single probe finishes.
+// Shared by full + cooldown modes (called from Run for every target).
+func (r *Runner) appendProbeResultLive(t Target, res Result) {
+	label := t.Email
+	if label == "" {
+		label = t.FileName
+	}
+	if label == "" {
+		label = res.AuthIndex
+	}
+	if res.Err != "" {
+		r.appendLog(res.AuthIndex, label, res.StatusCode, "err", "探测失败："+res.Err, "probe_error")
+		return
+	}
+	if res.StatusCode >= 200 && res.StatusCode < 300 {
+		r.appendLog(res.AuthIndex, label, res.StatusCode, "ok", "探测存活 · 已交策略/可打开", "alive")
+		return
+	}
+	body := strings.ToLower(res.Body)
+	if res.StatusCode == 429 || strings.Contains(body, "free-usage") {
+		r.appendLog(res.AuthIndex, label, res.StatusCode, "warn", "探测到免费额度用尽，已交策略处理", "cooldown")
+		return
+	}
+	if res.StatusCode == 402 {
+		r.appendLog(res.AuthIndex, label, res.StatusCode, "warn", "探测到消费限额，已交策略处理", "cooldown")
+		return
+	}
+	if res.StatusCode == 401 || res.StatusCode == 403 {
+		r.appendLog(res.AuthIndex, label, res.StatusCode, "warn", "探测到权限/凭证异常 HTTP "+itoa(res.StatusCode)+"，已交策略处理", "signal")
+		return
+	}
+	if res.StatusCode >= 400 {
+		hint := strings.TrimSpace(res.Body)
+		if len(hint) > 120 {
+			hint = hint[:120]
+		}
+		if strings.Contains(strings.ToLower(hint), "<html") {
+			hint = "路径/网关 404（请检查 base_url 是否已含 /v1 被重复拼接）"
+		}
+		msg := "探测返回 HTTP " + itoa(res.StatusCode)
+		if hint != "" {
+			msg += " · " + hint
+		}
+		r.appendLog(res.AuthIndex, label, res.StatusCode, "err", msg, "http_error")
+		return
+	}
+	r.appendLog(res.AuthIndex, label, res.StatusCode, "info", "探测完成 HTTP "+itoa(res.StatusCode), "done")
 }
 
 // bumpPatrolProgress updates live counters for the panel progress bar.

@@ -1,5 +1,216 @@
 # Changelog
 
+## 1.1.82
+
+### 巡查 Guard 刷新 + 分类收紧 + 文档对齐
+- **patrol**：`GetGuard` 热更后刷新 Guard 引用；`IsRunning` 含结束后 30s settle，避免 tick prune 误删刚落盘账号。
+- **match**：`permission_403` 仅匹配 xAI `permission-denied` / chat endpoint denied；泛化 `Access Denied` 不进权限阶梯（补回归测试）。
+- **docs**：README / `registry.json` 对齐当前 **v1.1.82**（注册 Tab、永禁探活、拆分类阶梯、双写配置、严格 403 匹配）。
+
+> 注：1.1.60–1.1.81 明细以 git log / 面板版本为准；本文件自上而下为近期高信号变更，更早条目自 1.1.59 起保留。
+
+
+## 1.1.59
+
+### 报错日志「模型」补齐
+- **根因**：CPAMP `usage.sqlite` 的 model 列实际有值（24h 失败 1547 条全有），但哨兵 hit 环大量空：`cpamp_backfill` 完全没读 model；live usage 字段空时也不从 body 回填。
+- **修复**：
+  - `FetchRecentFailures` 读 `model/requested_model/resolved_model` + body 解析 `for model X`
+  - backfill / usage / raw usage 空 model 时 `ModelFromFailBody`
+  - 错误策略表展示：hit 无 model 时从 sample 再解析一次（旧 hit 也能显示）
+  - 详情时间线 `FetchAuthRecentEvents` 同步 coalesce 三列 model
+
+## 1.1.58
+
+### 长稳 / 逻辑健壮性（UI 与产品功能不变）
+- **P0 回补先于 heal**：tick 周期内先 `cpamp_backfill` 再 `Tick`；回补前 `MarkPendingBackfillAuths`，heal 跳过即将冷却的号，消除同秒「强制打开→冷却」。
+- **P0 冷却幂等**：已 `plugin_auto` 冷却且同族信号 + recover 未到 → 只补关文件，不重打【冷却】、不拉长 recover_at。
+- **P0 usage 短窗去重**：同 auth 在 8s 内重复 fail/冷却动作直接跳过，消 3s 双冷却日志。
+- **P1 last_signal**：`any_error` 连续计数不再覆盖主信号（`free_usage_429`/`permission_403` 等）。
+- **P1 日志环**：满 2000 时优先丢掉 `heal_summary` 等维护噪声，保留冷却/永禁/到期恢复。
+- **P1 list 熔断**：连续 ≥5 次 list 校验失败不再 blind trust-PATCH。
+- **P2 到期海啸**：每 tick 最多 40 个到期恢复 ensure-open。
+- **P2 日池 floor**：analytics 过瘦时用 usage.sqlite 日汇总回补。
+- **P2 rebuild 交接**：热更前 Save + 继承 `LastCPAMPFailMS` watermark。
+
+## 1.1.57
+
+### 热修：主页面 JS 语法错误白屏
+- 账号列 `title` 拼接漏了引号，导致整页 script 解析失败进不了主页面。
+
+## 1.1.56
+
+### 报错日志只点错误信息；弹层去重；文案默认中文
+- 账号列不可点；仅「错误信息」打开最近15次时间线；去掉弹层里重复的错误样本块。
+- `cpamp/backfill` 统一中文「用量回补」。
+- 降回未分类黄底；显示名称/错误信息/计数与输入框同一行；错误信息文案预填系统默认短中文。
+
+## 1.1.55
+
+### 弹层灰屏/滚不动 + 详情按钮重复 + 策略默认收起
+- 弹层 z-index 盖过遮罩（910>900），居中 flex，body 独立滚动。
+- 去掉报错日志「详情」按钮（与点账号/错误信息重复）。
+- 错误策略**始终默认收起**；清 localStorage 展开缓存；切到该页强制重渲。
+
+## 1.1.54
+
+### 详情时间线修好 + 未分类排序 + 文案可自定义
+- **根因**：`/accounts/recent` 未注册到 host 管理路由表 → 详情 404 无历史。
+- 注册 GET `accounts/recent`；错误信息列高亮可点；未分类卡片排最后。
+- ShapeOf 识别 402/429 为可拆形态；拆分时可填显示名称+错误信息文案+key。
+- 策略卡可改「显示名称」「错误信息文案」并保存（不再硬编码覆盖 label）。
+
+## 1.1.53
+
+### 错误策略卡片布局
+- 「降回未分类」挪到**启用开关旁**；顶栏：启用+降回 | 计数方式 | 保存。
+- 按错误类型上色（429 琥珀 / 402 橙 / 403 紫 / 401 红 / 404 灰 / 未分类虚线 / 其他蓝）。
+- 阶梯行栅格：连续N · 动作 · 冷却秒 · 删；**仅观察/永久禁用/垃圾箱**时隐藏冷却秒。
+
+## 1.1.52
+
+### 去掉禁删硬保护，是否进垃圾箱完全按配置
+- 删除 `HardNeverTrash` 硬拦（402/spending-limit 等）；`Validate` 不再从 `delete_signals` 剔 402。
+- 策略阶梯里配「垃圾箱」+ 全局自动垃圾箱开启即可进箱；`never_trash` 仅当面板显式字段为 true 时才挡。
+- 加载 state 时清掉历史 `never_trash=true`（旧硬规则残留）。
+
+## 1.1.51
+
+### 内置策略可真正降回未分类；标题去掉「禁删/内置」噪音
+- **根因**：`EnsureBuiltinPolicies` 每次 `/errors` 把空内置卡种回来；无命中的内置降回会 `source key not found`。
+- **修复**：`hidden_policy_keys` 记住用户降回的 key，不 re-seed；无命中也能降回；新真实命中仍会经 HandleUsage 重新建卡。
+- 卡片标题行去掉「内置/动态」「禁删」标签（禁删是硬规则防自动垃圾箱，不是面板阶梯配置项）。
+
+## 1.1.50
+
+### 错误策略「详情」= 该号最近 15 次请求时间线
+- 点账号/错误信息/详情：弹窗拉 `GET /accounts/recent`，展示该 auth **最近 15 次请求**（成功+失败，含模型/状态码/错误摘要）+ 哨兵动作日志。
+- 不再只是看不懂的字段堆；无 CPAMP 数据时回退 recent15 色条。
+
+## 1.1.49
+
+### 错误策略：默认折叠 + 内置可降回未分类 + 拆分自定义字段
+- 每条错误策略卡片**默认折叠**（点标题展开）；展开状态记 localStorage。
+- 原内置分类（429/402/401/403/404 等）也可「降回未分类」；仅 `unmatched`/`any_error` 除外。
+- 未分类「拆成此类」时先填**显示名称**和**策略 key**（内部字段），不再只能用系统 suggest_key。
+
+## 1.1.48
+
+### 错误策略：报错日志「模型」列 + 任意错误总设置
+- 报错日志表新增 **模型** 列（最近错误请求的 model）；详情弹层同步显示。usage 从 `UsageRecord.Model` 写入 hit 环。
+- 新增内置策略 `any_error`（**总设置 · 任意错误·连续**，默认关闭）：不管错误类型，连续失败达到阶梯 N 即按更强动作覆盖单类策略；成功请求清零连续计数。
+
+## 1.1.47
+
+### 强制打开：打开意图后 settle 2 分钟
+- **现象**：2k 日志里 heal 大头跟在 `manual_enable` 后 60–120s（p50≈80s）；07-15 21 点批量启用 → 346 次强制打开。
+- **判断**：与冷却补关对称的 CPA list/hotload 滞后，不是文件真 sticky 关。
+- **修复**：`manual_enable` / `reenable` / `patrol_alive*` / `reopen_foreign` / `clear_cpa_disabled_tag` 后 **2 分钟内** 跳过 `heal_active_file`（不 TouchLastHealAt）；settle 后仍关才强制打开。不含 `*_file_still_closed`（已确认开失败应尽快 heal）。
+
+## 1.1.46
+
+### 冷却补关：冷却后 settle 2 分钟
+- **现象**：冷却后约 30–60s 几乎必出一条【冷却补关】；2k 日志里 cool→reassert p90≈61s，且 `cooldown_file_still_open=0`。
+- **判断**：多为 CPA list/hotload 滞后，不是外部重开；主路径 `ensureAuthDisabled` 已关过。
+- **修复**：冷却/候删/手动禁用后 **2 分钟内** 跳过 `cooldown_reassert`（不 PATCH、不写补关日志）；settle 后文件仍开才补关。
+
+## 1.1.45
+
+### 强制打开过多：闭环疏漏
+- **根因1**：heal 频控只看 `LastAction==heal_*`，被 cooldown/patrol 覆盖后每 tick 再强制打开（例 gcrv9… 约每 60s 连开 28 次）。
+- **根因2**：面板批量「手动启用」只 `SetDisabled(false)` 不校验 → 下一 tick 大量 `heal_active_file`（21 点 316 次 manual_enable → 346 次强制打开）。
+- **修复**：`LastHealAt` 硬限 15 分钟；heal 统一 `ensureAuthEnabled`；`ManualEnable` 开文件二次校验，失败写 `manual_enable_file_still_closed`。
+
+## 1.1.44
+
+### failover 中间 403 漏记 + 到期恢复文件不粘
+- **现象**：CPAMP 请求失败有 `hx9…` 23:32 **403**，哨兵动作/策略无记录；随后 23:33 才【强制打开】。
+- **usage 打点**：每条失败/非 2xx 写 host 日志 `usage_in source/auth/status/body`，便于对照插件是否收到。
+- **CPAMP 失败回补**：tick 读 `usage.sqlite` 中 watermark 之后的 401/402/403/429，经 `HandleUsage(source=cpamp_backfill)` 补策略；`alreadyHandledRecently` 防双计。
+- **到期恢复校验**：`ensureAuthEnabled` 开文件后二次 list；仍关写 `reenable_file_still_closed`，状态仍前进，由 heal 继续开。
+
+## 1.1.43
+
+### 巡查四种范围（手动 + 定时）
+- **全部** `all`：有 token 的 xAI 全探  
+- **启用** `enabled`（旧 `full`）：哨兵未禁用/可接流  
+- **冷却** `cooldown`：仅冷却中  
+- **永久禁用** `permanent`：仅 user_manual 永禁  
+- 面板：四个手动按钮 + 配置「自动范围」`patrol_mode`（定时巡查使用）  
+- 新增定时巡查 ticker（此前仅配置开关、未真正周期启动）  
+- 永禁账号探测报错不会被策略降级成冷却  
+
+## 1.1.42
+
+### 手机：点账号/错误信息看详情
+- 策略报错日志表：账号、错误信息仍截断 + 仅 `title` 悬停 → 手机看不到完整信息。
+- 修复：点 **账号 / 错误信息 /「详情」** 弹出底部抽屉，展示完整邮箱、auth、状态、连续N、错误正文/JSON；遮罩点击关闭。
+
+## 1.1.41
+
+### 错误策略「当前状态」大量空白
+- 根因：状态列只查面板 `LAST_ACCOUNTS`（常为「问题账号」子集 / 未加载全量），命中环账号对不上就显示「—」。
+- 修复：`/errors` 的 `account_hits` 直接附带 `state / disable_source / pending_observe / streaks`（全量 state 索引）；前端优先用后端字段渲染状态。
+
+## 1.1.40
+
+### 错误策略·报错日志：垃圾箱 + 当前状态列
+- 操作列补 **垃圾箱**（与启用/冷却/永久禁用并列，可恢复）。
+- 新增 **当前状态** 列：对齐账号列表 `stateTag`（正常·可用 / 冷却 / 永禁 / 待观察…）。
+
+## 1.1.39
+
+### 错误策略：手机可点看完整错误样本
+- 现象：错误信息只在桌面 `title` 悬停可见，手机无法移动指针查看。
+- 修复：错误策略卡片标题旁增加 **「错误样本」** 按钮（点标题亦可）；弹出层展示 code / message / 原始 body；窄屏底部抽屉式展示。
+
+## 1.1.38
+
+### 动作日志：强制打开分账号 + 汇总不再把补关叫「自愈」
+- 现象：只有 `【维护汇总】自愈打开9 · 强制打开2`，搜不到分账号 `【强制打开】email` / `【自愈打开】email`。
+- 根因1：成功 `heal_active_file` 只 `StampLastAction`，不进动作日志环。
+- 根因2：周期 tick **不会**跑 foreign 自愈；`syncDisabledFromCPA` 返回的 n 含 **冷却补关**，被误标成「自愈打开」。
+- 修复：成功强制打开写分账号 `Log`；计数拆成 `foreignOpened` / `reasserted`；汇总正确显示「冷却补关N」；真正的自愈打开只在立即维护且仍写分账号 `reopen_foreign`。
+
+## 1.1.37
+
+### 巡查历史：保留多次任务（别被同 id 挤掉）
+- 现象：先「手动查冷却」再「手动全量」后，面板只剩全量任务。
+- 根因：job id 重启后从 `job-1` 重计，两次任务都叫 `job-1`；UI `if (p.id===h.id) skip` 把冷却任务整条丢掉。磁盘 `patrol-history.json` 实际有 2 条。
+- 修复：job id = `job-YYYYMMDD-HHMMSS-seq`；UI 按 `started_at|finished_at|mode` 去重，不再单靠 id 过滤历史。
+
+## 1.1.36
+
+### 巡查：探活即打开 + 逐条实时日志
+- 根因1：探活 HTTP 200 只走 `HandleUsage` 成功分支，**不会**退出冷却、也**不会** `SetDisabled(false)` → 「探活了还不打开」。
+- 修复：`source=patrol` 且 2xx → `reopenAfterProbeAlive`：冷却/候删则开文件 + `ResetToActive` + `【探活打开】`；已 Active 则确保文件开 + `【探活确认】`。永禁/垃圾箱不碰。全量/仅冷却同一路径。
+- 根因2：任务明细日志在 `Run` 整批结束后才 `appendLog`，时间戳挤在同一秒。
+- 修复：每个 probe 结束立刻 `appendProbeResultLive`；面板巡查中 800ms 刷进度 + 账号表 + 右侧动作日志。
+
+## 1.1.35
+
+### 冷却补关：限频 + 关文件二次校验
+- 现象：`gr5qewyhpz` / `gticvvbjvt` 等冷却后每 30s 一条【冷却补关】，且中途仍漏流再 429。
+- `ensureAuthDisabled`：`SetDisabled(true)` 后 ~1.2s 再 list；仍开则重试 1 次；仍开记 `cooldown_file_still_open`。
+- 同号 `cooldown_reassert*` / `cooldown_file_still_open` **15 分钟内只打 1 条叙事日志**（其余只 stamp）。
+- `applyCooldown` 同样走校验；关不牢写 `cooldown_file_still_open`，状态仍保持冷却。
+
+### heal 不再膨胀「恢复待观察」
+- clean Active 强制打开 **不再** `ResetToActive`（不再强打 `pending_observe`）。
+- tick 立即清掉 `last_action=heal_active_file` 且无阶梯信号的 pending 气球。
+
+## 1.1.34
+
+### 强制打开治本
+- 打开后 **~1.2s 再读 CPA 列表校验**；仍关则记失败 streak，**连续 ≥3 次** → 标 `CPA已禁用`（停空转 heal）。
+- 成功 heal **不再逐条写动作日志**（只 `StampLastAction`），改由 tick **【维护汇总】** 聚合；失败/卡死仍逐条。
+- 仍保留同号 **15 分钟** heal 冷却。
+
+### 恢复待观察 TTL + 分级过滤
+- 新增 `pending_since`：进入 pending 时写入，heal 重触 **不刷新**。
+- **空闲 6 小时**无成功请求 → 清 pending；额度 residual signal 一并清；**403/401 阶梯保留**。
+- 过滤器拆分：`空闲待观察` / `有信号观察`（原「恢复待观察」仍为合集）。
+
 ## 1.1.33
 
 ### 强制打开日志限频（防刷屏）
@@ -379,6 +590,13 @@ Changes:
 - New config `reopen_foreign_disabled` (default `false`) restores the old reopen behaviour only if explicitly enabled.
 
 # Changelog
+
+## 1.1.45
+
+### 强制打开过多：闭环疏漏
+- **根因1**：heal 频控只看 `LastAction==heal_*`，被 cooldown/patrol 覆盖后每 tick 再强制打开（例 gcrv9… 约每 60s 连开 28 次）。
+- **根因2**：面板批量「手动启用」只 `SetDisabled(false)` 不校验 → 下一 tick 大量 `heal_active_file`（21 点 316 次 manual_enable → 346 次强制打开）。
+- **修复**：`LastHealAt` 硬限 15 分钟；heal 统一 `ensureAuthEnabled`；`ManualEnable` 开文件二次校验，失败写 `manual_enable_file_still_closed`。
 
 ## 1.1.29
 

@@ -1,9 +1,12 @@
 package panel
 
 import (
+	"context"
 	"encoding/json"
 	"html"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,13 +20,12 @@ import (
 	"github.com/openclaw-local/cpa-xai-sentry/internal/match"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/patrol"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/persist"
+	"github.com/openclaw-local/cpa-xai-sentry/internal/regjob"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/quota"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/sentrycfg"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/state"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/trash"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/version"
-	"os"
-	"path/filepath"
 )
 
 var (
@@ -33,11 +35,12 @@ var (
 )
 
 type API struct {
-	Cfg    *sentrycfg.Config
-	State  *state.Store
-	Trash  *trash.Store
-	Guard  *guard.Guard
-	Patrol *patrol.Runner
+	Cfg      *sentrycfg.Config
+	State    *state.Store
+	Trash    *trash.Store
+	Guard    *guard.Guard
+	Patrol   *patrol.Runner
+	Register *regjob.Runner
 	// optional hooks wired by main runtime for durable panel toggles
 	PersistConfig func(c sentrycfg.Config) error
 	GetConfig     func() sentrycfg.Config
@@ -57,6 +60,14 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/run-tick", a.handleRunTick)
 	mux.HandleFunc("/patrol/start", a.handlePatrolStart)
 	mux.HandleFunc("/patrol/status", a.handlePatrolStatus)
+	mux.HandleFunc("/register/status", a.handleRegisterStatus)
+	mux.HandleFunc("/register/test", a.handleRegisterTest)
+	mux.HandleFunc("/register/start", a.handleRegisterStart)
+	mux.HandleFunc("/register/stop", a.handleRegisterStop)
+	mux.HandleFunc("/register/jobs", a.handleRegisterJobs)
+	mux.HandleFunc("/register/success-reset", a.handleRegisterSuccessReset)
+	mux.HandleFunc("/register/relogin", a.handleRegisterRelogin)
+	mux.HandleFunc("/register/relogin/status", a.handleRegisterReloginStatus)
 	mux.HandleFunc("/toggle", a.handleToggle)
 	mux.HandleFunc("/preset", a.handlePreset)
 	mux.HandleFunc("/health", a.handleHealth)
@@ -67,20 +78,24 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/metrics", a.handleMetrics)
 	mux.HandleFunc("/accounts/bulk", a.handleAccountsBulk)
 	mux.HandleFunc("/accounts/cooldown-suggested", a.handleCooldownSuggested)
+	mux.HandleFunc("/accounts/recent", a.handleAccountRecent)
 	mux.HandleFunc("/ui", a.handleUI)
 	mux.HandleFunc("/", a.handleUI)
 	return mux
 }
 
-func (a *API) persistSwitches() {
+func (a *API) persistSwitches() error {
 	if a.Cfg == nil {
-		return
+		return nil
 	}
 	if a.SetConfig != nil {
 		a.SetConfig(*a.Cfg)
 	}
+	var perr error
 	if a.PersistConfig != nil {
-		_ = a.PersistConfig(*a.Cfg)
+		if err := a.PersistConfig(*a.Cfg); err != nil {
+			perr = err
+		}
 	}
 	if a.Guard != nil {
 		a.Guard.Cfg = *a.Cfg
@@ -89,6 +104,10 @@ func (a *API) persistSwitches() {
 		a.Patrol.Cfg = *a.Cfg
 		a.Patrol.Guard = a.Guard
 	}
+	if a.Register != nil {
+		a.Register.ApplyConfig(*a.Cfg)
+	}
+	return perr
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -226,13 +245,28 @@ func streakTotal(acc *state.Account) int {
 	return n
 }
 
+// recoverWatchLabel names "just back to traffic, wait for a clean success".
+// Prefer typed labels like 429·恢复待观察 when residual signal is known.
+func recoverWatchLabel(sig string) string {
+	switch sig {
+	case "free_usage_429":
+		return "429·恢复待观察"
+	case "spending_limit_402":
+		return "402·恢复待观察"
+	case "permission_403":
+		return "403·恢复待观察"
+	case "auth_401":
+		return "401·恢复待观察"
+	case "code:invalid-argument":
+		return "参数·恢复待观察"
+	default:
+		return "正常·待观察"
+	}
+}
+
 func liveActiveReason(acc *state.Account) string {
 	if acc == nil {
-		return "恢复待观察"
-	}
-	// cool/候删 到期恢复后：在成功请求证明干净之前，统一「恢复待观察」
-	if acc.PendingObserve {
-		return "恢复待观察"
+		return "正常·待观察"
 	}
 	bestK, bestN := "", 0
 	if acc.Streaks != nil {
@@ -246,32 +280,35 @@ func liveActiveReason(acc *state.Account) string {
 	if bestN > 0 {
 		sig = bestK
 	}
-	// 额度/消费 residual：冷却恢复后几乎总是 ×1，显示「观察·429×1」无信息量且易误解
-	// → 一律「恢复待观察」，等成功请求清掉
+	// cool/候删 到期恢复：pending 优先，按 residual 信号标成「xxx·恢复待观察」
+	if acc.PendingObserve {
+		return recoverWatchLabel(sig)
+	}
+	// 额度/消费 residual（冷却刚过）：显示 429/402·恢复待观察，不显示无意义的 ×1
 	switch sig {
 	case "free_usage_429", "spending_limit_402":
-		return "恢复待观察"
+		return recoverWatchLabel(sig)
 	}
-	// 403/401 阶梯：仍在接流、未进冷却时显示连续 N，便于看策略进度
+	// 403/401 阶梯：仍在接流、未进冷却 → 正常·观察·403×N
 	if bestN > 0 {
 		switch sig {
 		case "permission_403":
-			return "观察·403×" + itoaPanel(bestN)
+			return "正常·观察·403×" + itoaPanel(bestN)
 		case "auth_401":
-			return "观察·401×" + itoaPanel(bestN)
+			return "正常·观察·401×" + itoaPanel(bestN)
 		case "code:invalid-argument":
-			return "观察·参数×" + itoaPanel(bestN)
+			return "正常·观察·参数×" + itoaPanel(bestN)
 		}
-		return "观察中·×" + itoaPanel(bestN)
+		return "正常·观察·×" + itoaPanel(bestN)
 	}
 	// 仅残留 last_signal
 	if acc.LastSignal != "" {
-		return "恢复待观察"
+		return recoverWatchLabel(acc.LastSignal)
 	}
-	// 刚 reenable / reopen 但还没成功请求：也算待观察（兼容升级前无 pending_observe 的旧数据）
+	// 刚 reenable / reopen 但还没成功请求
 	switch acc.LastAction {
-	case "reenable", "reopen_foreign":
-		return "恢复待观察"
+	case "reenable", "reopen_foreign", "heal_active_file":
+		return "正常·待观察"
 	}
 	return "正常·可用"
 }
@@ -288,6 +325,12 @@ func matchStateFilter(acc *state.Account, filter string) bool {
 	case "active_watch", "pending_observe":
 		// 恢复待观察 / 仍在接流的阶梯观察
 		return (acc.State == state.Active || acc.State == "") && (acc.PendingObserve || acc.LastSignal != "" || streakTotal(acc) > 0)
+	case "active_watch_idle":
+		// 仅 pending、无 403/401 阶梯进度（空闲待观察）
+		return (acc.State == state.Active || acc.State == "") && acc.PendingObserve && !hasLadderProgress(acc)
+	case "active_watch_signal":
+		// 有 residual 信号或阶梯进度
+		return (acc.State == state.Active || acc.State == "") && (acc.LastSignal != "" || streakTotal(acc) > 0)
 	case "user_manual", "permanent_disable":
 		return acc.State == state.UserManual && acc.DisableSource != "cpa_file_disabled" && acc.DisableSource != "cpa_disabled"
 	case "cpa_disabled":
@@ -295,6 +338,20 @@ func matchStateFilter(acc *state.Account, filter string) bool {
 	default:
 		return string(acc.State) == filter
 	}
+}
+
+func hasLadderProgress(acc *state.Account) bool {
+	if acc == nil {
+		return false
+	}
+	if streakTotal(acc) > 0 {
+		return true
+	}
+	switch acc.LastSignal {
+	case "permission_403", "auth_401", "code:invalid-argument":
+		return true
+	}
+	return false
 }
 
 func suggestAction(acc *state.Account) (action, reason string) {
@@ -434,6 +491,10 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			cpampByEmail[strings.ToLower(v.Label)] = v
 		}
 	}
+	regEmails := map[string]bool{}
+	if a.Register != nil && a.Cfg != nil && a.Cfg.RegisterEnabled {
+		regEmails = a.Register.EmailSet(r.Context(), false)
+	}
 	type row struct {
 		AuthIndex       string         `json:"auth_index"`
 		FileName        string         `json:"file_name"`
@@ -442,6 +503,8 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		Tier            string         `json:"tier"`
 		State           string         `json:"state"`
 		Signal          string         `json:"last_signal"`
+	SignalMsg       string         `json:"signal_msg,omitempty"`
+		CanRelogin      bool           `json:"can_relogin,omitempty"`
 		DisableSource   string         `json:"disable_source"`
 		Streaks         map[string]int `json:"streaks,omitempty"`
 		StreakSummary   string         `json:"streak_summary"`
@@ -487,6 +550,29 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 	signalCounts := map[string]int{}
 	var dayCalls, dayFails, dayTokens int64
 	var cpampTokSum, cpampCallSum int64
+	// Index observed errors by key for signal_msg lookup
+	obsByKey := map[string]string{}
+	for _, o := range a.State.ListObserved() {
+		if o.Key != "" {
+			msg := errorsig.HumanMsg(o.Key, o.Sample, o.StatusCode)
+			if msg != "" {
+				obsByKey[o.Key] = msg
+			}
+		}
+	}
+	// policy display_msg overrides (split cards like reason:http_426)
+	for _, p := range a.State.ListErrorPolicies() {
+		if p.Key == "" {
+			continue
+		}
+		if dm := strings.TrimSpace(p.DisplayMsg); dm != "" {
+			obsByKey[p.Key] = dm
+		} else if lab := strings.TrimSpace(p.Label); lab != "" {
+			if _, ok := obsByKey[p.Key]; !ok {
+			obsByKey[p.Key] = lab
+			}
+		}
+	}
 	rows := make([]row, 0, len(accs))
 	for _, acc := range accs {
 		// prefer CPAMP usage.sqlite per-auth stats (display-only; no state mutation on read)
@@ -549,6 +635,12 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 				summary["active_watch"]++
 				if acc.PendingObserve {
 					summary["pending_observe"]++
+					if !hasLadderProgress(acc) {
+						summary["active_watch_idle"]++
+					}
+				}
+				if acc.LastSignal != "" || streakTotal(acc) > 0 {
+					summary["active_watch_signal"]++
 				}
 			} else {
 				summary["active_clean"]++
@@ -737,8 +829,14 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		} else if qText != "" {
 			usageMain = qText
 		}
+		canRelogin := false
+		if em := strings.ToLower(strings.TrimSpace(acc.Email)); em != "" && regEmails[em] {
+			canRelogin = true
+		} else if em := strings.ToLower(strings.TrimSpace(display)); em != "" && strings.Contains(em, "@") && regEmails[em] {
+			canRelogin = true
+		}
 		rows = append(rows, row{
-			AuthIndex: acc.AuthIndex, FileName: acc.FileName, Email: acc.Email, DisplayName: display,
+			AuthIndex: acc.AuthIndex, FileName: acc.FileName, Email: acc.Email, DisplayName: display, CanRelogin: canRelogin,
 			Tier: acc.Tier, State: string(acc.State), Signal: acc.LastSignal,
 			DisableSource: acc.DisableSource, Streaks: acc.Streaks, StreakSummary: streakSum,
 			SuggestedAction: act, Reason: reason, RecoverAt: ra, UpdatedAt: ua,
@@ -751,6 +849,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			Recent15:  recent15,
 			QuotaText: usageMain, UsageSource: usageSrc, SuccessRate: rate, DaySuccessRate: dayRate,
 			QuotaRatioText: ratioText,
+			SignalMsg:       obsByKey[acc.LastSignal],
 			SortMS:         lastReqMS, ActionMS: actionMS,
 		})
 	}
@@ -792,15 +891,33 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		summary["pending_suggest"] = v
 	}
 	inv := a.inventoryFromCPA(r)
-	// pool total uses ALL xAI auths (not only currently enabled), so cooldown
-	// does not shrink the estimated pool capacity.
 	xaiN := asInt(inv["auth_xai"])
 	if xaiN == 0 {
 		xaiN = asInt(inv["auth_total"])
 	}
 	enabledN := asInt(inv["auth_enabled"])
-	poolEst := int64(xaiN) * quota.FreeQuotaPerAccount
-	// used: prefer CPAMP per-account token sum, else floor
+	// 日池口径（统一）：
+	//   日池账号数 = CPA 已开启 + 当前冷却中（均可在滚动 24h 内提供约 2M 免费额度）
+	//   日池总量   = 日池账号数 × 2M
+	//   日池已用   = 今日 token（优先 CPAMP 按号汇总，否则本地 floor）
+	//   日池剩余   = max(0, 总量-已用)
+	// 说明：候删/永禁/垃圾箱不计入日池；「当天是否到期」不再砍掉冷却号（冷却本身就是额度窗口）。
+	coolN := 0
+	for _, acc := range a.State.AccountsSnapshot() {
+		st := string(acc.State)
+		if strings.Contains(st, "cooldown") {
+			coolN++
+		}
+	}
+	if coolN == 0 {
+		// fall back to summary-style cooldown_stats if state walk empty
+		if v, ok := cool["cooling"].(int); ok {
+			coolN = v
+		}
+	}
+	poolAccounts := enabledN + coolN
+	poolEst := int64(poolAccounts) * quota.FreeQuotaPerAccount
+	// used: prefer summed day tokens; if zero, floor from metrics
 	usedTok := dayTokens
 	if usedTok == 0 {
 		usedTok = m.TokensFloor
@@ -825,15 +942,24 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		"cpamp_day":      m.DayKey,
 		"cpamp_db":       cpampDB,
 		"cpamp_accounts": len(cpampByAuth),
-		// pool = 全量 xAI × 2M；冷却只影响「可接流量」，不影响总量口径
-		"pool_est":         poolEst,
-		"pool_per_account": quota.FreeQuotaPerAccount,
-		"pool_xai_total":   xaiN,
-		"pool_enabled":     enabledN,
-		"pool_used":        usedTok,
-		"pool_remaining":   remainTok,
-		"pool_used_pct":    pct,
-		"pool_source":      "xai_total×2M est; used=cpamp per-account tokens",
+		"pool_est":              poolEst,
+		"pool_per_account":      quota.FreeQuotaPerAccount,
+		"pool_xai_total":        xaiN,
+		"pool_enabled":          enabledN,
+		"pool_cooldown":         coolN,
+		"pool_accounts":         poolAccounts,
+		"pool_used":             usedTok,
+		"pool_remaining":        remainTok,
+		"pool_used_pct":         pct,
+		"pool_remaining_pct": func() float64 {
+			v := 100 - pct
+			if v < 0 {
+				return 0
+			}
+			return v
+		}(),
+		"pool_source":           "日池=(CPA开启+冷却中)×2M；已用=今日token",
+		"pool_note":             "候删/永禁不计入；可接流量≠日池账号（可接=仅CPA开）",
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":     "cpa-xai-sentry",
@@ -844,7 +970,9 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		"state_filters": []map[string]any{
 			{"value": "", "label": "全部状态", "count": summary["total"]},
 			{"value": "active_clean", "label": "正常·可用", "count": summary["active_clean"]},
-			{"value": "active_watch", "label": "恢复待观察", "count": summary["active_watch"]},
+			{"value": "active_watch", "label": "待观察（全部）", "count": summary["active_watch"]},
+			{"value": "active_watch_idle", "label": "正常·待观察", "count": summary["active_watch_idle"]},
+			{"value": "active_watch_signal", "label": "正常·有信号观察", "count": summary["active_watch_signal"]},
 			{"value": "cooldown_quota", "label": "429·额度冷却", "count": summary["cooldown_quota"]},
 			{"value": "cooldown_spending", "label": "402·消费冷却", "count": summary["cooldown_spending"]},
 			{"value": "cooldown_permission", "label": "403·权限冷却", "count": summary["cooldown_permission"]},
@@ -1040,6 +1168,9 @@ func (a *API) handleConfig(w http.ResponseWriter, r *http.Request) {
 		if v, ok := raw["patrol_model"].(string); ok && strings.TrimSpace(v) != "" {
 			cfg.PatrolModel = strings.TrimSpace(v)
 		}
+		if v, ok := raw["patrol_mode"].(string); ok && strings.TrimSpace(v) != "" {
+			cfg.PatrolMode = strings.TrimSpace(v)
+		}
 		if v, ok := raw["patrol_proxy_url"].(string); ok {
 			cfg.PatrolProxyURL = strings.TrimSpace(v)
 		}
@@ -1089,10 +1220,106 @@ func (a *API) handleConfig(w http.ResponseWriter, r *http.Request) {
 		if v, ok := raw["restore_default_disabled"].(bool); ok {
 			cfg.RestoreDefaultDis = v
 		}
+		// register tab
+		if v, ok := raw["register_enabled"].(bool); ok {
+			cfg.RegisterEnabled = v
+		}
+		if v, ok := raw["register_base_url"].(string); ok {
+			cfg.RegisterBaseURL = strings.TrimSpace(v)
+		}
+		if v, ok := raw["register_admin_base"].(string); ok && strings.TrimSpace(v) != "" {
+			cfg.RegisterAdminBase = strings.TrimSpace(v)
+		}
+		if v, ok := raw["register_password"].(string); ok {
+			pw := strings.TrimSpace(v)
+			if pw != "" && pw != "********" {
+				cfg.RegisterPassword = pw
+			}
+		}
+		if v, ok := asFloatAny(raw["register_timeout_sec"]); ok && v > 0 {
+			cfg.RegisterTimeoutSec = int(v)
+		}
+		if v, ok := raw["register_dry_run"].(bool); ok {
+			cfg.RegisterDryRun = v
+		}
+		if v, ok := asFloatAny(raw["register_manual_default_count"]); ok && v > 0 {
+			cfg.RegisterManualDefaultCount = int(v)
+		}
+		if v, ok := asFloatAny(raw["register_manual_max_count"]); ok && v > 0 {
+			cfg.RegisterManualMaxCount = int(v)
+		}
+		if v, ok := raw["register_auto_enabled"].(bool); ok {
+			cfg.RegisterAutoEnabled = v
+		}
+		if v, ok := raw["register_floor_enabled"].(bool); ok {
+			cfg.RegisterFloorEnabled = v
+		}
+		if v, ok := asFloatAny(raw["register_floor_min_pool"]); ok && v > 0 {
+			cfg.RegisterFloorMinPool = int(v)
+		}
+		if v, ok := asFloatAny(raw["register_floor_count"]); ok && v > 0 {
+			cfg.RegisterFloorCount = int(v)
+		}
+		if v, ok := asFloatAny(raw["register_floor_interval_sec"]); ok && v > 0 {
+			cfg.RegisterFloorIntervalSec = int(v)
+		}
+		if v, ok := asFloatAny(raw["register_auto_interval_sec"]); ok && v > 0 {
+			cfg.RegisterAutoIntervalSec = int(v)
+		}
+		if v, ok := asFloatAny(raw["register_auto_count"]); ok && v > 0 {
+			cfg.RegisterAutoCount = int(v)
+		}
+		if v, ok := raw["register_auto_only_when_idle"].(bool); ok {
+			cfg.RegisterAutoOnlyWhenIdle = v
+		}
+		if v, ok := raw["register_auto_require_health_ok"].(bool); ok {
+			cfg.RegisterAutoRequireHealth = v
+		}
+		if v, ok := raw["register_auto_pause_on_low_success"].(bool); ok {
+			cfg.RegisterAutoPauseOnLow = v
+		}
+		if v, ok := asFloatAny(raw["register_health_interval_sec"]); ok && v > 0 {
+			cfg.RegisterHealthIntervalSec = int(v)
+		}
+		if v, ok := asFloatAny(raw["register_health_window_jobs"]); ok && v > 0 {
+			cfg.RegisterHealthWindowJobs = int(v)
+		}
+		if v, ok := asFloatAny(raw["register_health_min_samples"]); ok && v > 0 {
+			cfg.RegisterHealthMinSamples = int(v)
+		}
+		if v, ok := asFloatAny(raw["register_health_ok_rate"]); ok && v > 0 {
+			cfg.RegisterHealthOKRate = v
+		}
+		if v, ok := asFloatAny(raw["register_health_warn_rate"]); ok && v > 0 {
+			cfg.RegisterHealthWarnRate = v
+		}
+		if v, ok := raw["register_require_cpa_ok"].(bool); ok {
+			cfg.RegisterRequireCPAok = v
+		}
+		if v, ok := raw["register_relogin_on_auth401"].(bool); ok {
+			cfg.RegisterReloginOnAuth401 = v
+		}
+		if v, ok := asFloatAny(raw["register_relogin_max_streak"]); ok && v > 0 {
+			cfg.RegisterReloginMaxStreak = int(v)
+		}
+		if v, ok := asFloatAny(raw["register_relogin_concurrency"]); ok && v > 0 {
+			cfg.RegisterReloginConcurrency = int(v)
+		}
 		cfg = cfg.Validate()
 		*a.Cfg = cfg
-		a.persistSwitches()
-		writeJSON(w, 200, a.Cfg.Redact())
+		if err := a.persistSwitches(); err != nil {
+			// still return saved live config, but tell UI persist had issues
+			writeJSON(w, 200, map[string]any{
+				"config": a.Cfg.Redact(),
+				"ok": true,
+				"persist_error": err.Error(),
+				"persist_warning": "配置已应用，但写入磁盘/宿主时出错：" + err.Error(),
+			})
+			return
+		}
+		out := a.Cfg.Redact()
+		out["ok"] = true
+		writeJSON(w, 200, out)
 	default:
 		w.WriteHeader(405)
 	}
@@ -1134,6 +1361,7 @@ func (a *API) handlePersist(w http.ResponseWriter, r *http.Request) {
 		"overrides":            disk,
 		"live": map[string]any{
 			"patrol_batch_size":           cfg.PatrolBatchSize,
+			"patrol_mode":                 cfg.PatrolMode,
 			"patrol_interval":             cfg.PatrolInterval,
 			"patrol_enabled":              cfg.PatrolEnabled,
 			"tick_seconds":                cfg.TickSeconds,
@@ -1223,7 +1451,7 @@ func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) {
 			label = cpaapi.DisplayName(acc.Email, acc.FileName, acc.AuthIndex)
 		}
 		actL := logActionZH(e.Action)
-		sigL := logSignalZH(e.Signal)
+		sigL := a.signalDisplayZH(e.Signal)
 		srcL := logSourceZH(e.Source)
 		reason := humanizeReason(e.Reason, sigL, e.Action)
 		text, level := composeLogText(actL, e.Action, sigL, e.Signal, label, reason, srcL, e.Source)
@@ -1342,9 +1570,9 @@ func humanizeReason(reason, sigL, action string) string {
 func composeLogText(actL, action, sigL, signal, who, reason, srcL, source string) (string, string) {
 	level := "info"
 	switch action {
-	case "cooldown_failed", "reenable_failed", "reopen_foreign_failed", "cooldown_reassert_failed":
+	case "cooldown_failed", "reenable_failed", "reopen_foreign_failed", "cooldown_reassert_failed", "manual_enable_failed":
 		level = "err"
-	case "cooldown", "candidate", "trash", "delete", "manual_disable", "cooldown_reassert", "file_disabled_sync", "repair_cooldown_state":
+	case "cooldown", "candidate", "trash", "delete", "manual_disable", "cooldown_reassert", "file_disabled_sync", "repair_cooldown_state", "reenable_file_still_closed", "manual_enable_file_still_closed":
 		level = "warn"
 	case "reenable", "manual_enable", "backfill", "auto_backfill", "restore", "reopen_foreign", "clear_cpa_disabled_tag", "heal_active_file":
 		level = "ok"
@@ -1392,6 +1620,14 @@ func composeLogText(actL, action, sigL, signal, who, reason, srcL, source string
 			return "【冷却补关失败】" + who + "：" + why, "err"
 		}
 		return "【冷却补关失败】", "err"
+	case "cooldown_file_still_open":
+		if who != "" && why != "" {
+			return "【冷却文件仍开】" + who + " · 原因：" + why, "warn"
+		}
+		if who != "" {
+			return "【冷却文件仍开】" + who + " · 原因：关文件后校验仍显示开启", "warn"
+		}
+		return "【冷却文件仍开】关文件后校验仍显示开启", "warn"
 	case "reenable":
 		if who != "" {
 			return "【到期恢复】" + who + " 冷却时间到，已重新启用，状态恢复为正常", "ok"
@@ -1405,6 +1641,11 @@ func composeLogText(actL, action, sigL, signal, who, reason, srcL, source string
 			return "【恢复失败】" + who, level
 		}
 		return "【恢复失败】", level
+	case "reenable_file_still_closed":
+		if who != "" {
+			return "【到期恢复·文件仍关】" + who + " · 已改状态，维护将继续强制打开", level
+		}
+		return "【到期恢复·文件仍关】", level
 	case "candidate":
 		if who != "" && why != "" {
 			return "【候删】" + who + " · 原因：" + why, level
@@ -1446,6 +1687,37 @@ func composeLogText(actL, action, sigL, signal, who, reason, srcL, source string
 			return "【强制打开失败】" + who + "：" + why, "err"
 		}
 		return "【强制打开失败】", "err"
+	case "heal_active_file_stuck":
+		if who != "" && why != "" {
+			return "【强制打开卡死】" + who + " · 原因：" + why, "warn"
+		}
+		if who != "" {
+			return "【强制打开卡死】" + who + " · 原因：连续失败已标为CPA已禁用", "warn"
+		}
+		return "【强制打开卡死】连续失败已标为CPA已禁用", "warn"
+	case "heal_summary":
+		if why != "" {
+			return "【维护汇总】" + why, "info"
+		}
+		return "【维护汇总】本轮无变更", "info"
+	case "patrol_alive_reopen":
+		if who != "" && why != "" {
+			return "【探活打开】" + who + " · " + why, "ok"
+		}
+		if who != "" {
+			return "【探活打开】" + who + " · 探活成功已退出冷却并打开文件", "ok"
+		}
+		return "【探活打开】探活成功已退出冷却并打开文件", "ok"
+	case "patrol_alive_open":
+		if who != "" {
+			return "【探活确认】" + who + " · 探活成功 · 文件已确保开启", "ok"
+		}
+		return "【探活确认】探活成功 · 文件已确保开启", "ok"
+	case "patrol_alive_open_failed":
+		if who != "" && why != "" {
+			return "【探活打开失败】" + who + "：" + why, "err"
+		}
+		return "【探活打开失败】", "err"
 	case "reopen_foreign_failed":
 		if who != "" && why != "" {
 			return "【自愈打开失败】" + who + "：" + why, "err"
@@ -1482,6 +1754,19 @@ func composeLogText(actL, action, sigL, signal, who, reason, srcL, source string
 			return "【手动启用】" + who + " · 原因：面板手动启用", "ok"
 		}
 		return "【手动启用】已执行", "ok"
+	case "manual_enable_file_still_closed":
+		if who != "" {
+			return "【手动启用·文件仍关】" + who + " · 将由维护强制打开补救", "warn"
+		}
+		return "【手动启用·文件仍关】", "warn"
+	case "manual_enable_failed":
+		if who != "" && why != "" {
+			return "【手动启用失败】" + who + "：" + why, "err"
+		}
+		if who != "" {
+			return "【手动启用失败】" + who, "err"
+		}
+		return "【手动启用失败】", "err"
 	case "backfill", "auto_backfill":
 		if why != "" {
 			return why, "ok"
@@ -1534,10 +1819,14 @@ func logActionZH(a string) string {
 		return "冷却补关"
 	case "cooldown_reassert_failed":
 		return "冷却补关失败"
+	case "cooldown_file_still_open":
+		return "冷却文件仍开"
 	case "reenable":
 		return "到期恢复"
 	case "reenable_failed":
 		return "恢复失败"
+	case "reenable_file_still_closed":
+		return "到期恢复·文件仍关"
 	case "sync_disabled_failed":
 		return "同步失败"
 	case "candidate":
@@ -1554,6 +1843,16 @@ func logActionZH(a string) string {
 		return "强制打开"
 	case "heal_active_file_failed":
 		return "强制打开失败"
+	case "heal_active_file_stuck":
+		return "强制打开卡死"
+	case "heal_summary":
+		return "维护汇总"
+	case "patrol_alive_reopen":
+		return "探活打开"
+	case "patrol_alive_open":
+		return "探活确认"
+	case "patrol_alive_open_failed":
+		return "探活打开失败"
 	case "reopen_foreign_failed":
 		return "自愈打开失败"
 	case "clear_cpa_disabled_tag":
@@ -1564,6 +1863,10 @@ func logActionZH(a string) string {
 		return "清理残留"
 	case "manual_enable":
 		return "手动启用"
+	case "manual_enable_file_still_closed":
+		return "手动启用·文件仍关"
+	case "manual_enable_failed":
+		return "手动启用失败"
 	case "backfill", "auto_backfill":
 		return "用量回补"
 	case "trash", "delete":
@@ -1586,7 +1889,135 @@ func logActionZH(a string) string {
 	}
 }
 
-func logSignalZH(s string) string {
+// signalDisplayZH: 对外展示用「错误码·中文名」，不暴露 reason:http_426 这类内部 key。
+// 技术 key 仍存 state/last_signal 用于路由，但日志/弹窗只显示中文标题。
+func (a *API) signalDisplayZH(sig string) string {
+	sig = strings.TrimSpace(sig)
+	if sig == "" {
+		return ""
+	}
+	// 1) 策略卡：标题用短 label（与 429·免费额度用尽 同风格）；display_msg 偏长留给详情
+	name := ""
+	if a != nil && a.State != nil {
+		if p, ok := a.State.GetErrorPolicy(sig); ok {
+			name = strings.TrimSpace(p.Label)
+			if name == "" {
+				name = strings.TrimSpace(p.DisplayMsg)
+			}
+		}
+	}
+	if name == "" {
+		name = logSignalZHFallback(sig)
+	}
+	// 去掉已有数字前缀，避免 426·426·
+	name = stripSignalCodePrefix(name)
+	// reason:http_xxx / free_usage_429 → 取码
+	code := signalHTTPCode(sig)
+	if code != "" && name != "" && name != sig {
+		return code + "·" + name
+	}
+	if code != "" && (name == "" || name == sig) {
+		// 无中文时至少显示码 + 通用文案
+		if lab := errorsig.LabelOf(sig, match.Result{}, 0); lab != "" && lab != sig {
+			return code + "·" + stripSignalCodePrefix(lab)
+		}
+		return "HTTP " + code
+	}
+	if name != "" && name != sig {
+		return name
+	}
+	// 最后兜底：绝不把 reason: 原文甩给用户
+	if strings.HasPrefix(sig, "reason:") {
+		rest := strings.TrimPrefix(sig, "reason:")
+		if c := signalHTTPCode(sig); c != "" {
+			return c + "·未命名错误"
+		}
+		return rest
+	}
+	return logSignalZHFallback(sig)
+}
+
+func stripSignalCodePrefix(s string) string {
+	s = strings.TrimSpace(s)
+	// HTTP 426 · xxx / 426·xxx / 426.xxx
+	if len(s) >= 4 {
+		// HTTP NNN
+		low := strings.ToLower(s)
+		if strings.HasPrefix(low, "http ") && len(s) >= 8 {
+			// "HTTP 426..."
+			rest := strings.TrimSpace(s[5:])
+			if len(rest) >= 3 {
+				if rest[0] >= '0' && rest[0] <= '9' {
+					i := 0
+					for i < len(rest) && rest[i] >= '0' && rest[i] <= '9' {
+						i++
+					}
+					rest = strings.TrimLeft(rest[i:], " ·.-")
+					if rest != "" {
+						return rest
+					}
+				}
+			}
+		}
+	}
+	// NNN· or NNN.
+	if len(s) >= 4 && s[0] >= '0' && s[0] <= '9' && s[1] >= '0' && s[1] <= '9' && s[2] >= '0' && s[2] <= '9' {
+		if s[3] == '·' || s[3] == '.' || s[3] == ' ' {
+			return strings.TrimSpace(s[4:])
+		}
+	}
+	return s
+}
+
+func signalHTTPCode(sig string) string {
+	switch strings.TrimSpace(sig) {
+	case "free_usage_429":
+		return "429"
+	case "spending_limit_402":
+		return "402"
+	case "auth_401":
+		return "401"
+	case "permission_403":
+		return "403"
+	}
+	// reason:http_426 / http_426
+	s := strings.TrimSpace(sig)
+	s = strings.TrimPrefix(s, "reason:")
+	if strings.HasPrefix(s, "http_") {
+		code := strings.TrimPrefix(s, "http_")
+		if len(code) == 3 {
+			ok := true
+			for i := 0; i < 3; i++ {
+				if code[i] < '0' || code[i] > '9' {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				return code
+			}
+		}
+	}
+	// free_usage_429 style suffix
+	if i := strings.LastIndexByte(s, '_'); i >= 0 && i+1 < len(s) {
+		code := s[i+1:]
+		if len(code) == 3 {
+			ok := true
+			for j := 0; j < 3; j++ {
+				if code[j] < '0' || code[j] > '9' {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				return code
+			}
+		}
+	}
+	return ""
+}
+
+func logSignalZHFallback(s string) string {
 	switch s {
 	case "free_usage_429":
 		return "免费额度用尽"
@@ -1595,10 +2026,24 @@ func logSignalZH(s string) string {
 	case "auth_401":
 		return "凭证失效"
 	case "permission_403":
-		return "权限拒绝 403"
+		return "权限拒绝"
+	case "reason:http_426", "http_426":
+		return "终端版本过低"
+	case "any_error":
+		return "任意错误"
+	case "unmatched":
+		return "未分类错误"
 	default:
+		if strings.HasPrefix(s, "reason:") {
+			return strings.TrimPrefix(s, "reason:")
+		}
 		return s
 	}
+}
+
+// logSignalZH kept for any remaining callers
+func logSignalZH(s string) string {
+	return logSignalZHFallback(s)
 }
 
 func logSourceZH(s string) string {
@@ -1740,13 +2185,10 @@ func (a *API) handlePatrolStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Mode string `json:"mode"` // full | cooldown
+		Mode string `json:"mode"` // all | enabled|full | cooldown | permanent
 	}
 	_ = json.NewDecoder(r.Body).Decode(&in)
-	mode := patrol.ModeFull
-	if strings.EqualFold(strings.TrimSpace(in.Mode), "cooldown") || strings.EqualFold(strings.TrimSpace(in.Mode), "spending") {
-		mode = patrol.ModeCooldown
-	}
+	mode := patrol.ParseMode(in.Mode)
 	// apply latest cfg
 	if a.Cfg != nil {
 		a.Patrol.Cfg = *a.Cfg
@@ -1777,6 +2219,11 @@ func (a *API) handlePatrolStatus(w http.ResponseWriter, r *http.Request) {
 	enabled := a.Cfg != nil && a.Cfg.PatrolEnabled
 	st["patrol_enabled"] = enabled
 	st["patrol_interval"] = interval
+	if a.Cfg != nil {
+		st["patrol_mode"] = a.Cfg.PatrolMode
+	} else {
+		st["patrol_mode"] = "enabled"
+	}
 	// last from status finished/started
 	last := ""
 	if v, ok := st["finished_at"].(string); ok && v != "" {
@@ -1799,12 +2246,25 @@ func (a *API) handlePatrolStatus(w http.ResponseWriter, r *http.Request) {
 		st["next_patrol_at"] = ""
 		st["next_patrol_hint"] = "定时巡查已关闭"
 	}
-	// recent finished jobs for expandable task list
-	var hist any = []any{}
-	if a.Patrol != nil {
-		hist = a.Patrol.History()
+	// recent finished jobs with pagination
+	limit := 10
+	offset := 0
+	maxLogs := 0 // default: no embedded logs (use separate logs endpoint)
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil { limit = n }
 	}
-	writeJSON(w, 200, map[string]any{"ok": true, "patrol": st, "history": hist})
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil { offset = n }
+	}
+	if v := r.URL.Query().Get("logs"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil { maxLogs = n }
+	}
+	var hist any = []any{}
+	total := 0
+	if a.Patrol != nil {
+		hist, total = a.Patrol.HistoryPage(limit, offset, maxLogs)
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "patrol": st, "history": hist, "history_total": total, "history_limit": limit, "history_offset": offset})
 }
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -1847,7 +2307,7 @@ func (a *API) handleToggle(w http.ResponseWriter, r *http.Request) {
 		a.Cfg.PatrolEnabled = *in.PatrolEnabled
 	}
 	*a.Cfg = a.Cfg.Validate()
-	a.persistSwitches()
+	_ = a.persistSwitches()
 	writeJSON(w, 200, map[string]any{"ok": true, "mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact()})
 }
 
@@ -1885,7 +2345,7 @@ func (a *API) handlePreset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	*a.Cfg = a.Cfg.Validate()
-	a.persistSwitches()
+	_ = a.persistSwitches()
 	writeJSON(w, 200, map[string]any{"ok": true, "mode": modeOf(*a.Cfg), "mode_label": modeLabel(modeOf(*a.Cfg)), "config": a.Cfg.Redact()})
 }
 
@@ -1950,6 +2410,81 @@ func (a *API) handleCooldownSuggested(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true, "cooled": n})
 }
 
+// handleAccountRecent: last N CPAMP requests for one auth (success+fail), for policy「详情」timeline.
+func (a *API) handleAccountRecent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(405)
+		return
+	}
+	q := r.URL.Query()
+	auth := strings.TrimSpace(q.Get("auth"))
+	account := strings.TrimSpace(q.Get("account"))
+	file := strings.TrimSpace(q.Get("file"))
+	limit := 15
+	if v := strings.TrimSpace(q.Get("limit")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	// enrich from state when only auth given
+	if a.State != nil && auth != "" {
+		if acc := a.State.Get(auth); acc != nil {
+			if account == "" {
+				account = acc.Email
+			}
+			if file == "" {
+				file = acc.FileName
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+	defer cancel()
+	events, path, err := cpamp.FetchAuthRecentEvents(ctx, auth, account, file, limit)
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	// action logs for same auth (recent, success+fail narrative)
+	type actRow struct {
+		At     string `json:"at"`
+		Action string `json:"action"`
+		Label  string `json:"label"`
+		Reason string `json:"reason"`
+		Signal string `json:"signal,omitempty"`
+		Source string `json:"source,omitempty"`
+	}
+	acts := []actRow{}
+	if a.State != nil && auth != "" {
+		page, _ := a.State.SnapshotLogsPage(0, 200)
+		loc := time.FixedZone("CST", 8*3600)
+		for _, e := range page {
+			if e.Auth != auth && !strings.EqualFold(e.Auth, auth) {
+				// also match by email if auth is email-ish
+				if account == "" || !strings.EqualFold(e.Auth, account) {
+					continue
+				}
+			}
+			at := ""
+			if !e.At.IsZero() {
+				at = e.At.In(loc).Format("01-02 15:04:05")
+			}
+			acts = append(acts, actRow{
+				At: at, Action: e.Action, Label: logActionZH(e.Action),
+				Reason: e.Reason, Signal: e.Signal, Source: e.Source,
+			})
+			if len(acts) >= 20 {
+				break
+			}
+		}
+	}
+	writeJSON(w, 200, map[string]any{
+		"ok": true, "auth": auth, "account": account, "file": file,
+		"limit": limit, "db": path,
+		"events": events, // oldest→newest
+		"actions": acts,  // newest-first action log slice
+	})
+}
+
 func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 	// ensure builtins
 	if a.Guard != nil {
@@ -1972,16 +2507,51 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 			}
 			builtins[k] = pol
 		}
+		// global any-error ladder (disabled default; panel「总设置」)
+		if _, ok := builtins["any_error"]; !ok {
+			builtins["any_error"] = state.ErrorPolicy{
+				Key: "any_error", Label: "任意错误·连续", Enabled: false,
+				Action: "observe", Threshold: 5, CooldownSec: 1800, CountMode: "streak",
+				Escalations: []state.EscalationRule{
+					{Streak: 5, Action: "cooldown", CooldownSec: 1800},
+				},
+				Note: "不管错误类型，连续失败达到 N 次按阶梯处置；默认关闭", Source: "builtin",
+			}
+		}
 		a.State.EnsureBuiltinPolicies(builtins)
 	}
-	// collapse legacy duplicate keys into builtins
-	for _, pair := range [][3]string{
-		{"http_401", "auth_401", "401·凭证失效"},
-		{"http_0_disabled", "unmatched", "未分类错误"},
-	} {
-		if err := a.State.ReclassifyErrorKey(pair[0], pair[1], pair[2]); err == nil {
-			_ = a.State.Save()
+	// collapse dirty/legacy keys ONLY:
+	//  - free_usage_429:* / permission_403:* → parent
+	//  - bare auth_401/402/404/code:/http_* → unmatched
+	// NEVER touch user reason:* splits or custom keys.
+	changed := false
+	for _, p := range a.State.ListErrorPolicies() {
+		if t, ok := errorsig.CollapseTarget(p.Key); ok && t != p.Key {
+			label := errorsig.LabelOf(t, match.Result{}, 0)
+			if err := a.State.ReclassifyErrorKey(p.Key, t, label); err == nil {
+				changed = true
+			}
 		}
+	}
+	for _, o := range a.State.ListObserved() {
+		if t, ok := errorsig.CollapseTarget(o.Key); ok && t != o.Key {
+			label := errorsig.LabelOf(t, match.Result{}, 0)
+			if err := a.State.ReclassifyErrorKey(o.Key, t, label); err == nil {
+				changed = true
+			}
+		}
+	}
+	// ensure unmatched exists as bucket (observe only)
+	if _, ok := a.State.GetErrorPolicy("unmatched"); !ok {
+		a.State.UpsertErrorPolicy(state.ErrorPolicy{
+			Key: "unmatched", Label: "未分类错误", Enabled: true, Action: "observe",
+			Threshold: 1, CountMode: "streak", Source: "builtin",
+			Note: "非 429/403（或已降回的类）进这里；可按形态拆成独立策略",
+		})
+		changed = true
+	}
+	if changed {
+		_ = a.State.Save()
 	}
 	obs := a.State.ListObserved()
 	pols := a.State.ListErrorPolicies()
@@ -1989,6 +2559,8 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 	type row struct {
 		Key          string                 `json:"key"`
 		Label        string                 `json:"label"`
+		DisplayMsg   string                 `json:"display_msg,omitempty"`
+		SplitShape   string                 `json:"split_shape,omitempty"`
 		Enabled      bool                   `json:"enabled"`
 		Action       string                 `json:"action"`
 		ActionLabel  string                 `json:"action_label"`
@@ -2037,32 +2609,61 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 		if cm == "" {
 			cm = "streak"
 		}
+		lab := strings.TrimSpace(p.Label)
+		if lab == "" {
+			lab = errorsig.LabelOf(p.Key, match.Result{}, 0)
+		}
 		byKey[p.Key] = row{
-			Key: p.Key, Label: p.Label, Enabled: p.Enabled, Action: p.Action,
+			Key: p.Key, Label: lab, DisplayMsg: strings.TrimSpace(p.DisplayMsg),
+			SplitShape: strings.TrimSpace(p.SplitShape),
+			Enabled: p.Enabled, Action: p.Action,
 			ActionLabel: actionLabel(p.Action), Threshold: p.Threshold, CooldownSec: p.CooldownSec,
 			CountMode: cm, Escalations: esc,
 			NeverTrash: p.NeverTrash, Note: p.Note, Source: p.Source,
 		}
 	}
-	// account meta for labels/streaks
+	// account meta for labels/streaks/state — index by auth, email, file basename
 	accBy := map[string]*state.Account{}
 	for _, acc := range a.State.AccountsSnapshot() {
-		accBy[acc.AuthIndex] = acc
+		if acc.AuthIndex != "" {
+			accBy[acc.AuthIndex] = acc
+			accBy[strings.ToLower(strings.TrimSpace(acc.AuthIndex))] = acc
+		}
 		if acc.Email != "" {
 			accBy[strings.ToLower(acc.Email)] = acc
 		}
+		if acc.FileName != "" {
+			fn := strings.ToLower(strings.TrimSpace(acc.FileName))
+			accBy[fn] = acc
+			// basename without path
+			if i := strings.LastIndexAny(fn, "/\\"); i >= 0 {
+				accBy[fn[i+1:]] = acc
+			}
+		}
+	}
+		// 8788/cloud inventory for relogin button (password-capable accounts)
+	regEmailSet := map[string]bool{}
+	if a.Register != nil && a.Cfg != nil && a.Cfg.RegisterEnabled {
+		regEmailSet = a.Register.EmailSet(r.Context(), false)
 	}
 	for _, o := range obs {
 		r0, ok := byKey[o.Key]
 		if !ok {
 			r0 = row{Key: o.Key, Label: o.Label, Enabled: true, Action: "observe", ActionLabel: actionLabel("observe"), Threshold: 1, Source: "learned"}
 		}
-		// normalize labels to short Chinese
-		r0.Label = errorsig.LabelOf(o.Key, match.Result{Code: o.Code, Signal: match.Signal(o.Signal)}, o.StatusCode)
-		if r0.Label == "" {
+		// Prefer user/policy label; only fall back to hard LabelOf when empty
+		if strings.TrimSpace(r0.Label) == "" {
+			r0.Label = errorsig.LabelOf(o.Key, match.Result{Code: o.Code, Signal: match.Signal(o.Signal)}, o.StatusCode)
+		}
+		if strings.TrimSpace(r0.Label) == "" {
 			r0.Label = o.Label
 		}
-		r0.SampleMsg = errorsig.HumanMsg(o.Key, o.Sample, o.StatusCode)
+		// sample_msg: policy DisplayMsg > HumanMsg default
+		if dm := strings.TrimSpace(r0.DisplayMsg); dm != "" {
+			r0.SampleMsg = dm
+		} else {
+			r0.SampleMsg = errorsig.HumanMsg(o.Key, o.Sample, o.StatusCode)
+		}
 		r0.Count = o.Count
 		if !o.LastAt.IsZero() {
 			r0.LastAt = o.LastAt.In(time.FixedZone("CST", 8*3600)).Format("01-02 15:04:05")
@@ -2074,9 +2675,9 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 		r0.LastFile = o.LastFile
 		// build account hits from observed Hits ring
 		type agg struct {
-			Auth, Label, File, Source, Sample string
-			Status, Hits, Streak              int
-			LastAt                            time.Time
+			Auth, Label, File, Source, Sample, Model string
+			Status, Hits, Streak                     int
+			LastAt                                   time.Time
 		}
 		am := map[string]*agg{}
 		for _, h := range o.Hits {
@@ -2089,7 +2690,7 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 			}
 			a0 := am[id]
 			if a0 == nil {
-				a0 = &agg{Auth: h.Auth, File: h.File, Source: h.Source, Sample: h.Sample, Status: h.Status}
+				a0 = &agg{Auth: h.Auth, File: h.File, Source: h.Source, Sample: h.Sample, Status: h.Status, Model: h.Model}
 				am[id] = a0
 			}
 			a0.Hits++
@@ -2099,6 +2700,9 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 				a0.Sample = h.Sample
 				a0.Status = h.Status
 				a0.File = h.File
+				if h.Model != "" {
+					a0.Model = h.Model
+				}
 			}
 		}
 		// fallback: if no hits ring yet, use last_auth
@@ -2109,8 +2713,20 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 		for _, a0 := range am {
 			label := a0.Auth
 			streak := 0
+			accState := ""
+			disableSrc := ""
+			pendingObs := false
+			var accStreaks map[string]int
+			lastSig := ""
+			lastAct := ""
 			if acc := accBy[a0.Auth]; acc != nil {
 				label = cpaapi.DisplayName(acc.Email, acc.FileName, acc.AuthIndex)
+				accState = string(acc.State)
+				disableSrc = acc.DisableSource
+				pendingObs = acc.PendingObserve
+				accStreaks = acc.Streaks
+				lastSig = acc.LastSignal
+				lastAct = acc.LastAction
 				// streak for this error key / signal
 				if acc.Streaks != nil {
 					if v := acc.Streaks[o.Key]; v > 0 {
@@ -2126,27 +2742,70 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			} else if a0.File != "" {
-				label = a0.File
+				// try email / file basenames
+				if em := strings.ToLower(strings.TrimSpace(a0.File)); em != "" {
+					if acc := accBy[em]; acc != nil {
+						label = cpaapi.DisplayName(acc.Email, acc.FileName, acc.AuthIndex)
+						accState = string(acc.State)
+						disableSrc = acc.DisableSource
+						pendingObs = acc.PendingObserve
+						accStreaks = acc.Streaks
+						lastSig = acc.LastSignal
+						lastAct = acc.LastAction
+						if acc.AuthIndex != "" {
+							a0.Auth = acc.AuthIndex
+						}
+					}
+				}
+				if accState == "" {
+					label = a0.File
+				}
 			}
 			src := a0.Source
 			if src == "" {
 				src = "usage"
 			}
-			srcZH := map[string]string{"usage": "请求", "patrol": "巡查", "tick": "维护同步", "panel": "面板", "cpamp": "回补"}[src]
+			srcZH := map[string]string{
+				"usage": "请求", "patrol": "巡查", "tick": "维护同步", "panel": "面板",
+				"cpamp": "用量回补", "backfill": "用量回补", "cpamp_backfill": "用量回补",
+			}[src]
 			if srcZH == "" {
-				srcZH = src
+				// last-resort Chinese for unknown English keys
+				switch strings.ToLower(src) {
+				case "cpamp_analytics", "cpamp_fail_body", "cpamp_day_tokens", "cpamp_sqlite_day":
+					srcZH = "用量回补"
+				default:
+					if strings.Contains(strings.ToLower(src), "backfill") || strings.Contains(strings.ToLower(src), "cpamp") {
+						srcZH = "用量回补"
+					} else {
+						srcZH = src
+					}
+				}
 			}
-			msg := errorsig.HumanMsg(o.Key, a0.Sample, a0.Status)
+			// model: hit ring first; fall back to free-usage sample body ("for model X")
+			model := strings.TrimSpace(a0.Model)
+			if model == "" {
+				model = cpamp.ModelFromFailBody(a0.Sample)
+			}
+			msg := ""
+			if dm := strings.TrimSpace(r0.DisplayMsg); dm != "" {
+				msg = dm
+			} else {
+				msg = errorsig.HumanMsg(o.Key, a0.Sample, a0.Status)
+			}
 			if msg == "" {
 				msg = r0.Label
 			}
 			msg = msg + " · " + srcZH
 			shape, shapeLabel, suggestKey := errorsig.ShapeOf(a0.Sample, a0.Status)
-			hits = append(hits, map[string]any{
+			// when dumping into unmatched shapes, use human shape_label; if policy later
+			// owns that suggest_key, UI will show policy label.
+			hit := map[string]any{
 				"auth": a0.Auth, "label": label, "file": a0.File,
 				"source": src, "source_label": srcZH,
 				"hits": a0.Hits, "streak": streak,
 				"status": a0.Status,
+				"model":  model,
 				"shape":  shape, "shape_label": shapeLabel, "suggest_key": suggestKey,
 				"last_at": func() string {
 					if a0.LastAt.IsZero() {
@@ -2156,7 +2815,56 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 				}(),
 				"message": msg,
 				"sample":  a0.Sample,
-			})
+			}
+			// current sentry state for policy table (don't rely on panel LAST_ACCOUNTS subset)
+			if accState != "" {
+				hit["state"] = accState
+				hit["disable_source"] = disableSrc
+				hit["pending_observe"] = pendingObs
+				hit["last_signal"] = lastSig
+				hit["last_action"] = lastAct
+				if accStreaks != nil {
+					// copy small map for UI stateTag
+					sm := map[string]int{}
+					for k, v := range accStreaks {
+						if v > 0 {
+							sm[k] = v
+						}
+					}
+					if len(sm) > 0 {
+						hit["streaks"] = sm
+					}
+				}
+			}
+			// can_relogin: email in register-lite inventory (has password for relogin)
+			canRelogin := false
+			if len(regEmailSet) > 0 {
+				candidates := []string{}
+				if acc := accBy[a0.Auth]; acc != nil && acc.Email != "" {
+					candidates = append(candidates, acc.Email)
+				}
+				if label != "" {
+					candidates = append(candidates, label)
+				}
+				if a0.File != "" {
+					// xai-email.json → email
+					fn := strings.ToLower(strings.TrimSpace(a0.File))
+					fn = strings.TrimSuffix(fn, ".json")
+					fn = strings.TrimPrefix(fn, "xai-")
+					if strings.Contains(fn, "@") {
+						candidates = append(candidates, fn)
+					}
+				}
+				for _, c := range candidates {
+					em := strings.ToLower(strings.TrimSpace(c))
+					if em != "" && regEmailSet[em] {
+						canRelogin = true
+						break
+					}
+				}
+			}
+			hit["can_relogin"] = canRelogin
+			hits = append(hits, hit)
 		}
 		// sort by last_at desc
 		sort.SliceStable(hits, func(i, j int) bool {
@@ -2193,12 +2901,28 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]row, 0, len(byKey))
 	for _, r0 := range byKey {
-		// final label normalize
-		if r0.Key == "free_usage_429" {
-			r0.Label = "429·免费额度用尽"
+		if strings.TrimSpace(r0.Label) == "" {
+			r0.Label = errorsig.LabelOf(r0.Key, match.Result{}, r0.StatusCode)
 		}
 		out = append(out, r0)
 	}
+	// sort: any_error first, unmatched last, others by count desc
+	sort.SliceStable(out, func(i, j int) bool {
+		ki, kj := out[i].Key, out[j].Key
+		if ki == "any_error" && kj != "any_error" {
+			return true
+		}
+		if kj == "any_error" && ki != "any_error" {
+			return false
+		}
+		if ki == "unmatched" && kj != "unmatched" {
+			return false
+		}
+		if kj == "unmatched" && ki != "unmatched" {
+			return true
+		}
+		return out[i].Count > out[j].Count
+	})
 	writeJSON(w, 200, map[string]any{"errors": out, "count": len(out)})
 }
 
@@ -2225,10 +2949,11 @@ func (a *API) handleErrorReclassify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		From  string `json:"from"`
-		To    string `json:"to"`
-		Label string `json:"label"`
-		Shape string `json:"shape"` // if set, split only this error shape from from(default unmatched)
+		From       string `json:"from"`
+		To         string `json:"to"`
+		Label      string `json:"label"`
+		DisplayMsg string `json:"display_msg"`
+		Shape      string `json:"shape"` // if set, split only this error shape from from(default unmatched)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
@@ -2237,6 +2962,8 @@ func (a *API) handleErrorReclassify(w http.ResponseWriter, r *http.Request) {
 	in.From = strings.TrimSpace(in.From)
 	in.To = strings.TrimSpace(in.To)
 	in.Shape = strings.TrimSpace(in.Shape)
+	in.Label = strings.TrimSpace(in.Label)
+	in.DisplayMsg = strings.TrimSpace(in.DisplayMsg)
 	if in.From == "" {
 		in.From = "unmatched"
 	}
@@ -2251,6 +2978,36 @@ func (a *API) handleErrorReclassify(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			writeJSON(w, 400, map[string]string{"error": err.Error()})
 			return
+		}
+		// ensure policy card with user label + display_msg + shape for future routing
+		if in.To != "unmatched" {
+			pol, ok := a.State.GetErrorPolicy(in.To)
+			if !ok {
+				pol = state.ErrorPolicy{
+					Key: in.To, Enabled: true, Action: "observe", Threshold: 1,
+					CountMode: "streak", Source: "split", Note: "从错误形态拆分",
+				}
+			}
+			if in.Label != "" {
+				pol.Label = in.Label
+			}
+			if in.DisplayMsg != "" {
+				pol.DisplayMsg = in.DisplayMsg
+			}
+			if in.Shape != "" {
+				pol.SplitShape = in.Shape
+			} else if pol.SplitShape == "" && strings.HasPrefix(in.To, "reason:") {
+				// e.g. reason:http_426 → http_426
+				pol.SplitShape = strings.TrimPrefix(in.To, "reason:")
+			}
+			if pol.DisplayMsg == "" {
+				// keep a useful short msg even if user left blank
+				pol.DisplayMsg = errorsig.HumanMsg(in.To, "", 0)
+				if pol.DisplayMsg == "未分类错误" || pol.DisplayMsg == "" {
+					pol.DisplayMsg = in.Label
+				}
+			}
+			a.State.UpsertErrorPolicy(pol)
 		}
 		_ = a.State.Save()
 		writeJSON(w, 200, map[string]any{"ok": true, "from": in.From, "to": in.To, "shape": in.Shape, "moved": n})
@@ -2303,17 +3060,7 @@ func (a *API) handleErrorPolicy(w http.ResponseWriter, r *http.Request) {
 			in.CooldownSec = low.CooldownSec
 		}
 	}
-	if errorsig.HardNeverTrash(in.Key) {
-		in.NeverTrash = true
-		for i := range in.Escalations {
-			if in.Escalations[i].Action == "trash" {
-				in.Escalations[i].Action = "cooldown"
-			}
-		}
-		if in.Action == "trash" {
-			in.Action = "cooldown"
-		}
-	}
+	// never_trash is panel-configured only (no hard key force)
 	if in.Label == "" {
 		in.Label = in.Key
 	}
@@ -2364,7 +3111,163 @@ func (a *API) handleBackfill(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+
+func (a *API) handleRegisterStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(405)
+		return
+	}
+	if a.Register == nil {
+		writeJSON(w, 200, map[string]any{"ok": true, "enabled": false, "schedule": "注册：运行时未就绪", "health": map[string]any{"backend": "unknown", "session": "unknown", "cpa": "unknown"}})
+		return
+	}
+	if a.Cfg != nil {
+		a.Register.ApplyConfig(*a.Cfg)
+	}
+	st := a.Register.Status(r.Context())
+	st["ok"] = true
+	writeJSON(w, 200, st)
+}
+
+func (a *API) handleRegisterTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(405)
+		return
+	}
+	if a.Register == nil {
+		writeJSON(w, 503, map[string]string{"error": "register runtime 未就绪"})
+		return
+	}
+	if a.Cfg != nil {
+		a.Register.ApplyConfig(*a.Cfg)
+	}
+	h := a.Register.Health(r.Context(), true)
+	if a.State != nil {
+		a.State.Log(state.ActionLog{At: time.Now(), Source: "panel", Action: "register_test", Reason: "【注册】测试连接 · 原因：面板 · 后端" + h.Backend + " · 会话" + h.Session + " · CPA " + h.CPA})
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "health": h, "status": a.Register.Status(r.Context())})
+}
+
+func (a *API) handleRegisterStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(405)
+		return
+	}
+	if a.Register == nil {
+		writeJSON(w, 503, map[string]string{"error": "register runtime 未就绪"})
+		return
+	}
+	var in struct {
+		Count int `json:"count"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in)
+	if a.Cfg != nil {
+		a.Register.ApplyConfig(*a.Cfg)
+	}
+	job, err := a.Register.Start(r.Context(), in.Count, "panel")
+	if err != nil {
+		writeJSON(w, 400, map[string]any{"ok": false, "error": err.Error(), "job": job})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "job": job})
+}
+
+func (a *API) handleRegisterStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(405)
+		return
+	}
+	if a.Register == nil {
+		writeJSON(w, 503, map[string]string{"error": "register runtime 未就绪"})
+		return
+	}
+	if err := a.Register.Stop(r.Context()); err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (a *API) handleRegisterJobs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(405)
+		return
+	}
+	hist := []regjob.Job{}
+	if a.Register != nil {
+		hist = a.Register.History()
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "history": hist, "total": len(hist)})
+}
+
 func (a *API) handleUI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(uiHTML))
+}
+
+func (a *API) handleRegisterRelogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(405)
+		return
+	}
+	if a.Register == nil {
+		writeJSON(w, 503, map[string]string{"error": "register runtime 未就绪"})
+		return
+	}
+	var in struct {
+		Emails []string `json:"emails"`
+		Auths  []string `json:"auths"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in)
+	emails := append([]string{}, in.Emails...)
+	if a.State != nil {
+		for _, auth := range in.Auths {
+			acc := a.State.Get(auth)
+			if acc != nil && acc.Email != "" {
+				emails = append(emails, acc.Email)
+			}
+		}
+	}
+	if a.Cfg != nil {
+		a.Register.ApplyConfig(*a.Cfg)
+	}
+	res, err := a.Register.StartRelogin(r.Context(), emails, "panel")
+	if err != nil {
+		writeJSON(w, 400, map[string]any{"ok": false, "error": err.Error(), "result": res})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "result": res})
+}
+
+func (a *API) handleRegisterReloginStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(405)
+		return
+	}
+	if a.Register == nil || a.Register.Client == nil {
+		writeJSON(w, 200, map[string]any{"ok": true, "running": false})
+		return
+	}
+	st, err := a.Register.Client.ReloginStatus(r.Context())
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "task": st})
+}
+
+func (a *API) handleRegisterSuccessReset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(405)
+		return
+	}
+	if a.Register == nil {
+		writeJSON(w, 503, map[string]string{"error": "register runtime 未就绪"})
+		return
+	}
+	a.Register.ClearSuccessHistory()
+	if a.State != nil {
+		a.State.Log(state.ActionLog{At: time.Now(), Source: "panel", Action: "register", Reason: "【注册】重置近窗成功率"})
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "status": a.Register.Status(r.Context())})
 }

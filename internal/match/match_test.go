@@ -65,6 +65,19 @@ func TestRegionNotPermission(t *testing.T) {
 	}
 }
 
+func TestGenericAccessDeniedNotPermission(t *testing.T) {
+	cases := []string{
+		`{"error":"Access Denied"}`,
+		`access denied`,
+	}
+	for _, body := range cases {
+		got := match.Classify(403, body)
+		if got.Signal == match.SignalPermission403 {
+			t.Fatalf("generic access denied must not be permission_403: body=%q reason=%s", body, got.Reason)
+		}
+	}
+}
+
 func Test402NeverLooksLikeDead(t *testing.T) {
 	got := match.Classify(402, `{"code":"personal-team-blocked:spending-limit","error":"need a Grok subscription"}`)
 	if got.Signal != match.SignalSpendingLimit402 {

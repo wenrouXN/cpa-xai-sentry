@@ -39,6 +39,7 @@ func configFields() []pluginapi.ConfigField {
 		{Name: "patrol_batch_size", Type: pluginapi.ConfigFieldTypeNumber, Description: "每轮上限"},
 		{Name: "patrol_concurrency", Type: pluginapi.ConfigFieldTypeNumber, Description: "并发"},
 		{Name: "patrol_model", Type: pluginapi.ConfigFieldTypeString, Description: "探测模型"},
+		{Name: "patrol_mode", Type: pluginapi.ConfigFieldTypeString, Description: "定时巡查自动范围 all|enabled|cooldown|permanent"},
 		{Name: "patrol_proxy_url", Type: pluginapi.ConfigFieldTypeString, Description: "巡查代理"},
 		{Name: "cpamp_url", Type: pluginapi.ConfigFieldTypeString, Description: "CPAMP 基址(可选)"},
 		{Name: "cpamp_admin_key", Type: pluginapi.ConfigFieldTypeString, Description: "CPAMP key(敏感)"},
@@ -185,6 +186,9 @@ func applyConfigMap(cfg *sentrycfg.Config, m map[string]any) {
 	if v, ok := asString(m["patrol_model"]); ok {
 		cfg.PatrolModel = strings.TrimSpace(v)
 	}
+	if v, ok := asString(m["patrol_mode"]); ok && strings.TrimSpace(v) != "" {
+		cfg.PatrolMode = strings.TrimSpace(v)
+	}
 	if v, ok := asString(m["patrol_proxy_url"]); ok {
 		cfg.PatrolProxyURL = strings.TrimSpace(v)
 	}
@@ -202,6 +206,88 @@ func applyConfigMap(cfg *sentrycfg.Config, m map[string]any) {
 	}
 	if v, ok := asBool(m["reopen_foreign_disabled"]); ok {
 		cfg.ReopenForeignDisabled = v
+	}
+	// register tab
+	if v, ok := asBool(m["register_enabled"]); ok {
+		cfg.RegisterEnabled = v
+	}
+	if v, ok := asString(m["register_base_url"]); ok {
+		cfg.RegisterBaseURL = strings.TrimSpace(v)
+	}
+	if v, ok := asString(m["register_admin_base"]); ok && strings.TrimSpace(v) != "" {
+		cfg.RegisterAdminBase = strings.TrimSpace(v)
+	}
+	if v, ok := asString(m["register_password"]); ok && strings.TrimSpace(v) != "" && strings.TrimSpace(v) != "********" {
+		cfg.RegisterPassword = strings.TrimSpace(v)
+	}
+	if v, ok := asFloat(m["register_timeout_sec"]); ok && v > 0 {
+		cfg.RegisterTimeoutSec = int(v)
+	}
+	if v, ok := asBool(m["register_dry_run"]); ok {
+		cfg.RegisterDryRun = v
+	}
+	if v, ok := asFloat(m["register_manual_default_count"]); ok && v > 0 {
+		cfg.RegisterManualDefaultCount = int(v)
+	}
+	if v, ok := asFloat(m["register_manual_max_count"]); ok && v > 0 {
+		cfg.RegisterManualMaxCount = int(v)
+	}
+	if v, ok := asBool(m["register_auto_enabled"]); ok {
+		cfg.RegisterAutoEnabled = v
+	}
+	if v, ok := asBool(m["register_floor_enabled"]); ok {
+		cfg.RegisterFloorEnabled = v
+	}
+	if v, ok := asFloat(m["register_floor_min_pool"]); ok && v > 0 {
+		cfg.RegisterFloorMinPool = int(v)
+	}
+	if v, ok := asFloat(m["register_floor_count"]); ok && v > 0 {
+		cfg.RegisterFloorCount = int(v)
+	}
+	if v, ok := asFloat(m["register_floor_interval_sec"]); ok && v > 0 {
+		cfg.RegisterFloorIntervalSec = int(v)
+	}
+	if v, ok := asFloat(m["register_auto_interval_sec"]); ok && v > 0 {
+		cfg.RegisterAutoIntervalSec = int(v)
+	}
+	if v, ok := asFloat(m["register_auto_count"]); ok && v > 0 {
+		cfg.RegisterAutoCount = int(v)
+	}
+	if v, ok := asBool(m["register_auto_only_when_idle"]); ok {
+		cfg.RegisterAutoOnlyWhenIdle = v
+	}
+	if v, ok := asBool(m["register_auto_require_health_ok"]); ok {
+		cfg.RegisterAutoRequireHealth = v
+	}
+	if v, ok := asBool(m["register_auto_pause_on_low_success"]); ok {
+		cfg.RegisterAutoPauseOnLow = v
+	}
+	if v, ok := asFloat(m["register_health_interval_sec"]); ok && v > 0 {
+		cfg.RegisterHealthIntervalSec = int(v)
+	}
+	if v, ok := asFloat(m["register_health_window_jobs"]); ok && v > 0 {
+		cfg.RegisterHealthWindowJobs = int(v)
+	}
+	if v, ok := asFloat(m["register_health_min_samples"]); ok && v > 0 {
+		cfg.RegisterHealthMinSamples = int(v)
+	}
+	if v, ok := asFloat(m["register_health_ok_rate"]); ok && v > 0 {
+		cfg.RegisterHealthOKRate = v
+	}
+	if v, ok := asFloat(m["register_health_warn_rate"]); ok && v > 0 {
+		cfg.RegisterHealthWarnRate = v
+	}
+	if v, ok := asBool(m["register_require_cpa_ok"]); ok {
+		cfg.RegisterRequireCPAok = v
+	}
+	if v, ok := asBool(m["register_relogin_on_auth401"]); ok {
+		cfg.RegisterReloginOnAuth401 = v
+	}
+	if v, ok := asFloat(m["register_relogin_max_streak"]); ok && v > 0 {
+		cfg.RegisterReloginMaxStreak = int(v)
+	}
+	if v, ok := asFloat(m["register_relogin_concurrency"]); ok && v > 0 {
+		cfg.RegisterReloginConcurrency = int(v)
 	}
 }
 
@@ -307,6 +393,7 @@ func redactConfig(cfg sentrycfg.Config) map[string]any {
 		"patrol_concurrency":      cfg.PatrolConcurrency,
 		"patrol_batch_size":       cfg.PatrolBatchSize,
 		"patrol_model":            cfg.PatrolModel,
+		"patrol_mode":             cfg.PatrolMode,
 		"patrol_proxy_url":        cfg.PatrolProxyURL,
 		"patrol_auto_model_switch": cfg.PatrolAutoModelSwitch,
 		"cpamp_url":               cfg.CPAMPURL,

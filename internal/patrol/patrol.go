@@ -21,6 +21,30 @@ type Runner struct {
 	Guard *guard.Guard
 	CPA   *cpaapi.Client
 	HC    *http.Client
+	// GetGuard, if set, returns the current Guard from Runtime.
+	// Called at the start of each patrol run to avoid stale Guard references
+	// after ApplyConfig/rebuild replaces the Guard object.
+	GetGuard func() *guard.Guard
+	// patrolFinishedAt tracks when the last patrol finished, used by IsRunning
+	// to provide a settle window so tick prune doesn't delete freshly created accounts.
+	patrolFinishedAt time.Time
+}
+
+// IsRunning returns true when a patrol job is currently executing,
+// or within 30s after finishing (settle window to protect newly created accounts
+// from being pruned by the tick before they're fully persisted).
+func (r *Runner) IsRunning() bool {
+	jobMu.Lock()
+	running := jobStatus.Running
+	finished := r.patrolFinishedAt
+	jobMu.Unlock()
+	if running {
+		return true
+	}
+	if !finished.IsZero() && time.Since(finished) < 30*time.Second {
+		return true
+	}
+	return false
 }
 
 func New(cfg sentrycfg.Config, g *guard.Guard, cpa *cpaapi.Client) *Runner {
@@ -54,6 +78,7 @@ type Result struct {
 }
 
 // Run probes targets with limited concurrency. Network errors never trash.
+// v1.1.36: each probe appends job log immediately (not only after whole batch).
 func (r *Runner) Run(ctx context.Context, targets []Target) []Result {
 	if len(targets) == 0 {
 		return nil
@@ -84,10 +109,12 @@ func (r *Runner) Run(ctx context.Context, targets []Target) []Result {
 			mu.Unlock()
 			// live progress for panel progress bar
 			bumpPatrolProgress(res)
+			// live per-probe job log (full + cooldown same path)
+			r.appendProbeResultLive(t, res)
 			if res.Err != "" {
 				return
 			}
-			// feed into guard (same policy path)
+			// feed into guard (same policy path) — success may reopen cool / open file
 			if r.Guard != nil {
 				_ = r.Guard.HandleUsage(ctx, guard.UsageEvent{
 					Provider:   t.Provider,
@@ -100,6 +127,7 @@ func (r *Runner) Run(ctx context.Context, targets []Target) []Result {
 					Source:     "patrol",
 					Note:       t.Note,
 					Label:      t.Label,
+					Model:      r.Cfg.PatrolModel,
 				})
 			}
 		}()

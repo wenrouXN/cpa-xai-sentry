@@ -1,5 +1,7 @@
 package sentrycfg
 
+import "strings"
+
 // Config is the plugin YAML/JSON config surface.
 type Config struct {
 	Enabled               bool           `yaml:"enabled" json:"enabled"`
@@ -32,6 +34,9 @@ type Config struct {
 	PatrolModel           string         `yaml:"patrol_model" json:"patrol_model"`
 	PatrolProxyURL        string         `yaml:"patrol_proxy_url" json:"patrol_proxy_url"`
 	PatrolAutoModelSwitch bool           `yaml:"patrol_auto_model_switch" json:"patrol_auto_model_switch"`
+	// PatrolMode for scheduled auto patrol: all | enabled | cooldown | permanent
+	// (legacy "full" accepted as enabled). Manual start can override per request.
+	PatrolMode string `yaml:"patrol_mode" json:"patrol_mode"`
 	CPAMPURL              string         `yaml:"cpamp_url" json:"cpamp_url"`
 	CPAMPAdminKey         string         `yaml:"cpamp_admin_key" json:"cpamp_admin_key"`
 	CPAMPUsageFloor       bool           `yaml:"cpamp_usage_floor" json:"cpamp_usage_floor"`
@@ -40,7 +45,39 @@ type Config struct {
 	// usage/patrol error re-stamps cool-down ownership. Owned cool-downs / panel
 	// permanent disables are NEVER opened. Set false to keep unknown disables closed.
 	ReopenForeignDisabled bool `yaml:"reopen_foreign_disabled" json:"reopen_foreign_disabled"`
+
+	// --- Register tab (grok-register-lite / :8788) ---
+	RegisterEnabled              bool    `yaml:"register_enabled" json:"register_enabled"`
+	RegisterBaseURL              string  `yaml:"register_base_url" json:"register_base_url"`
+	RegisterAdminBase            string  `yaml:"register_admin_base" json:"register_admin_base"`
+	RegisterPassword             string  `yaml:"register_password" json:"register_password"`
+	RegisterTimeoutSec           int     `yaml:"register_timeout_sec" json:"register_timeout_sec"`
+	RegisterDryRun               bool    `yaml:"register_dry_run" json:"register_dry_run"`
+	RegisterManualDefaultCount   int     `yaml:"register_manual_default_count" json:"register_manual_default_count"`
+	RegisterManualMaxCount       int     `yaml:"register_manual_max_count" json:"register_manual_max_count"`
+	RegisterAutoEnabled          bool    `yaml:"register_auto_enabled" json:"register_auto_enabled"`
+	RegisterAutoIntervalSec      int     `yaml:"register_auto_interval_sec" json:"register_auto_interval_sec"`
+	RegisterAutoCount            int     `yaml:"register_auto_count" json:"register_auto_count"`
+	// Floor (保底): when (CPA enabled + sentry cooldown) < MinPool, register Count each IntervalSec until above.
+	RegisterFloorEnabled     bool `yaml:"register_floor_enabled" json:"register_floor_enabled"`
+	RegisterFloorMinPool     int  `yaml:"register_floor_min_pool" json:"register_floor_min_pool"`
+	RegisterFloorCount       int  `yaml:"register_floor_count" json:"register_floor_count"`
+	RegisterFloorIntervalSec int  `yaml:"register_floor_interval_sec" json:"register_floor_interval_sec"`
+	RegisterAutoOnlyWhenIdle     bool    `yaml:"register_auto_only_when_idle" json:"register_auto_only_when_idle"`
+	RegisterAutoRequireHealth    bool    `yaml:"register_auto_require_health_ok" json:"register_auto_require_health_ok"`
+	RegisterAutoPauseOnLow       bool    `yaml:"register_auto_pause_on_low_success" json:"register_auto_pause_on_low_success"`
+	RegisterHealthIntervalSec    int     `yaml:"register_health_interval_sec" json:"register_health_interval_sec"`
+	RegisterHealthWindowJobs     int     `yaml:"register_health_window_jobs" json:"register_health_window_jobs"`
+	RegisterHealthMinSamples     int     `yaml:"register_health_min_samples" json:"register_health_min_samples"`
+	RegisterHealthOKRate         float64 `yaml:"register_health_ok_rate" json:"register_health_ok_rate"`
+	RegisterHealthWarnRate       float64 `yaml:"register_health_warn_rate" json:"register_health_warn_rate"`
+	RegisterRequireCPAok         bool    `yaml:"register_require_cpa_ok" json:"register_require_cpa_ok"`
+	// Relogin (only 8788-local accounts with password)
+	RegisterReloginOnAuth401    bool `yaml:"register_relogin_on_auth401" json:"register_relogin_on_auth401"`
+	RegisterReloginMaxStreak    int  `yaml:"register_relogin_max_streak" json:"register_relogin_max_streak"`
+	RegisterReloginConcurrency  int  `yaml:"register_relogin_concurrency" json:"register_relogin_concurrency"`
 }
+
 
 func Default() Config {
 	return Config{
@@ -74,22 +111,41 @@ func Default() Config {
 		PatrolConcurrency:     8,
 		PatrolBatchSize:       50,
 		PatrolModel:           "grok-4.5",
+		PatrolMode:            "enabled",
 		CPAMPUsageFloor:       true,
 		ReopenForeignDisabled: true, // ops: open unowned disables; wait next error to re-stamp
+		// Register tab defaults (off until configured)
+		RegisterEnabled:            false,
+		RegisterBaseURL:            "http://192.168.1.68:8788",
+		RegisterAdminBase:          "/admin",
+		RegisterTimeoutSec:         30,
+		RegisterManualDefaultCount: 10,
+		RegisterManualMaxCount:     50,
+		RegisterAutoEnabled:        false,
+		RegisterAutoIntervalSec:    3600,
+		RegisterAutoCount:          10,
+		RegisterFloorEnabled:       false,
+		RegisterFloorMinPool:       100,
+		RegisterFloorCount:         10,
+		RegisterFloorIntervalSec:   600,
+		RegisterAutoOnlyWhenIdle:   true,
+		RegisterAutoRequireHealth:  true,
+		RegisterAutoPauseOnLow:     true,
+		RegisterHealthIntervalSec:  300,
+		RegisterHealthWindowJobs:   10,
+		RegisterHealthMinSamples:   10,
+		RegisterHealthOKRate:       0.85,
+		RegisterHealthWarnRate:     0.60,
+		RegisterRequireCPAok:       false,
+		RegisterReloginOnAuth401:   true,
+		RegisterReloginMaxStreak:   2,
+		RegisterReloginConcurrency: 2,
 	}
 }
 
-// Validate applies hard bans and defaults.
+// Validate applies defaults (no hard bans on delete_signals — panel/policy decides trash).
 func (c Config) Validate() Config {
 	out := c
-	filtered := make([]string, 0, len(out.DeleteSignals))
-	for _, s := range out.DeleteSignals {
-		if s == "spending_limit_402" {
-			continue
-		}
-		filtered = append(filtered, s)
-	}
-	out.DeleteSignals = filtered
 	if out.TrashRetentionDays <= 0 {
 		out.TrashRetentionDays = 7
 	}
@@ -98,6 +154,76 @@ func (c Config) Validate() Config {
 	}
 	if out.SignalThresholds == nil {
 		out.SignalThresholds = Default().SignalThresholds
+	}
+	// normalize patrol auto range (timer uses this; panel select values)
+	switch strings.ToLower(strings.TrimSpace(out.PatrolMode)) {
+	case "all", "全部", "any":
+		out.PatrolMode = "all"
+	case "cooldown", "cool", "spending", "冷却":
+		out.PatrolMode = "cooldown"
+	case "permanent", "manual", "disabled", "user_manual", "永久禁用", "永禁":
+		out.PatrolMode = "permanent"
+	case "candidate", "候删", "候选", "candidate_dead":
+		out.PatrolMode = "candidate"
+	case "trash", "trashed", "垃圾箱", "箱":
+		out.PatrolMode = "trash"
+	case "enabled", "full", "active", "启用", "可接流":
+		out.PatrolMode = "enabled"
+	default:
+		out.PatrolMode = "enabled"
+	}
+	if out.RegisterAdminBase == "" {
+		out.RegisterAdminBase = "/admin"
+	}
+	if out.RegisterTimeoutSec <= 0 {
+		out.RegisterTimeoutSec = 30
+	}
+	if out.RegisterManualDefaultCount <= 0 {
+		out.RegisterManualDefaultCount = 10
+	}
+	if out.RegisterManualMaxCount <= 0 {
+		out.RegisterManualMaxCount = 50
+	}
+	if out.RegisterAutoIntervalSec <= 0 {
+		out.RegisterAutoIntervalSec = 3600
+	}
+	if out.RegisterAutoCount <= 0 {
+		out.RegisterAutoCount = 10
+	}
+	if out.RegisterFloorMinPool <= 0 {
+		out.RegisterFloorMinPool = 100
+	}
+	if out.RegisterFloorCount <= 0 {
+		out.RegisterFloorCount = 10
+	}
+	if out.RegisterFloorIntervalSec <= 0 {
+		out.RegisterFloorIntervalSec = 600
+	}
+	// product defaults: always on for auto/floor safety (not exposed in panel)
+	out.RegisterAutoOnlyWhenIdle = true
+	out.RegisterAutoRequireHealth = true
+	out.RegisterAutoPauseOnLow = true
+	out.RegisterRequireCPAok = true
+	if out.RegisterHealthIntervalSec <= 0 {
+		out.RegisterHealthIntervalSec = 300
+	}
+	if out.RegisterHealthWindowJobs <= 0 {
+		out.RegisterHealthWindowJobs = 10
+	}
+	if out.RegisterHealthMinSamples <= 0 {
+		out.RegisterHealthMinSamples = 10
+	}
+	if out.RegisterHealthOKRate <= 0 {
+		out.RegisterHealthOKRate = 0.85
+	}
+	if out.RegisterHealthWarnRate <= 0 {
+		out.RegisterHealthWarnRate = 0.60
+	}
+	if out.RegisterReloginMaxStreak <= 0 {
+		out.RegisterReloginMaxStreak = 2
+	}
+	if out.RegisterReloginConcurrency <= 0 {
+		out.RegisterReloginConcurrency = 2
 	}
 	return out
 }
@@ -135,10 +261,38 @@ func (c Config) Redact() map[string]any {
 		"patrol_model":                c.PatrolModel,
 		"patrol_proxy_url":            c.PatrolProxyURL,
 		"patrol_auto_model_switch":    c.PatrolAutoModelSwitch,
+		"patrol_mode":                 c.PatrolMode,
 		"cpamp_url":                   c.CPAMPURL,
 		"cpamp_admin_key_set":         c.CPAMPAdminKey != "",
 		"cpamp_usage_floor":           c.CPAMPUsageFloor,
 		"reopen_foreign_disabled":     c.ReopenForeignDisabled,
+		"register_enabled":                   c.RegisterEnabled,
+		"register_base_url":                  c.RegisterBaseURL,
+		"register_admin_base":                c.RegisterAdminBase,
+		"register_password_set":              c.RegisterPassword != "",
+		"register_timeout_sec":               c.RegisterTimeoutSec,
+		"register_dry_run":                   c.RegisterDryRun,
+		"register_manual_default_count":      c.RegisterManualDefaultCount,
+		"register_manual_max_count":          c.RegisterManualMaxCount,
+		"register_auto_enabled":              c.RegisterAutoEnabled,
+		"register_auto_interval_sec":         c.RegisterAutoIntervalSec,
+		"register_auto_count":                c.RegisterAutoCount,
+		"register_floor_enabled":             c.RegisterFloorEnabled,
+		"register_floor_min_pool":            c.RegisterFloorMinPool,
+		"register_floor_count":               c.RegisterFloorCount,
+		"register_floor_interval_sec":        c.RegisterFloorIntervalSec,
+		"register_auto_only_when_idle":       c.RegisterAutoOnlyWhenIdle,
+		"register_auto_require_health_ok":    c.RegisterAutoRequireHealth,
+		"register_auto_pause_on_low_success": c.RegisterAutoPauseOnLow,
+		"register_health_interval_sec":       c.RegisterHealthIntervalSec,
+		"register_health_window_jobs":        c.RegisterHealthWindowJobs,
+		"register_health_min_samples":        c.RegisterHealthMinSamples,
+		"register_health_ok_rate":            c.RegisterHealthOKRate,
+		"register_health_warn_rate":          c.RegisterHealthWarnRate,
+		"register_require_cpa_ok":            c.RegisterRequireCPAok,
+		"register_relogin_on_auth401":         c.RegisterReloginOnAuth401,
+		"register_relogin_max_streak":         c.RegisterReloginMaxStreak,
+		"register_relogin_concurrency":        c.RegisterReloginConcurrency,
 	}
 }
 
@@ -172,9 +326,37 @@ func (c Config) HostPluginPatch() map[string]any {
 		"patrol_model":                c.PatrolModel,
 		"patrol_proxy_url":            c.PatrolProxyURL,
 		"patrol_auto_model_switch":    c.PatrolAutoModelSwitch,
+		"patrol_mode":                 c.PatrolMode,
 		"cpamp_url":                   c.CPAMPURL,
 		"cpamp_admin_key":             c.CPAMPAdminKey,
 		"cpamp_usage_floor":           c.CPAMPUsageFloor,
 		"reopen_foreign_disabled":     c.ReopenForeignDisabled,
+		"register_enabled":                   c.RegisterEnabled,
+		"register_base_url":                  c.RegisterBaseURL,
+		"register_admin_base":                c.RegisterAdminBase,
+		"register_password":                  c.RegisterPassword,
+		"register_timeout_sec":               c.RegisterTimeoutSec,
+		"register_dry_run":                   c.RegisterDryRun,
+		"register_manual_default_count":      c.RegisterManualDefaultCount,
+		"register_manual_max_count":          c.RegisterManualMaxCount,
+		"register_auto_enabled":              c.RegisterAutoEnabled,
+		"register_auto_interval_sec":         c.RegisterAutoIntervalSec,
+		"register_auto_count":                c.RegisterAutoCount,
+		"register_floor_enabled":             c.RegisterFloorEnabled,
+		"register_floor_min_pool":            c.RegisterFloorMinPool,
+		"register_floor_count":               c.RegisterFloorCount,
+		"register_floor_interval_sec":        c.RegisterFloorIntervalSec,
+		"register_auto_only_when_idle":       c.RegisterAutoOnlyWhenIdle,
+		"register_auto_require_health_ok":    c.RegisterAutoRequireHealth,
+		"register_auto_pause_on_low_success": c.RegisterAutoPauseOnLow,
+		"register_health_interval_sec":       c.RegisterHealthIntervalSec,
+		"register_health_window_jobs":        c.RegisterHealthWindowJobs,
+		"register_health_min_samples":        c.RegisterHealthMinSamples,
+		"register_health_ok_rate":            c.RegisterHealthOKRate,
+		"register_health_warn_rate":          c.RegisterHealthWarnRate,
+		"register_require_cpa_ok":            c.RegisterRequireCPAok,
+		"register_relogin_on_auth401":         c.RegisterReloginOnAuth401,
+		"register_relogin_max_streak":         c.RegisterReloginMaxStreak,
+		"register_relogin_concurrency":        c.RegisterReloginConcurrency,
 	}
 }

@@ -109,6 +109,52 @@ func (c *Client) SetDisabled(ctx context.Context, name string, disabled bool) er
 	return nil
 }
 
+// IsAuthFileDisabled returns whether the named auth file is currently disabled.
+// Used after SetDisabled(false) to detect list lag / external re-close.
+func (c *Client) IsAuthFileDisabled(ctx context.Context, name string) (bool, error) {
+	if c == nil || strings.TrimSpace(name) == "" {
+		return false, fmt.Errorf("empty name")
+	}
+	want := strings.ToLower(strings.TrimSpace(name))
+	baseWant := want
+	if i := strings.LastIndexAny(baseWant, "/\\"); i >= 0 {
+		baseWant = baseWant[i+1:]
+	}
+	files, err := c.ListAuthFiles(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, f := range files {
+		cands := []string{f.Name, f.ID, f.Path, f.AuthIndex}
+		for _, cand := range cands {
+			c0 := strings.ToLower(strings.TrimSpace(cand))
+			if c0 == "" {
+				continue
+			}
+			base := c0
+			if i := strings.LastIndexAny(base, "/\\"); i >= 0 {
+				base = base[i+1:]
+			}
+			if c0 == want || base == baseWant || strings.HasSuffix(c0, baseWant) || strings.HasSuffix(want, base) {
+				return f.Disabled, nil
+			}
+		}
+		em := strings.ToLower(strings.TrimSpace(f.Email))
+		if em == "" {
+			em = strings.ToLower(strings.TrimSpace(f.Account))
+		}
+		// filename xai-email.json match
+		if strings.HasPrefix(baseWant, "xai-") && strings.HasSuffix(baseWant, ".json") {
+			inner := strings.TrimSuffix(strings.TrimPrefix(baseWant, "xai-"), ".json")
+			if em != "" && em == inner {
+				return f.Disabled, nil
+			}
+		}
+	}
+	// not found → treat as not disabled (cannot confirm)
+	return false, nil
+}
+
 func (c *Client) DeleteAuthFile(ctx context.Context, name string) error {
 	q := url.Values{"name": {name}}
 	b, code, err := c.do(ctx, http.MethodDelete, "/v0/management/auth-files?"+q.Encode(), nil)

@@ -60,19 +60,33 @@ func Test429CooldownNotTrash(t *testing.T) {
 	}
 }
 
-func Test402NeverTrashEvenAutoDelete(t *testing.T) {
+func Test402FollowsPolicyNoHardBan(t *testing.T) {
 	cfg := sentrycfg.Default()
 	cfg.AutoCooldown = true
 	cfg.AutoDelete = true
 	cfg.DeleteSignals = []string{"spending_limit_402", "auth_401"}
 	g, st, _, _ := setup(t, cfg)
+	// default builtin ladder = cooldown (never_trash no longer forced)
+	st.UpsertErrorPolicy(state.ErrorPolicy{
+		Key: "spending_limit_402", Label: "402", Enabled: true, NeverTrash: false,
+		Escalations: []state.EscalationRule{{Streak: 1, Action: "cooldown", CooldownSec: 3600}},
+	})
 	_ = g.HandleUsage(context.Background(), guard.UsageEvent{
 		Provider: "xai", AuthIndex: "a", FileName: "xai-a.json",
 		StatusCode: 402,
 		Body:       `{"code":"personal-team-blocked:spending-limit","error":"need a Grok subscription"}`,
 	})
-	if len(st.ListTrash()) != 0 {
-		t.Fatal("402 never trash")
+	acc := st.Get("a")
+	if acc == nil || acc.State != state.CooldownSpending {
+		got := ""
+		if acc != nil {
+			got = string(acc.State)
+		}
+		t.Fatalf("want cooldown_spending (config ladder), got %s", got)
+	}
+	// no hard ban residue
+	if p, ok := st.GetErrorPolicy("spending_limit_402"); ok && p.NeverTrash {
+		t.Fatal("never_trash must not be hard-forced on 402")
 	}
 }
 

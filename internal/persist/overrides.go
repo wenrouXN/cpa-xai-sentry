@@ -12,7 +12,8 @@ import (
 // Overrides are UI/runtime knobs that must survive CPA host reconfigure from YAML
 // and plugin process restarts (docker restart / plugin upgrade).
 // Host YAML is base; these fields win when present.
-// Secrets (management_key, cpamp_admin_key) stay in YAML only.
+// Secrets (management_key, cpamp_admin_key, register_password) stay in YAML/host when set;
+// register_password is also mirrored here so panel save survives without host write.
 type Overrides struct {
 	SentryEnabled *bool `json:"sentry_enabled,omitempty"`
 	AutoCooldown  *bool `json:"auto_cooldown,omitempty"`
@@ -40,6 +41,36 @@ type Overrides struct {
 	PatrolModel           *string `json:"patrol_model,omitempty"`
 	PatrolProxyURL        *string `json:"patrol_proxy_url,omitempty"`
 	PatrolAutoModelSwitch *bool   `json:"patrol_auto_model_switch,omitempty"`
+	PatrolMode            *string `json:"patrol_mode,omitempty"`
+
+	// Register tab (8788)
+	RegisterEnabled             *bool    `json:"register_enabled,omitempty"`
+	RegisterBaseURL             *string  `json:"register_base_url,omitempty"`
+	RegisterAdminBase           *string  `json:"register_admin_base,omitempty"`
+	RegisterPassword            *string  `json:"register_password,omitempty"`
+	RegisterTimeoutSec          *int     `json:"register_timeout_sec,omitempty"`
+	RegisterDryRun              *bool    `json:"register_dry_run,omitempty"`
+	RegisterManualDefaultCount  *int     `json:"register_manual_default_count,omitempty"`
+	RegisterManualMaxCount      *int     `json:"register_manual_max_count,omitempty"`
+	RegisterAutoEnabled         *bool    `json:"register_auto_enabled,omitempty"`
+	RegisterAutoIntervalSec     *int     `json:"register_auto_interval_sec,omitempty"`
+	RegisterAutoCount           *int     `json:"register_auto_count,omitempty"`
+	RegisterFloorEnabled        *bool    `json:"register_floor_enabled,omitempty"`
+	RegisterFloorMinPool        *int     `json:"register_floor_min_pool,omitempty"`
+	RegisterFloorCount          *int     `json:"register_floor_count,omitempty"`
+	RegisterFloorIntervalSec    *int     `json:"register_floor_interval_sec,omitempty"`
+	RegisterAutoOnlyWhenIdle    *bool    `json:"register_auto_only_when_idle,omitempty"`
+	RegisterAutoRequireHealth   *bool    `json:"register_auto_require_health_ok,omitempty"`
+	RegisterAutoPauseOnLow      *bool    `json:"register_auto_pause_on_low_success,omitempty"`
+	RegisterHealthIntervalSec   *int     `json:"register_health_interval_sec,omitempty"`
+	RegisterHealthWindowJobs    *int     `json:"register_health_window_jobs,omitempty"`
+	RegisterHealthMinSamples    *int     `json:"register_health_min_samples,omitempty"`
+	RegisterHealthOKRate        *float64 `json:"register_health_ok_rate,omitempty"`
+	RegisterHealthWarnRate      *float64 `json:"register_health_warn_rate,omitempty"`
+	RegisterRequireCPAok        *bool    `json:"register_require_cpa_ok,omitempty"`
+	RegisterReloginOnAuth401   *bool `json:"register_relogin_on_auth401,omitempty"`
+	RegisterReloginMaxStreak   *int  `json:"register_relogin_max_streak,omitempty"`
+	RegisterReloginConcurrency *int  `json:"register_relogin_concurrency,omitempty"`
 
 	UpdatedAt string `json:"updated_at,omitempty"`
 	Source    string `json:"source,omitempty"`
@@ -162,6 +193,91 @@ func Apply(cfg sentrycfg.Config, o Overrides) sentrycfg.Config {
 	if o.PatrolAutoModelSwitch != nil {
 		cfg.PatrolAutoModelSwitch = *o.PatrolAutoModelSwitch
 	}
+	if o.PatrolMode != nil && *o.PatrolMode != "" {
+		cfg.PatrolMode = *o.PatrolMode
+	}
+	// register
+	if o.RegisterEnabled != nil {
+		cfg.RegisterEnabled = *o.RegisterEnabled
+	}
+	if o.RegisterBaseURL != nil {
+		cfg.RegisterBaseURL = *o.RegisterBaseURL
+	}
+	if o.RegisterAdminBase != nil && *o.RegisterAdminBase != "" {
+		cfg.RegisterAdminBase = *o.RegisterAdminBase
+	}
+	if o.RegisterPassword != nil && *o.RegisterPassword != "" {
+		cfg.RegisterPassword = *o.RegisterPassword
+	}
+	if o.RegisterTimeoutSec != nil && *o.RegisterTimeoutSec > 0 {
+		cfg.RegisterTimeoutSec = *o.RegisterTimeoutSec
+	}
+	if o.RegisterDryRun != nil {
+		cfg.RegisterDryRun = *o.RegisterDryRun
+	}
+	if o.RegisterManualDefaultCount != nil && *o.RegisterManualDefaultCount > 0 {
+		cfg.RegisterManualDefaultCount = *o.RegisterManualDefaultCount
+	}
+	if o.RegisterManualMaxCount != nil && *o.RegisterManualMaxCount > 0 {
+		cfg.RegisterManualMaxCount = *o.RegisterManualMaxCount
+	}
+	if o.RegisterAutoEnabled != nil {
+		cfg.RegisterAutoEnabled = *o.RegisterAutoEnabled
+	}
+	if o.RegisterAutoIntervalSec != nil && *o.RegisterAutoIntervalSec > 0 {
+		cfg.RegisterAutoIntervalSec = *o.RegisterAutoIntervalSec
+	}
+	if o.RegisterAutoCount != nil && *o.RegisterAutoCount > 0 {
+		cfg.RegisterAutoCount = *o.RegisterAutoCount
+	}
+	if o.RegisterFloorEnabled != nil {
+		cfg.RegisterFloorEnabled = *o.RegisterFloorEnabled
+	}
+	if o.RegisterFloorMinPool != nil && *o.RegisterFloorMinPool > 0 {
+		cfg.RegisterFloorMinPool = *o.RegisterFloorMinPool
+	}
+	if o.RegisterFloorCount != nil && *o.RegisterFloorCount > 0 {
+		cfg.RegisterFloorCount = *o.RegisterFloorCount
+	}
+	if o.RegisterFloorIntervalSec != nil && *o.RegisterFloorIntervalSec > 0 {
+		cfg.RegisterFloorIntervalSec = *o.RegisterFloorIntervalSec
+	}
+	if o.RegisterAutoOnlyWhenIdle != nil {
+		cfg.RegisterAutoOnlyWhenIdle = *o.RegisterAutoOnlyWhenIdle
+	}
+	if o.RegisterAutoRequireHealth != nil {
+		cfg.RegisterAutoRequireHealth = *o.RegisterAutoRequireHealth
+	}
+	if o.RegisterAutoPauseOnLow != nil {
+		cfg.RegisterAutoPauseOnLow = *o.RegisterAutoPauseOnLow
+	}
+	if o.RegisterHealthIntervalSec != nil && *o.RegisterHealthIntervalSec > 0 {
+		cfg.RegisterHealthIntervalSec = *o.RegisterHealthIntervalSec
+	}
+	if o.RegisterHealthWindowJobs != nil && *o.RegisterHealthWindowJobs > 0 {
+		cfg.RegisterHealthWindowJobs = *o.RegisterHealthWindowJobs
+	}
+	if o.RegisterHealthMinSamples != nil && *o.RegisterHealthMinSamples > 0 {
+		cfg.RegisterHealthMinSamples = *o.RegisterHealthMinSamples
+	}
+	if o.RegisterHealthOKRate != nil && *o.RegisterHealthOKRate > 0 {
+		cfg.RegisterHealthOKRate = *o.RegisterHealthOKRate
+	}
+	if o.RegisterHealthWarnRate != nil && *o.RegisterHealthWarnRate > 0 {
+		cfg.RegisterHealthWarnRate = *o.RegisterHealthWarnRate
+	}
+	if o.RegisterRequireCPAok != nil {
+		cfg.RegisterRequireCPAok = *o.RegisterRequireCPAok
+	}
+	if o.RegisterReloginOnAuth401 != nil {
+		cfg.RegisterReloginOnAuth401 = *o.RegisterReloginOnAuth401
+	}
+	if o.RegisterReloginMaxStreak != nil && *o.RegisterReloginMaxStreak > 0 {
+		cfg.RegisterReloginMaxStreak = *o.RegisterReloginMaxStreak
+	}
+	if o.RegisterReloginConcurrency != nil && *o.RegisterReloginConcurrency > 0 {
+		cfg.RegisterReloginConcurrency = *o.RegisterReloginConcurrency
+	}
 	return cfg
 }
 
@@ -175,6 +291,18 @@ func FromConfig(cfg sentrycfg.Config) Overrides {
 	pi, pt, pc, pb := cfg.PatrolInterval, cfg.PatrolTimeout, cfg.PatrolConcurrency, cfg.PatrolBatchSize
 	pm, pp := cfg.PatrolModel, cfg.PatrolProxyURL
 	pams := cfg.PatrolAutoModelSwitch
+	pmode := cfg.PatrolMode
+	re, rurl, radmin := cfg.RegisterEnabled, cfg.RegisterBaseURL, cfg.RegisterAdminBase
+	rpw := cfg.RegisterPassword
+	rto, rdry := cfg.RegisterTimeoutSec, cfg.RegisterDryRun
+	rmd, rmm := cfg.RegisterManualDefaultCount, cfg.RegisterManualMaxCount
+	rae, rais, rac := cfg.RegisterAutoEnabled, cfg.RegisterAutoIntervalSec, cfg.RegisterAutoCount
+	rfe, rfmin, rfc, rfi := cfg.RegisterFloorEnabled, cfg.RegisterFloorMinPool, cfg.RegisterFloorCount, cfg.RegisterFloorIntervalSec
+	raoi, rarh, rapl := cfg.RegisterAutoOnlyWhenIdle, cfg.RegisterAutoRequireHealth, cfg.RegisterAutoPauseOnLow
+	rhis, rhwj, rhms := cfg.RegisterHealthIntervalSec, cfg.RegisterHealthWindowJobs, cfg.RegisterHealthMinSamples
+	rhor, rhwr := cfg.RegisterHealthOKRate, cfg.RegisterHealthWarnRate
+	rrc := cfg.RegisterRequireCPAok
+	roa, rms, rrcy := cfg.RegisterReloginOnAuth401, cfg.RegisterReloginMaxStreak, cfg.RegisterReloginConcurrency
 	return Overrides{
 		SentryEnabled: &se, AutoCooldown: &ac, AutoCandidate: &cand, AutoDelete: &del,
 		TickSeconds: &tick, MaxResetSeconds: &maxR, MinResetSeconds: &minR,
@@ -184,6 +312,16 @@ func FromConfig(cfg sentrycfg.Config) Overrides {
 		PatrolEnabled: &pe, PatrolInterval: &pi, PatrolTimeout: &pt,
 		PatrolConcurrency: &pc, PatrolBatchSize: &pb,
 		PatrolModel: &pm, PatrolProxyURL: &pp, PatrolAutoModelSwitch: &pams,
+		PatrolMode: &pmode,
+		RegisterEnabled: &re, RegisterBaseURL: &rurl, RegisterAdminBase: &radmin,
+		RegisterPassword: &rpw, RegisterTimeoutSec: &rto, RegisterDryRun: &rdry,
+		RegisterManualDefaultCount: &rmd, RegisterManualMaxCount: &rmm,
+		RegisterAutoEnabled: &rae, RegisterAutoIntervalSec: &rais, RegisterAutoCount: &rac,
+		RegisterFloorEnabled: &rfe, RegisterFloorMinPool: &rfmin, RegisterFloorCount: &rfc, RegisterFloorIntervalSec: &rfi,
+		RegisterAutoOnlyWhenIdle: &raoi, RegisterAutoRequireHealth: &rarh, RegisterAutoPauseOnLow: &rapl,
+		RegisterHealthIntervalSec: &rhis, RegisterHealthWindowJobs: &rhwj, RegisterHealthMinSamples: &rhms,
+		RegisterHealthOKRate: &rhor, RegisterHealthWarnRate: &rhwr, RegisterRequireCPAok: &rrc,
+		RegisterReloginOnAuth401: &roa, RegisterReloginMaxStreak: &rms, RegisterReloginConcurrency: &rrcy,
 		Source: "panel",
 	}
 }
@@ -210,6 +348,12 @@ func PatchBool(cur Overrides, field string, val bool) Overrides {
 		cur.RestoreDefaultDis = &val
 	case "patrol_auto_model_switch":
 		cur.PatrolAutoModelSwitch = &val
+	case "register_enabled":
+		cur.RegisterEnabled = &val
+	case "register_auto_enabled":
+		cur.RegisterAutoEnabled = &val
+	case "register_dry_run":
+		cur.RegisterDryRun = &val
 	}
 	return cur
 }

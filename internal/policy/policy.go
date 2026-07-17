@@ -68,12 +68,6 @@ func Decide(cfg sentrycfg.Config, in Input) Action {
 		a.Reason = "全局候选策略"
 		a.PolicyAct = string(errorsig.ActionCandidate)
 	}
-	if in.Signal == match.SignalSpendingLimit402 || errorsig.HardNeverTrash(key) {
-		if a.Reason == "" {
-			a.Reason = "消费限额禁止删除"
-		}
-		return a
-	}
 	if cfg.AutoDelete && contains(cfg.DeleteSignals, sig) && !tier.ProtectFromAutoTrash(in.Tier) {
 		a.Trash = true
 		a.Cooldown = true
@@ -107,8 +101,8 @@ func decidePolicy(cfg sentrycfg.Config, in Input, p state.ErrorPolicy) Action {
 	}
 	a.PolicyAct = matched.Action
 	a.CooldownSec = matched.CooldownSec
-	neverTrash := p.NeverTrash || errorsig.HardNeverTrash(p.Key) || in.Signal == match.SignalSpendingLimit402
-	return applyActionTier(cfg, a, errorsig.Action(matched.Action), neverTrash, in, matched.Streak)
+	// never_trash only from panel/policy field — no hard key ban
+	return applyActionTier(cfg, a, errorsig.Action(matched.Action), p.NeverTrash, in, matched.Streak)
 }
 
 func applyActionTier(cfg sentrycfg.Config, a Action, act errorsig.Action, neverTrash bool, in Input, th int) Action {

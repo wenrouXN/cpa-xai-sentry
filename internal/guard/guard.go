@@ -2,6 +2,8 @@ package guard
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -17,9 +19,14 @@ import (
 	"github.com/openclaw-local/cpa-xai-sentry/internal/trash"
 )
 
+
 type Guard struct {
 	Cfg      sentrycfg.Config
 	State    *state.Store
+	// PatrolRunning, if set, returns true when a patrol job is in progress.
+	// Used to skip pruneDuplicateAccounts during patrol to avoid deleting
+	// accounts that patrol goroutines are still creating.
+	PatrolRunning func() bool
 	Trash    *trash.Store
 	CPA      *cpaapi.Client
 	Resolver *cpaapi.Resolver
@@ -28,10 +35,27 @@ type Guard struct {
 	mu sync.Mutex
 	// hooks for tests
 	Now func() time.Time
+
+	// listVerifyFailStreak: consecutive IsAuthFileDisabled list failures (verify path).
+	// When high, skip trust-PATCH blind success and avoid empty reassert/heal thrash.
+	listVerifyFailStreak int
+	// lastListOK: last time verify list succeeded.
+	lastListOK time.Time
+
+	// pendingBackfillAuths: auth_index set by CPAMP fail backfill this tick cycle.
+	// healActiveFileDisabled skips these so we never force-open then cool same second.
+	pendingBackfillAuths map[string]struct{}
+
+	// TryRelogin: optional hook for 8788-local password relogin on auth_401.
+	// Return attempted=true to skip candidate path this hit.
+	TryRelogin func(ctx context.Context, email, auth string) (attempted bool, reason string)
 }
 
 func New(cfg sentrycfg.Config, st *state.Store, tr *trash.Store, cpa *cpaapi.Client) *Guard {
-	g := &Guard{Cfg: cfg.Validate(), State: st, Trash: tr, CPA: cpa, Now: time.Now}
+	g := &Guard{
+		Cfg: cfg.Validate(), State: st, Trash: tr, CPA: cpa, Now: time.Now,
+		pendingBackfillAuths: map[string]struct{}{},
+	}
 	if cpa != nil {
 		g.Resolver = cpaapi.NewResolver(cpa)
 	}
@@ -44,9 +68,45 @@ func New(cfg sentrycfg.Config, st *state.Store, tr *trash.Store, cpa *cpaapi.Cli
 				Note: p.Note, Source: p.Source,
 			}
 		}
+		// any_error: global consecutive-any-failure ladder (disabled by default)
+		if _, ok := builtins["any_error"]; !ok {
+			builtins["any_error"] = state.ErrorPolicy{
+				Key: "any_error", Label: "任意错误·连续", Enabled: false,
+				Action: "observe", Threshold: 5, CooldownSec: 1800, CountMode: "streak",
+				Escalations: []state.EscalationRule{
+					{Streak: 5, Action: "cooldown", CooldownSec: 1800},
+				},
+				Note: "不管错误类型，连续失败达到 N 次按阶梯处置；默认关闭", Source: "builtin",
+			}
+		}
 		st.EnsureBuiltinPolicies(builtins)
 	}
 	return g
+}
+
+// routeBySplitShape maps an unmatched body to a user-split policy key via SplitShape.
+func (g *Guard) routeBySplitShape(body string, status int) string {
+	if g.State == nil {
+		return ""
+	}
+	shape, _, suggest := errorsig.ShapeOf(body, status)
+	if shape == "" {
+		return ""
+	}
+	for _, p := range g.State.ListErrorPolicies() {
+		if p.Key == "" || p.Key == "unmatched" || p.Key == "any_error" {
+			continue
+		}
+		ss := strings.TrimSpace(p.SplitShape)
+		if ss != "" && ss == shape {
+			return p.Key
+		}
+		// repair path: split cards often key=reason:http_426 but SplitShape was lost
+		if p.Key == suggest || p.Key == "reason:"+shape || p.Key == shape {
+			return p.Key
+		}
+	}
+	return ""
 }
 
 func (g *Guard) enrichIdentity(ctx context.Context, ev *UsageEvent) {
@@ -99,10 +159,15 @@ type UsageEvent struct {
 	Source     string // usage|patrol
 	Note       string
 	Label      string
+	Model      string // request model when known
 }
 
 // HandleUsage applies match+policy. source defaults to usage.
 func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
+	// DEBUG: trace patrol calls
+	if ev.Source == "patrol" {
+		fmt.Fprintf(os.Stderr, "[sentry-debug] HandleUsage source=patrol auth=%s file=%s provider=%s status=%d\n", ev.AuthIndex, ev.FileName, ev.Provider, ev.StatusCode)
+	}
 	if !g.Cfg.Enabled || !g.Cfg.SentryEnabled {
 		return nil
 	}
@@ -110,16 +175,34 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 	defer g.mu.Unlock()
 	g.enrichIdentity(ctx, &ev)
 	if !IsXAI(ev.Provider, ev.FileName) && !IsXAI(ev.Provider, ev.AuthIndex) && !IsXAI(ev.Provider, ev.Email) {
+		if ev.Source == "patrol" {
+			fmt.Fprintf(os.Stderr, "[sentry-debug] NOT_XAI provider=%s file=%s auth=%s email=%s\n", ev.Provider, ev.FileName, ev.AuthIndex, ev.Email)
+		}
 		return nil
 	}
 	if ev.Source == "" {
 		ev.Source = "usage"
 	}
+	// Short-window dedupe: same auth + fail family within a few seconds
+	// (double-publish / retry) — skip full cool path to avoid twin logs + recover stretch.
+	if !(ev.Success || (ev.StatusCode >= 200 && ev.StatusCode < 300)) {
+		if g.shouldDedupeFailUsage(ev) {
+			if ev.Source == "patrol" {
+				fmt.Fprintf(os.Stderr, "[sentry-debug] DEDUPED auth=%s status=%d\n", ev.AuthIndex, ev.StatusCode)
+			}
+			return nil
+		}
+	}
 	tierName := string(tier.Classify(ev.Note, ev.Label, ev.FileName, nil))
 	g.State.UpdateMeta(ev.AuthIndex, ev.FileName, ev.Email, tierName)
 	acc := g.State.Get(ev.AuthIndex)
 	if acc == nil {
+		if ev.Source == "patrol" {
+			fmt.Fprintf(os.Stderr, "[sentry-debug] Touch NEW account auth=%s source=patrol\n", ev.AuthIndex)
+		}
 		acc = g.State.Touch(ev.AuthIndex)
+	} else if ev.Source == "patrol" {
+		fmt.Fprintf(os.Stderr, "[sentry-debug] Touch EXISTING account auth=%s state=%s\n", ev.AuthIndex, acc.State)
 	}
 	// day usage counters (local)
 	loc, _ := time.LoadLocation("Asia/Shanghai")
@@ -149,10 +232,18 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 		if q := quota.Parse(ev.Body); q.Limit > 0 || q.Remaining > 0 || q.Used > 0 {
 			g.State.UpdateQuota(ev.AuthIndex, q.Limit, q.Used, q.Remaining, q.Source, q.ResetAt)
 		}
+		// v1.1.36: patrol probe alive must reopen cool-down / closed files
+		// (HandleUsage success alone never left cool state or forced CPA enable).
+		if strings.EqualFold(ev.Source, "patrol") {
+			g.reopenAfterProbeAlive(ctx, ev)
+		}
 		return nil
 	}
 
 	res := match.Classify(ev.StatusCode, ev.Body)
+	if ev.Source == "patrol" {
+		fmt.Fprintf(os.Stderr, "[sentry-debug] CLASSIFY auth=%s status=%d signal=%s kind=%s reason=%s body100=%s\n", ev.AuthIndex, ev.StatusCode, res.Signal, res.Kind, res.Reason, func() string { if len(ev.Body)>100 { return ev.Body[:100] }; return ev.Body }())
+	}
 	// best-effort quota parse from failure body
 	q := quota.Parse(ev.Body)
 	if res.Signal == match.SignalFreeUsage429 {
@@ -161,7 +252,17 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 	if q.Limit > 0 || q.Remaining > 0 || q.Used > 0 || !q.ResetAt.IsZero() {
 		g.State.UpdateQuota(ev.AuthIndex, q.Limit, q.Used, q.Remaining, q.Source, q.ResetAt)
 	}
-	errKey := errorsig.KeyFromMatch(res, ev.StatusCode)
+	errKey := errorsig.KeyFromMatch(res, ev.StatusCode, ev.Body)
+	// User withdrew a builtin class → new hits go to unmatched (can re-split later).
+	if g.State != nil && g.State.IsPolicyHidden(errKey) {
+		errKey = "unmatched"
+	}
+	// User-split shapes: route unmatched hits that match a SplitShape policy.
+	if errKey == "unmatched" && g.State != nil {
+		if k := g.routeBySplitShape(ev.Body, ev.StatusCode); k != "" {
+			errKey = k
+		}
+	}
 	label := errorsig.LabelOf(errKey, res, ev.StatusCode)
 	// always learn/observe errors into dynamic catalog (even unmatched)
 	// keep enough of body to retain tokens (actual/limit) for UI/quota rehydration
@@ -169,32 +270,103 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 	if len(sample) > 900 {
 		sample = sample[:900]
 	}
-	g.State.ObserveError(errKey, label, string(res.Signal), res.Code, sample, ev.AuthIndex, ev.FileName, ev.Source, ev.StatusCode)
+	g.State.ObserveError(errKey, label, string(res.Signal), res.Code, sample, ev.AuthIndex, ev.FileName, ev.Source, ev.StatusCode, ev.Model)
 
-	// seed policy entry for newly learned errors (default observe)
-	if _, ok := g.State.GetErrorPolicy(errKey); !ok {
-		act := "observe"
-		th := 1
-		cd := 0
-		never := errorsig.HardNeverTrash(errKey)
-		if res.Signal != match.SignalNone {
-			if p0, ok := errorsig.BuiltinDefaults()[string(res.Signal)]; ok {
-				act = string(p0.Action)
-				th = p0.Threshold
-				cd = p0.CooldownSec
-				never = p0.NeverTrash || never
-				label = p0.Label
+	// seed policy for builtins/unmatched only; user splits already have a card.
+	// Skip if user explicitly deleted (hid) this policy — respect user's choice.
+	if g.State != nil && !g.State.IsPolicyHidden(errKey) {
+		if _, ok := g.State.GetErrorPolicy(errKey); !ok {
+			if errKey == "free_usage_429" || errKey == "permission_403" || errKey == "unmatched" {
+				act := "observe"
+				th := 1
+				cd := 0
+				never := false
+				if p0, ok := errorsig.BuiltinDefaults()[errKey]; ok {
+					act = string(p0.Action)
+					th = p0.Threshold
+					cd = p0.CooldownSec
+					never = p0.NeverTrash
+					label = p0.Label
+				}
+				g.State.UpsertErrorPolicy(state.ErrorPolicy{
+					Key: errKey, Label: label, Enabled: true, Action: act,
+					Threshold: th, CooldownSec: cd, NeverTrash: never,
+					Note: "动态采集", Source: "learned",
+				})
 			}
 		}
-		g.State.UpsertErrorPolicy(state.ErrorPolicy{
-			Key: errKey, Label: label, Enabled: true, Action: act,
-			Threshold: th, CooldownSec: cd, NeverTrash: never,
-			Note: "动态采集", Source: "learned",
-		})
 	}
 
 	if res.Signal == match.SignalNone {
-		// unmatched: cataloged only
+		// 426 / 网络类等无内置 Signal：仍可能被拆分成 reason:http_426 等策略卡。
+		// 旧逻辑只 Observe + any_error 就 return，导致拆分类阶梯永远不触发。
+		g.State.SetLastSignal(ev.AuthIndex, errKey)
+		anyStreak := g.State.IncStreak(ev.AuthIndex, "any_error")
+		var act policy.Action
+		var polPtr *state.ErrorPolicy
+
+		// 1) 具体拆分类 / 已路由策略（如 reason:http_426）
+		if errKey != "" && errKey != "unmatched" && errKey != "any_error" {
+			streak := g.State.IncStreak(ev.AuthIndex, errKey)
+			if p, ok := g.State.GetErrorPolicy(errKey); ok {
+				polPtr = &p
+				act = policy.Decide(g.Cfg, policy.Input{
+					Signal: res.Signal, ErrorKey: errKey, Streak: streak,
+					Tier: tier.Tier(acc.Tier), Policy: &p,
+				})
+				fmt.Fprintf(os.Stderr, "[sentry-debug] NONE_SIGNAL_POLICY auth=%s key=%s streak=%d disable=%v cool=%v reason=%s\n",
+					ev.AuthIndex, errKey, streak, act.Disable, act.Cooldown, act.Reason)
+			}
+		}
+
+		// 2) 任意错误阶梯（若更强则覆盖）
+		if ap, ok := g.State.GetErrorPolicy("any_error"); ok && ap.Enabled {
+			anyAct := policy.Decide(g.Cfg, policy.Input{
+				Signal: res.Signal, ErrorKey: "any_error", Streak: anyStreak,
+				Tier: tier.Tier(acc.Tier), Policy: &ap,
+			})
+			if policyActionRank(anyAct) > policyActionRank(act) {
+				act = anyAct
+				polPtr = &ap
+				if act.Reason != "" && !strings.Contains(act.Reason, "any_error") && !strings.Contains(act.Reason, "任意错误") {
+					act.Reason = act.Reason + " · 任意错误连续≥" + itoaGuard(anyStreak)
+				}
+			}
+		}
+
+		// 3) 执行阶梯动作
+		if act.Disable {
+			if err := g.applyPermanentDisable(ctx, ev, act.Reason); err != nil {
+				return err
+			}
+		} else if act.Cooldown {
+			syn := res
+			syn.Reason = act.Reason
+			if err := g.applyCooldown(ctx, ev, syn, acc, polPtr, act.CooldownSec); err != nil {
+				return err
+			}
+		}
+		if act.Candidate && !act.Disable {
+			name := ev.FileName
+			if name == "" || cpaapi.LooksLikeOpaqueID(name) {
+				if acc != nil {
+					name = g.resolveFileName(ctx, ev.AuthIndex, acc.FileName, acc.Email)
+				} else {
+					name = g.resolveFileName(ctx, ev.AuthIndex, ev.FileName, ev.Email)
+				}
+			}
+			g.State.SetAccountState(ev.AuthIndex, state.CandidateDead, "plugin_auto")
+			if g.CPA != nil && name != "" && !cpaapi.LooksLikeOpaqueID(name) {
+				_, _, _ = g.ensureAuthDisabled(ctx, name)
+			}
+			g.State.Log(state.ActionLog{
+				Auth: ev.AuthIndex, Source: ev.Source, Signal: errKey,
+				Action: "candidate", Reason: act.Reason,
+			})
+		}
+		if act.Trash && g.Trash != nil && !act.Disable {
+			_ = g.applyTrash(ctx, ev, res, acc)
+		}
 		_ = g.State.Save()
 		return nil
 	}
@@ -207,17 +379,49 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 		streakKey = string(res.Signal)
 	}
 	streak := g.State.IncStreak(ev.AuthIndex, streakKey)
+	// any_error: consecutive failures of any kind (cleared on success with streak mode)
+	anyStreak := g.State.IncStreak(ev.AuthIndex, "any_error")
 	var polPtr *state.ErrorPolicy
 	if p, ok := g.State.GetErrorPolicy(errKey); ok {
-		polPtr = &p
+		// unmatched card is UI dump only; concrete signals (401/402/…) use global switches
+		if errKey != "unmatched" || res.Signal == match.SignalNone {
+			polPtr = &p
+		}
 	}
 	act := policy.Decide(g.Cfg, policy.Input{
 		Signal: res.Signal, ErrorKey: errKey, Streak: streak,
 		Tier: tier.Tier(acc.Tier), Policy: polPtr,
 	})
+	if ev.Source == "patrol" && (errKey == "permission_403" || errKey != "permission_403") {
+		fmt.Fprintf(os.Stderr, "[sentry-debug] POLICY_DECIDE auth=%s key=%s streak=%d disable=%v cooldown=%v reason=%s\n", ev.AuthIndex, errKey, streak, act.Disable, act.Cooldown, act.Reason)
+	}
+	// global any_error ladder: if stronger, upgrade act
+	if ap, ok := g.State.GetErrorPolicy("any_error"); ok && ap.Enabled {
+		anyAct := policy.Decide(g.Cfg, policy.Input{
+			Signal: res.Signal, ErrorKey: "any_error", Streak: anyStreak,
+			Tier: tier.Tier(acc.Tier), Policy: &ap,
+		})
+		if policyActionRank(anyAct) > policyActionRank(act) {
+			act = anyAct
+			if act.Reason != "" && !strings.Contains(act.Reason, "any_error") && !strings.Contains(act.Reason, "任意错误") {
+				act.Reason = act.Reason + " · 任意错误连续≥" + itoaGuard(anyStreak)
+			}
+			// use any_error policy cooldown seconds when cool
+			polPtr = &ap
+		}
+	}
+
+	// Permanent accounts no longer skip demote: patrol permanent range = scan only.
+	// Alive → reopenAfterProbeAlive; errors → normal cool/候删/策略阶梯.
 
 	// permanent disable is strongest; skip lighter cool if both somehow set
+		if ev.Source == "patrol" {
+			fmt.Fprintf(os.Stderr, "[sentry-debug] ACT_DISABLE auth=%s disable=%v reason=%s\n", ev.AuthIndex, act.Disable, act.Reason)
+		}
+	fmt.Fprintf(os.Stderr, "[sentry-debug] BEFORE_DISABLE_CHECK auth=%s disable=%v cooldown=%v reason=%s\n", ev.AuthIndex, act.Disable, act.Cooldown, act.Reason)
 	if act.Disable {
+		fmt.Fprintf(os.Stderr, "[sentry-debug] ACT_DISABLE_CHECKED auth=%s disable=%v\n", ev.AuthIndex, act.Disable)
+		fmt.Fprintf(os.Stderr, "[sentry-debug] ACT_DISABLE_TRUE auth=%s reason=%s\n", ev.AuthIndex, act.Reason)
 		if err := g.applyPermanentDisable(ctx, ev, act.Reason); err != nil {
 			return err
 		}
@@ -227,6 +431,49 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 		}
 	}
 	if act.Candidate && !act.Disable {
+		// auth_401 + 8788-local: try password relogin first (config register_relogin_on_auth401)
+		if res.Signal == match.SignalAuth401 && g.TryRelogin != nil {
+			email := strings.TrimSpace(ev.Email)
+			if email == "" && acc != nil {
+				email = acc.Email
+			}
+			attempted, why := g.TryRelogin(ctx, email, ev.AuthIndex)
+			if attempted {
+				g.State.Log(state.ActionLog{
+					Auth: ev.AuthIndex, Source: ev.Source, Signal: string(res.Signal),
+					Action: "relogin", Reason: "【注册】auth_401 先重登 · " + why,
+				})
+				// short cool while relogin runs — do not enter candidate yet
+				sec := g.Cfg.Auth401CooldownSec
+				if sec <= 0 {
+					sec = 1800
+				}
+				if sec > 1800 {
+					sec = 1800
+				}
+				// light cool: keep file open? better disable briefly to avoid bad token traffic
+				name := ev.FileName
+				if name == "" || cpaapi.LooksLikeOpaqueID(name) {
+					if acc != nil {
+						name = g.resolveFileName(ctx, ev.AuthIndex, acc.FileName, acc.Email)
+					} else {
+						name = g.resolveFileName(ctx, ev.AuthIndex, ev.FileName, ev.Email)
+					}
+				}
+				g.State.SetAccountState(ev.AuthIndex, state.CooldownPermission, "plugin_auto")
+				g.State.SetRecoverAt(ev.AuthIndex, g.Now().Add(time.Duration(sec)*time.Second))
+				g.State.SetLastSignal(ev.AuthIndex, string(res.Signal))
+				if g.CPA != nil && name != "" && !cpaapi.LooksLikeOpaqueID(name) {
+					_, _, _ = g.ensureAuthDisabled(ctx, name)
+				}
+				_ = g.State.Save()
+				return nil
+			}
+			// not attempted → fall through to candidate with note
+			if why != "" && why != "relogin_on_auth401_off" {
+				act.Reason = act.Reason + " · 重登跳过:" + why
+			}
+		}
 		// 候删 must also disable CPA file and stamp ownership (closed loop).
 		// If applyCooldown already ran, this reinforces CandidateDead + plugin_auto.
 		name := ev.FileName
@@ -279,6 +526,32 @@ func (g *Guard) applyCooldown(ctx context.Context, ev UsageEvent, res match.Resu
 	case match.SignalAuth401:
 		st = state.CandidateDead
 	}
+	// Idempotent: already plugin_auto cool with same family + recover not due →
+	// do not re-log cool / do not stretch recover_at; only reassert file closed.
+	if acc != nil && acc.DisableSource == "plugin_auto" {
+		sameFamily := coolStatesMatch(acc.State, st) || coolSignalFamily(acc.LastSignal, string(res.Signal))
+		recoverFuture := !acc.RecoverAt.IsZero() && acc.RecoverAt.After(g.Now())
+		if sameFamily && recoverFuture {
+			name := ev.FileName
+			if name == "" || cpaapi.LooksLikeOpaqueID(name) {
+				if acc.FileName != "" && !cpaapi.LooksLikeOpaqueID(acc.FileName) {
+					name = acc.FileName
+				}
+			}
+			if (name == "" || cpaapi.LooksLikeOpaqueID(name)) && g.Resolver != nil {
+				_ = g.Resolver.Ensure(ctx)
+				if id, ok := g.Resolver.Resolve(ev.AuthIndex, ev.FileName, ev.Email); ok && id.FileName != "" {
+					name = id.FileName
+				}
+			}
+			if g.CPA != nil && name != "" && !cpaapi.LooksLikeOpaqueID(name) {
+				_, _, _ = g.ensureAuthDisabled(ctx, name)
+			}
+			// quiet stamp — no second 【冷却】 log
+			g.State.StampLastAction(ev.AuthIndex, "cooldown")
+			return nil
+		}
+	}
 	recoverAt := res.RecoverAt
 	cdOverride := 0
 	if len(cooldownSecOverride) > 0 {
@@ -305,6 +578,16 @@ func (g *Guard) applyCooldown(ctx context.Context, ev UsageEvent, res match.Resu
 		if recoverAt.After(maxAt) {
 			recoverAt = maxAt
 		}
+	}
+	// Prefer primary classified signal over empty (any_error cool path).
+	sig := string(res.Signal)
+	if sig == "" || sig == "none" {
+		if acc != nil && acc.LastSignal != "" && acc.LastSignal != "any_error" {
+			sig = acc.LastSignal
+		}
+	}
+	if sig != "" && sig != "any_error" {
+		g.State.SetLastSignal(ev.AuthIndex, sig)
 	}
 	name := ev.FileName
 	if name == "" || cpaapi.LooksLikeOpaqueID(name) {
@@ -333,7 +616,8 @@ func (g *Guard) applyCooldown(ctx context.Context, ev UsageEvent, res match.Resu
 		g.State.UpdateMeta(ev.AuthIndex, name, ev.Email, "")
 	}
 	if g.CPA != nil && name != "" && !cpaapi.LooksLikeOpaqueID(name) {
-		if err := g.CPA.SetDisabled(ctx, name, true); err != nil {
+		closed, err, stillOpen := g.ensureAuthDisabled(ctx, name)
+		if err != nil {
 			g.State.Log(state.ActionLog{
 				Auth: ev.AuthIndex, Source: ev.Source, Signal: string(res.Signal),
 				Action: "cooldown_failed", Reason: err.Error(),
@@ -341,9 +625,84 @@ func (g *Guard) applyCooldown(ctx context.Context, ev UsageEvent, res match.Resu
 			// keep plugin_auto cool-down ownership even if file disable failed
 			return err
 		}
+		if !closed || stillOpen {
+			// PATCH ok but list still shows open after retry — state stays cool; tick reassert will retry
+			g.State.Log(state.ActionLog{
+				Auth: ev.AuthIndex, Source: ev.Source, Signal: string(res.Signal),
+				Action: "cooldown_file_still_open",
+				Reason: "冷却已记录但文件校验仍开 · 将由冷却补关重试",
+			})
+		}
 	}
 	// cooldown already logged once before SetDisabled (avoid duplicate action log lines)
 	return nil
+}
+
+func coolStatesMatch(cur state.AccountState, want state.AccountState) bool {
+	if cur == want {
+		return true
+	}
+	// treat all cool subtypes as same family for idempotent re-entry
+	cool := func(s state.AccountState) bool {
+		switch s {
+		case state.CooldownQuota, state.CooldownSpending, state.CooldownPermission, state.CandidateDead:
+			return true
+		}
+		return false
+	}
+	return cool(cur) && cool(want)
+}
+
+func coolSignalFamily(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	if a == b {
+		return true
+	}
+	// free_usage and empty any_error cool both map to quota cool
+	quota := map[string]bool{"free_usage_429": true, "spending_limit_402": true}
+	if quota[a] && quota[b] {
+		return true
+	}
+	return false
+}
+
+// shouldDedupeFailUsage: same auth recently cooled / failed within short window.
+const usageFailDedupeWindow = 8 * time.Second
+
+func (g *Guard) shouldDedupeFailUsage(ev UsageEvent) bool {
+	if g.State == nil || ev.AuthIndex == "" {
+		return false
+	}
+	// only HTTP cool-family statuses
+	switch ev.StatusCode {
+	case 401, 402, 403, 429:
+	default:
+		if ev.StatusCode < 400 {
+			return false
+		}
+	}
+	acc := g.State.Get(ev.AuthIndex)
+	if acc == nil || acc.LastActionAt.IsZero() {
+		return false
+	}
+	age := g.Now().Sub(acc.LastActionAt)
+	if age < 0 || age > usageFailDedupeWindow {
+		return false
+	}
+	switch acc.LastAction {
+	case "cooldown", "cooldown_failed", "candidate", "manual_disable", "cooldown_file_still_open":
+		return true
+	}
+	// already in cool with recover still future
+	switch acc.State {
+	case state.CooldownQuota, state.CooldownSpending, state.CooldownPermission, state.CandidateDead:
+		if !acc.RecoverAt.IsZero() && acc.RecoverAt.After(g.Now()) {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *Guard) applyTrash(ctx context.Context, ev UsageEvent, res match.Result, acc *state.Account) error {
@@ -418,6 +777,7 @@ func (g *Guard) tick(ctx context.Context, manual bool) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	now := g.Now()
+	// recovered / reopened(foreign self-heal) / reasserted(cool re-close) / healed
 	recovered, reopened, reasserted := 0, 0, 0
 	// Best-effort identity refresh so panel can show email/file even for opaque auth_index.
 	if g.Resolver != nil {
@@ -432,7 +792,13 @@ func (g *Guard) tick(ctx context.Context, manual bool) error {
 	// Old order (sync then recover) caused same-tick fights:
 	//   cooldown_reassert (close owned cool-down file) + reenable (open because recover_at due)
 	// which showed as 「到期恢复」and「冷却补关」in the same second.
+	//
+	// P2: rate-limit recover opens per tick to avoid expiry tsunami hammering CPA API.
+	const maxRecoverPerTick = 40
 	for _, acc := range g.State.AccountsSnapshot() {
+		if recovered >= maxRecoverPerTick {
+			break
+		}
 		if acc.RecoverAt.IsZero() || acc.RecoverAt.After(now) {
 			continue
 		}
@@ -447,11 +813,19 @@ func (g *Guard) tick(ctx context.Context, manual bool) error {
 			}
 		}
 		if g.CPA != nil && name != "" && !cpaapi.LooksLikeOpaqueID(name) {
-			if err := g.CPA.SetDisabled(ctx, name, false); err != nil {
+			opened, err, stillClosed := g.ensureAuthEnabled(ctx, name)
+			if err != nil {
 				g.State.Log(state.ActionLog{
 					Auth: acc.AuthIndex, Source: "tick", Action: "reenable_failed", Reason: err.Error(),
 				})
 				continue
+			}
+			if !opened || stillClosed {
+				g.State.Log(state.ActionLog{
+					Auth: acc.AuthIndex, Source: "tick", Action: "reenable_file_still_closed",
+					Reason: "到期恢复后校验文件仍关 · 可能被外部重关或列表滞后",
+				})
+				// still advance state so recover_at does not loop forever; heal will retry open
 			}
 		}
 		// closed-loop: cool-down due → Active (streaks retained for ladders)
@@ -463,21 +837,31 @@ func (g *Guard) tick(ctx context.Context, manual bool) error {
 		})
 		recovered++
 	}
-	// Owned cool-down reassert; unowned foreign scan only on manual maintenance.
-	if n, err := g.syncDisabledFromCPA(ctx, now, manual); err != nil {
+	// Owned cool-down reassert (always); unowned foreign open only on manual maintenance.
+	// IMPORTANT: do not assign reassert counts into reopened — that inflated「自愈打开」.
+	if fo, ra, err := g.syncDisabledFromCPA(ctx, now, manual); err != nil {
 		g.State.Log(state.ActionLog{Source: "tick", Action: "sync_disabled_failed", Reason: err.Error()})
 	} else {
-		reopened = n
+		reopened = fo
+		reasserted = ra
 	}
 	// Active + CPA file still disabled → force open (both periodic + manual).
 	// This closes the residual "未归类" gap after reenable / file rewrite races.
+	// Skips auths marked by CPAMP fail backfill this cycle (pendingBackfillAuths).
 	healed := 0
 	if n, err := g.healActiveFileDisabled(ctx, now); err != nil {
 		g.State.Log(state.ActionLog{Source: "tick", Action: "heal_active_file_failed", Reason: err.Error()})
 	} else {
 		healed = n
 	}
-	g.pruneDuplicateAccounts()
+	// long-idle「恢复待观察」TTL (6h): drop pending so filter/KPI stop ballooning
+	expiredPending := g.expireIdlePendingObserve(now)
+	// Skip prune during patrol: patrol goroutines create accounts concurrently;
+	// prune reads a snapshot then deletes "non-best" entries, which would delete
+	// accounts that patrol just created but weren't in the snapshot.
+	if g.PatrolRunning == nil || !g.PatrolRunning() {
+		g.pruneDuplicateAccounts()
+	}
 	// closed-loop hygiene: Active must be clean (no residual signal/plugin_auto lock)
 	g.scrubDirtyActiveAccounts()
 	if g.Trash != nil && g.Cfg.TrashAutoPurge {
@@ -485,9 +869,13 @@ func (g *Guard) tick(ctx context.Context, manual bool) error {
 			return err
 		}
 	}
-	// 立即维护：无论有无变更，都写一条汇总动作日志，避免「点了没日志」
-	if manual {
-		src := "tick_manual"
+	// 立即维护：无论有无变更，都写一条汇总
+	// 定时 tick：有变更时写汇总；分账号日志已写（强制打开/自愈/补关）
+	if manual || healed > 0 || reopened > 0 || reasserted > 0 || expiredPending > 0 || recovered > 0 {
+		src := "tick"
+		if manual {
+			src = "tick_manual"
+		}
 		parts := []string{}
 		if recovered > 0 {
 			parts = append(parts, "到期恢复"+itoaGuard(recovered))
@@ -498,18 +886,27 @@ func (g *Guard) tick(ctx context.Context, manual bool) error {
 		if healed > 0 {
 			parts = append(parts, "强制打开"+itoaGuard(healed))
 		}
+		if expiredPending > 0 {
+			parts = append(parts, "空闲待观察过期"+itoaGuard(expiredPending))
+		}
 		if reasserted > 0 {
 			parts = append(parts, "冷却补关"+itoaGuard(reasserted))
 		}
-		reason := "立即维护完成 · 无到期冷却、无文件需打开"
-		if len(parts) > 0 {
-			reason = "立即维护完成 · " + strings.Join(parts, " · ")
+		if manual {
+			reason := "立即维护完成 · 无到期冷却、无文件需打开"
+			if len(parts) > 0 {
+				reason = "立即维护完成 · " + strings.Join(parts, " · ")
+			}
+			g.State.Log(state.ActionLog{
+				Source: src, Action: "maintenance",
+				Reason: reason,
+			})
+		} else if len(parts) > 0 {
+			g.State.Log(state.ActionLog{
+				Source: src, Action: "heal_summary",
+				Reason: strings.Join(parts, " · "),
+			})
 		}
-		_ = reasserted
-		g.State.Log(state.ActionLog{
-			Source: src, Action: "maintenance",
-			Reason: reason,
-		})
 	}
 	return g.State.Save()
 }
@@ -528,6 +925,224 @@ func itoaGuard(n int) string {
 	return string(b[i:])
 }
 
+// waitFileVerify sleeps fileVerifyWait unless ctx cancelled (tests use real short sleep).
+func waitFileVerify(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(fileVerifyWait):
+		return nil
+	}
+}
+
+// ensureAuthDisabled PATCHes disabled=true then re-lists. Returns (closed, patchErr, stillOpenAfterVerify).
+// One retry on verify-still-open. Used by applyCooldown and cooldown_reassert.
+func (g *Guard) ensureAuthDisabled(ctx context.Context, name string) (closed bool, patchErr error, verifyOpen bool) {
+	if g.CPA == nil || name == "" || cpaapi.LooksLikeOpaqueID(name) {
+		return true, nil, false
+	}
+	if err := g.CPA.SetDisabled(ctx, name, true); err != nil {
+		return false, err, false
+	}
+	if err := waitFileVerify(ctx); err != nil {
+		return false, err, false
+	}
+	still, err := g.CPA.IsAuthFileDisabled(ctx, name)
+	if err != nil {
+		g.noteListVerifyFail()
+		// list failed: only trust PATCH if list is not in fuse; else report still-open
+		if g.listVerifyBroken() {
+			return false, nil, true
+		}
+		return true, nil, false
+	}
+	g.noteListVerifyOK()
+	if still {
+		return true, nil, false
+	}
+	// still open → retry once
+	if err := g.CPA.SetDisabled(ctx, name, true); err != nil {
+		return false, err, true
+	}
+	if err := waitFileVerify(ctx); err != nil {
+		return false, err, true
+	}
+	still, err = g.CPA.IsAuthFileDisabled(ctx, name)
+	if err != nil {
+		g.noteListVerifyFail()
+		if g.listVerifyBroken() {
+			return false, nil, true
+		}
+		return true, nil, false
+	}
+	g.noteListVerifyOK()
+	if still {
+		return true, nil, false
+	}
+	return false, nil, true
+}
+
+// ensureAuthEnabled PATCHes disabled=false then re-lists. Returns (opened, patchErr, stillClosedAfterVerify).
+// One retry on verify-still-closed. Used by reenable path.
+func (g *Guard) ensureAuthEnabled(ctx context.Context, name string) (opened bool, patchErr error, stillClosed bool) {
+	if g.CPA == nil || name == "" || cpaapi.LooksLikeOpaqueID(name) {
+		return true, nil, false
+	}
+	if err := g.CPA.SetDisabled(ctx, name, false); err != nil {
+		return false, err, false
+	}
+	if err := waitFileVerify(ctx); err != nil {
+		return false, err, false
+	}
+	disabled, err := g.CPA.IsAuthFileDisabled(ctx, name)
+	if err != nil {
+		g.noteListVerifyFail()
+		if g.listVerifyBroken() {
+			return false, nil, true
+		}
+		return true, nil, false
+	}
+	g.noteListVerifyOK()
+	if !disabled {
+		return true, nil, false
+	}
+	// still closed → retry once
+	if err := g.CPA.SetDisabled(ctx, name, false); err != nil {
+		return false, err, true
+	}
+	if err := waitFileVerify(ctx); err != nil {
+		return false, err, true
+	}
+	disabled, err = g.CPA.IsAuthFileDisabled(ctx, name)
+	if err != nil {
+		g.noteListVerifyFail()
+		if g.listVerifyBroken() {
+			return false, nil, true
+		}
+		return true, nil, false
+	}
+	g.noteListVerifyOK()
+	if !disabled {
+		return true, nil, false
+	}
+	return false, nil, true
+}
+
+const listVerifyFailFuse = 5 // consecutive list failures → stop blind trust-PATCH
+
+func (g *Guard) noteListVerifyFail() {
+	if g == nil {
+		return
+	}
+	g.listVerifyFailStreak++
+}
+
+func (g *Guard) noteListVerifyOK() {
+	if g == nil {
+		return
+	}
+	g.listVerifyFailStreak = 0
+	g.lastListOK = g.Now()
+}
+
+func (g *Guard) listVerifyBroken() bool {
+	if g == nil {
+		return false
+	}
+	return g.listVerifyFailStreak >= listVerifyFailFuse
+}
+
+// MarkPendingBackfillAuths records auths about to be cooled via CPAMP backfill
+// so heal skips them this cycle (must hold Guard.mu or call from same tick chain).
+func (g *Guard) MarkPendingBackfillAuths(auths []string) {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.pendingBackfillAuths == nil {
+		g.pendingBackfillAuths = map[string]struct{}{}
+	}
+	// reset each cycle then add
+	g.pendingBackfillAuths = map[string]struct{}{}
+	for _, a := range auths {
+		a = strings.ToLower(strings.TrimSpace(a))
+		if a != "" {
+			g.pendingBackfillAuths[a] = struct{}{}
+		}
+	}
+}
+
+// ClearPendingBackfillAuths drops the backfill skip set after heal finishes.
+func (g *Guard) ClearPendingBackfillAuths() {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.pendingBackfillAuths = map[string]struct{}{}
+}
+
+func (g *Guard) isPendingBackfillAuth(auth string) bool {
+	if g == nil || g.pendingBackfillAuths == nil {
+		return false
+	}
+	_, ok := g.pendingBackfillAuths[strings.ToLower(strings.TrimSpace(auth))]
+	return ok
+}
+
+// inReassertSettleWindow: recent primary cool close — skip 冷却补关 while CPA list settles.
+// Only primary actions (cooldown/candidate/manual_disable/failed close), not prior reassert.
+func inReassertSettleWindow(acc *state.Account, now time.Time) bool {
+	if acc == nil || acc.LastActionAt.IsZero() || reassertSettleAfterCool <= 0 {
+		return false
+	}
+	age := now.Sub(acc.LastActionAt)
+	if age < 0 || age >= reassertSettleAfterCool {
+		return false
+	}
+	switch acc.LastAction {
+	case "cooldown", "candidate", "manual_disable", "cooldown_failed", "candidate_disable_failed":
+		return true
+	default:
+		return false
+	}
+}
+
+// inHealSettleWindow: recent primary open intent — skip 强制打开 while CPA list settles.
+// Do not include reenable/manual_enable_file_still_closed (open already failed).
+func inHealSettleWindow(acc *state.Account, now time.Time) bool {
+	if acc == nil || acc.LastActionAt.IsZero() || healSettleAfterOpen <= 0 {
+		return false
+	}
+	age := now.Sub(acc.LastActionAt)
+	if age < 0 || age >= healSettleAfterOpen {
+		return false
+	}
+	switch acc.LastAction {
+	case "manual_enable", "reenable", "patrol_alive_open", "patrol_alive",
+		"reopen_foreign", "clear_cpa_disabled_tag":
+		return true
+	default:
+		return false
+	}
+}
+
+// shouldRateLimitActionLog: same account + same action family within window → skip narrative log.
+func shouldRateLimitActionLog(acc *state.Account, now time.Time, window time.Duration, actions ...string) bool {
+	if acc == nil || acc.LastActionAt.IsZero() || window <= 0 {
+		return false
+	}
+	if now.Sub(acc.LastActionAt) >= window {
+		return false
+	}
+	for _, a := range actions {
+		if acc.LastAction == a {
+			return true
+		}
+	}
+	return false
+}
 
 // authFileBase normalizes CPA auth file names for matching (strip dirs, lower).
 func authFileBase(name string) string {
@@ -611,9 +1226,29 @@ func (g *Guard) shouldProtectDisable(acc *state.Account, now time.Time) bool {
 // identity or only runs on manual. This path runs every tick (cheap residual fix).
 // Never opens protected cool-downs / permanent disables.
 //
-// Anti-spam (v1.1.33): same account at most once per healCooldown (15m) so a sticky
-// disabled file cannot emit 【强制打开】 every 30s tick.
+// v1.1.33: same account at most once per healActiveFileCooldown (15m).
+// v1.1.34: verify reopen after short wait; escalate sticky closes to CPA已禁用 after
+// healStuckAfter fails; success heal no per-account spam log.
+// v1.1.35: clean Active heal does NOT set pending_observe (stop KPI balloon).
+// v1.1.45: rate-limit on LastHealAt (not LastAction — cooldown/patrol overwrote it
+// and re-fired force-open every tick). ManualEnable also verifies open.
+// v1.1.47: settle 2m after manual_enable/reenable/patrol_alive/reopen_foreign —
+// skip heal while list lags (bulk enable wave).
 const healActiveFileCooldown = 15 * time.Minute
+const fileVerifyWait = 1200 * time.Millisecond // shared by heal open / cool close verify
+const healVerifyWait = fileVerifyWait          // alias
+const healStuckAfter = 3                      // consecutive failed verifies → sticky CPA已禁用
+const reassertLogCooldown = 15 * time.Minute    // cooldown_reassert log rate limit per account
+// reassertSettleAfterCool: after primary cool/candidate/manual_disable, skip 冷却补关.
+// Live 2k logs (v1.1.45): 89% cool→reassert pairs are 30–60s (one tick), p90≈61s,
+// and cooldown_file_still_open=0 — almost all early reasserts are CPA list/hotload lag
+// after ensureAuthDisabled already ran, not real external reopen. 2m covers p90 + margin.
+const reassertSettleAfterCool = 2 * time.Minute
+// healSettleAfterOpen: after primary open intent, skip 强制打开 while CPA list settles.
+// Live 2k logs: 88% heal pairs follow manual_enable in 60–120s (p50≈80s); bulk 21:00
+// wave was list lag not sticky closed. 2m mirrors cool-side settle. Exclude
+// *_file_still_closed (open already failed — heal should retry soon).
+const healSettleAfterOpen = 2 * time.Minute
 
 func (g *Guard) healActiveFileDisabled(ctx context.Context, now time.Time) (int, error) {
 	if g.CPA == nil || g.State == nil {
@@ -687,12 +1322,21 @@ func (g *Guard) healActiveFileDisabled(ctx context.Context, now time.Time) (int,
 		if g.shouldProtectDisable(acc, now) {
 			continue
 		}
-		// rate limit: do not re-heal / re-log same account every 30s tick
+		// hard rate limit on LastHealAt — survives LastAction overwrite by cooldown/patrol
+		if !acc.LastHealAt.IsZero() && now.Sub(acc.LastHealAt) < healActiveFileCooldown {
+			continue
+		}
+		// also respect legacy LastAction heal window
 		if !acc.LastActionAt.IsZero() && now.Sub(acc.LastActionAt) < healActiveFileCooldown {
 			switch acc.LastAction {
 			case "heal_active_file", "heal_active_file_failed", "heal_active_file_stuck":
 				continue
 			}
+		}
+		// Settle after primary open: list lag looks closed for ~1–2 ticks after enable.
+		// Skip heal PATCH/log; do NOT TouchLastHealAt so real sticky close after settle still heals.
+		if inHealSettleWindow(acc, now) {
+			continue
 		}
 		// resolve disabled file for this account
 		var ref fileRef
@@ -722,6 +1366,10 @@ func (g *Guard) healActiveFileDisabled(ctx context.Context, now time.Time) (int,
 			}
 		}
 		if !ok || ref.Name == "" || cpaapi.LooksLikeOpaqueID(ref.Name) {
+			continue
+		}
+		// Skip auths that CPAMP fail backfill will cool this cycle (P0: no force-open then cool).
+		if g.isPendingBackfillAuth(acc.AuthIndex) {
 			continue
 		}
 		// If ANY identity-matched account is owned cool/permanent, do not open the file
@@ -759,16 +1407,39 @@ func (g *Guard) healActiveFileDisabled(ctx context.Context, now time.Time) (int,
 		if siblingProtected {
 			continue
 		}
-		if err := g.CPA.SetDisabled(ctx, ref.Name, false); err != nil {
+		// stamp heal attempt *before* PATCH so rate limit holds even if later logs overwrite LastAction
+		g.State.TouchLastHealAt(acc.AuthIndex, now)
+
+		opened, err, stillClosed := g.ensureAuthEnabled(ctx, ref.Name)
+		if err != nil {
 			g.State.Log(state.ActionLog{
 				Auth: acc.AuthIndex, Source: "tick", Action: "heal_active_file_failed",
 				Reason: err.Error(),
 			})
 			continue
 		}
-		// keep Active; mark pending observe so UI shows 恢复待观察 until success
-		// (rate-limited above: same account won't re-log every 30s even if file flips back)
-		g.State.ResetToActive(acc.AuthIndex)
+		if !opened || stillClosed {
+			failN := g.State.IncHealFailStreak(acc.AuthIndex)
+			if failN >= healStuckAfter {
+				g.State.MarkCPAFileDisabled(acc.AuthIndex)
+				g.State.Log(state.ActionLog{
+					Auth: acc.AuthIndex, Source: "tick", Action: "heal_active_file_stuck",
+					Reason: "强制打开后文件仍关 · 连续≥" + itoaGuard(failN) + " → 标为CPA已禁用",
+				})
+			} else {
+				g.State.Log(state.ActionLog{
+					Auth: acc.AuthIndex, Source: "tick", Action: "heal_active_file_failed",
+					Reason: "强制打开后校验仍关 · 连续" + itoaGuard(failN),
+				})
+			}
+			continue
+		}
+		g.State.ClearHealFailStreak(acc.AuthIndex)
+		// v1.1.35: clean Active heal must NOT ResetToActive (that forced pending_observe
+		// on hundreds of never-cooled accounts). Only non-Active residue uses ResetToActive.
+		if acc.State != state.Active && acc.State != "" {
+			g.State.ResetToActive(acc.AuthIndex)
+		}
 		if ref.Name != "" {
 			em := strings.ToLower(strings.TrimSpace(acc.Email))
 			if em == "" {
@@ -776,16 +1447,85 @@ func (g *Guard) healActiveFileDisabled(ctx context.Context, now time.Time) (int,
 			}
 			g.State.UpdateMeta(acc.AuthIndex, authFileBase(ref.Name), em, "")
 		}
+		// success: log once per rate window (this call already rate-limited)
 		g.State.Log(state.ActionLog{
 			Auth: acc.AuthIndex, Source: "tick", Action: "heal_active_file",
-			Reason: "active_but_file_disabled",
+			Reason: "active_file_was_disabled",
 		})
 		n++
 	}
 	return n, nil
 }
 
+// expireIdlePendingObserve clears long-idle「恢复待观察」so KPI/filter stop ballooning
+// when accounts never get a success request (large cold pool).
+// Keeps 403/401 ladder streaks; drops free_usage residual signal.
+//
+// v1.1.35 also: heal-inflated pending (last_action=heal_active_file, no ladder signal)
+// is cleared immediately on tick — those were never cool recoveries.
+const pendingObserveIdleTTL = 6 * time.Hour
+
+func (g *Guard) expireIdlePendingObserve(now time.Time) int {
+	if g.State == nil {
+		return 0
+	}
+	n := 0
+	for _, acc := range g.State.AccountsSnapshot() {
+		if acc == nil {
+			continue
+		}
+		if acc.State != state.Active && acc.State != "" {
+			continue
+		}
+		if !acc.PendingObserve {
+			continue
+		}
+		// v1.1.35: drop heal-only pending balloon (no cool residual ladder)
+		if acc.LastAction == "heal_active_file" && !hasActiveLadderSignal(acc) {
+			g.State.ExpireIdlePending(acc.AuthIndex)
+			n++
+			continue
+		}
+		since := acc.PendingSince
+		if since.IsZero() {
+			// legacy rows: fall back to last_action_at / updated_at
+			since = acc.LastActionAt
+			if since.IsZero() {
+				since = acc.UpdatedAt
+			}
+		}
+		if since.IsZero() || now.Sub(since) < pendingObserveIdleTTL {
+			continue
+		}
+		g.State.ExpireIdlePending(acc.AuthIndex)
+		n++
+	}
+	return n
+}
+
+func hasActiveLadderSignal(acc *state.Account) bool {
+	if acc == nil {
+		return false
+	}
+	if acc.Streaks != nil {
+		for _, v := range acc.Streaks {
+			if v > 0 {
+				return true
+			}
+		}
+	}
+	switch acc.LastSignal {
+	case "permission_403", "auth_401", "code:invalid-argument", "free_usage_429", "spending_limit_402":
+		return true
+	}
+	return false
+}
+
 // syncDisabledFromCPA inspects CPA auth files that are currently disabled.
+//
+// Returns (foreignOpened, reasserted, err):
+//   - foreignOpened: unowned disables reopened (「自愈打开」) — only when scanForeign
+//   - reasserted: owned cool-down files that were open and re-closed (「冷却补关」)
 //
 // Default (reopen_foreign_disabled=true) — ops self-heal model:
 //   - If sentry OWNS the disable (plugin_auto cool-down/候删, panel user_manual), NEVER open;
@@ -794,14 +1534,15 @@ func (g *Guard) healActiveFileDisabled(ctx context.Context, now time.Time) (int,
 //     Next real usage/patrol error re-stamps ownership.
 //
 // Optional (reopen_foreign_disabled=false) — keep unowned closed + mark CPA已禁用.
-func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time, scanForeign bool) (int, error) {
+func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time, scanForeign bool) (foreignOpened int, reasserted int, err error) {
 	if g.CPA == nil {
-		return 0, nil
+		return 0, 0, nil
 	}
 	files, err := g.CPA.ListAuthFiles(ctx)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
+	nForeign, nReassert := 0, 0
 	// index sentry accounts by auth_index / file basename / email
 	byAuth := map[string]*state.Account{}
 	byFile := map[string]*state.Account{}
@@ -910,7 +1651,6 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time, scanFore
 		}
 	}
 
-	n := 0
 	for _, f := range files {
 		name := strings.TrimSpace(f.Name)
 		prov := f.Provider
@@ -968,11 +1708,41 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time, scanFore
 					}
 					continue
 				}
-				if err := g.CPA.SetDisabled(ctx, name, true); err != nil {
-					g.State.Log(state.ActionLog{Auth: forced.AuthIndex, Source: "tick", Action: "cooldown_reassert_failed", Reason: err.Error()})
+				// Settle after primary cool close: list lag looks like "still open" for ~1 tick.
+				// Skip reassert PATCH/log until window ends; real reopen after settle still补关.
+				if inReassertSettleWindow(forced, now) {
+					if name != "" {
+						g.State.UpdateMeta(forced.AuthIndex, authFileBase(name), em, "")
+					}
+					continue
+				}
+				// rate-limit narrative log: same account reassert within 15m only stamps
+				rateLimited := shouldRateLimitActionLog(forced, now, reassertLogCooldown,
+					"cooldown_reassert", "cooldown_reassert_failed", "cooldown_file_still_open")
+				closed, err, stillOpen := g.ensureAuthDisabled(ctx, name)
+				if err != nil {
+					if !rateLimited {
+						g.State.Log(state.ActionLog{Auth: forced.AuthIndex, Source: "tick", Action: "cooldown_reassert_failed", Reason: err.Error()})
+					} else {
+						g.State.StampLastAction(forced.AuthIndex, "cooldown_reassert_failed")
+					}
+				} else if !closed || stillOpen {
+					if !rateLimited {
+						g.State.Log(state.ActionLog{
+							Auth: forced.AuthIndex, Source: "tick", Action: "cooldown_file_still_open",
+							Reason: "冷却补关后校验文件仍开 · 可能被外部重开或列表滞后",
+						})
+					} else {
+						g.State.StampLastAction(forced.AuthIndex, "cooldown_file_still_open")
+					}
+					nReassert++
 				} else {
-					g.State.Log(state.ActionLog{Auth: forced.AuthIndex, Source: "tick", Action: "cooldown_reassert", Reason: "owned_disable_was_enabled"})
-					n++
+					if !rateLimited {
+						g.State.Log(state.ActionLog{Auth: forced.AuthIndex, Source: "tick", Action: "cooldown_reassert", Reason: "owned_disable_was_enabled"})
+					} else {
+						g.State.StampLastAction(forced.AuthIndex, "cooldown_reassert")
+					}
+					nReassert++
 				}
 			}
 			if name != "" {
@@ -1074,6 +1844,13 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time, scanFore
 		//  - NEVER open if shouldProtectDisable (owned cool-down/manual)
 		//  - NEVER ResetToActive on protectable accounts
 		//  - only enable the CPA file; next real error re-stamps cool-down
+		//  - NEVER open files that sentry has never seen (no identity match at all).
+		//    These are untracked registration-machine files; opening them floods CPA
+		//    with enabled files that have no sentry state. Patrol HandleUsage will
+		//    bring them into sentry on next probe.
+		if owned == nil && acc == nil && len(cands) == 0 {
+			continue
+		}
 		if g.Cfg.ReopenForeignDisabled {
 			// final hard gate
 			if g.shouldProtectDisable(owned, now) || g.shouldProtectDisable(acc, now) {
@@ -1126,7 +1903,7 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time, scanFore
 					Reason: "unowned_disabled_untracked_file_only",
 				})
 			}
-			n++
+			nForeign++
 			continue
 		}
 
@@ -1176,7 +1953,6 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time, scanFore
 			Auth: authIndex, Source: "tick", Action: "file_disabled_sync",
 			Reason: "cpa_disabled_sync",
 		})
-		n++
 	}
 
 	// Clear sticky cpa_file_disabled when the CPA file is already enabled
@@ -1216,9 +1992,8 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time, scanFore
 			Auth: acc.AuthIndex, Source: "tick", Action: "clear_cpa_disabled_tag",
 			Reason: "file_already_enabled",
 		})
-		n++
 	}
-	return n, nil
+	return nForeign, nReassert, nil
 }
 
 // scrubDirtyActiveAccounts fixes half-recovered cool-downs only:
@@ -1334,6 +2109,7 @@ func (g *Guard) pruneDuplicateAccounts() {
 	for _, a := range accs {
 		k := keyOf(a)
 		if k == "" {
+			fmt.Fprintf(os.Stderr, "[sentry-debug] PRUNE_SKIP_EMPTY_KEY auth=%s email=%s file=%s\n", a.AuthIndex, a.Email, a.FileName)
 			continue
 		}
 		if cur, ok := best[k]; !ok {
@@ -1399,6 +2175,7 @@ func (g *Guard) clearStreaksByCountMode(authIndex string) {
 			totalKeys[p.Key] = true
 		}
 	}
+	// any_error defaults to streak (success clears) unless user set total
 	if len(totalKeys) == 0 {
 		g.State.ClearAuthStreaks(authIndex)
 		return
@@ -1406,7 +2183,25 @@ func (g *Guard) clearStreaksByCountMode(authIndex string) {
 	g.State.ClearAuthStreaksExcept(authIndex, totalKeys)
 }
 
+// policyActionRank compares policy outcomes for any_error upgrade (higher wins).
+func policyActionRank(a policy.Action) int {
+	if a.Trash {
+		return 40
+	}
+	if a.Disable {
+		return 30
+	}
+	if a.Candidate {
+		return 20
+	}
+	if a.Cooldown {
+		return 10
+	}
+	return 0
+}
+
 func (g *Guard) applyPermanentDisable(ctx context.Context, ev UsageEvent, reason string) error {
+	fmt.Fprintf(os.Stderr, "[sentry-debug] PERM_DISABLE_ENTER auth=%s reason=%s\n", ev.AuthIndex, reason)
 	name := ev.FileName
 	if name == "" || cpaapi.LooksLikeOpaqueID(name) {
 		if acc := g.State.Get(ev.AuthIndex); acc != nil {
@@ -1418,6 +2213,9 @@ func (g *Guard) applyPermanentDisable(ctx context.Context, ev UsageEvent, reason
 	// ownership first (closed loop), then CPA file
 	g.State.SetAccountState(ev.AuthIndex, state.UserManual, "user_manual")
 	g.State.SetRecoverAt(ev.AuthIndex, time.Time{})
+	if a := g.State.Get(ev.AuthIndex); a != nil {
+		fmt.Fprintf(os.Stderr, "[sentry-debug] PERM_DISABLE_SET auth=%s state=%s disable_source=%s\n", ev.AuthIndex, a.State, a.DisableSource)
+	}
 	if name != "" && !cpaapi.LooksLikeOpaqueID(name) {
 		g.State.UpdateMeta(ev.AuthIndex, name, ev.Email, "")
 	}
@@ -1432,6 +2230,95 @@ func (g *Guard) applyPermanentDisable(ctx context.Context, ev UsageEvent, reason
 	}
 	g.State.Log(state.ActionLog{Auth: ev.AuthIndex, Source: ev.Source, Action: "manual_disable", Reason: reason})
 	return nil
+}
+
+// reopenAfterProbeAlive opens CPA file and exits cool/候删/永禁 when a real patrol probe
+// returns HTTP 2xx. Patrol range may be permanent — alive means restore traffic;
+// subsequent failures still follow error policies. Trash/purged still refused.
+func (g *Guard) reopenAfterProbeAlive(ctx context.Context, ev UsageEvent) {
+	if g.State == nil {
+		return
+	}
+	acc := g.State.Get(ev.AuthIndex)
+	if acc == nil {
+		acc = g.State.Touch(ev.AuthIndex)
+	}
+	// trash: never auto-restore from probe
+	if acc.State == state.Trashed || acc.State == state.Purged {
+		return
+	}
+	wasCool := acc.State == state.CooldownQuota || acc.State == state.CooldownSpending ||
+		acc.State == state.CooldownPermission || acc.State == state.CandidateDead
+	wasPermanent := acc.State == state.UserManual || acc.DisableSource == "user_manual"
+	// cpa_file_disabled sticky still treated as "owned closed" that probe can open
+	if acc.State == state.UserManual && (acc.DisableSource == "cpa_file_disabled" || acc.DisableSource == "cpa_disabled") {
+		wasPermanent = true
+	}
+	name := ev.FileName
+	if name == "" || cpaapi.LooksLikeOpaqueID(name) {
+		if acc.FileName != "" && !cpaapi.LooksLikeOpaqueID(acc.FileName) {
+			name = acc.FileName
+		}
+	}
+	if (name == "" || cpaapi.LooksLikeOpaqueID(name)) && g.Resolver != nil {
+		if id, ok := g.Resolver.Resolve(ev.AuthIndex, ev.FileName, ev.Email); ok && id.FileName != "" {
+			name = id.FileName
+			g.State.UpdateMeta(ev.AuthIndex, id.FileName, id.Email, "")
+		}
+	}
+	openedFile := false
+	if g.CPA != nil && name != "" && !cpaapi.LooksLikeOpaqueID(name) {
+		if err := g.CPA.SetDisabled(ctx, name, false); err != nil {
+			g.State.Log(state.ActionLog{
+				Auth: ev.AuthIndex, Source: "patrol", Action: "patrol_alive_open_failed",
+				Reason: err.Error(),
+			})
+		} else {
+			openedFile = true
+			em := strings.ToLower(strings.TrimSpace(ev.Email))
+			if em == "" {
+				em = strings.ToLower(strings.TrimSpace(acc.Email))
+			}
+			g.State.UpdateMeta(ev.AuthIndex, authFileBase(name), em, "")
+		}
+	}
+	if wasCool || wasPermanent {
+		prev := string(acc.State)
+		if prev == "" {
+			prev = "user_manual"
+		}
+		sig := acc.LastSignal
+		if wasPermanent {
+			// full unlock (clear user_manual sticky + streaks); mark 正常·待观察 via pending
+			g.State.ClearManualLock(ev.AuthIndex)
+			// still want short watch after auto-revive from permanent
+			g.State.ResetToActive(ev.AuthIndex) // re-set pending_observe after ClearManualLock cleared it
+		} else {
+			// cool/候删: keep streak continuity for ladder
+			g.State.ResetToActive(ev.AuthIndex)
+		}
+		reason := "探活成功 · 已打开文件并退出" + prev
+		if wasPermanent {
+			reason = "探活成功 · 永禁号恢复接流（后续错误仍按策略）"
+		}
+		g.State.Log(state.ActionLog{
+			Auth: ev.AuthIndex, Source: "patrol", Signal: sig,
+			Action: "patrol_alive_reopen",
+			Reason: reason,
+		})
+		return
+	}
+	// Active (or empty): ensure file open + stamp so action rail updates live
+	if openedFile {
+		g.State.Log(state.ActionLog{
+			Auth: ev.AuthIndex, Source: "patrol",
+			Action: "patrol_alive_open",
+			Reason: "探活成功 · 文件已确保开启",
+		})
+	} else {
+		// still stamp success for live UI even if no file name / already open
+		g.State.StampLastAction(ev.AuthIndex, "patrol_alive")
+	}
 }
 
 // ManualDisable disables one account via CPA and marks user_manual.
@@ -1468,8 +2355,20 @@ func (g *Guard) ManualEnable(ctx context.Context, authIndex string) error {
 	}
 	name := g.resolveFileName(ctx, authIndex, acc.FileName, acc.Email)
 	if g.CPA != nil && name != "" && !cpaapi.LooksLikeOpaqueID(name) {
-		if err := g.CPA.SetDisabled(ctx, name, false); err != nil {
+		opened, err, stillClosed := g.ensureAuthEnabled(ctx, name)
+		if err != nil {
+			g.State.Log(state.ActionLog{Auth: authIndex, Source: "panel", Action: "manual_enable_failed", Reason: err.Error()})
+			_ = g.State.Save()
 			return err
+		}
+		if !opened || stillClosed {
+			// still mark active so panel reflects intent; heal will retry with rate limit
+			g.State.ClearManualLock(authIndex)
+			g.State.Log(state.ActionLog{
+				Auth: authIndex, Source: "panel", Action: "manual_enable_file_still_closed",
+				Reason: "面板启用后校验文件仍关 · 将由维护强制打开补救",
+			})
+			return g.State.Save()
 		}
 	}
 	g.State.ClearManualLock(authIndex)

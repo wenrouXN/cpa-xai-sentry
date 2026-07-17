@@ -21,133 +21,160 @@ const (
 
 // Policy is per-error control knobs.
 type Policy struct {
-	Key           string `json:"key"`
-	Label         string `json:"label"`
-	Enabled       bool   `json:"enabled"`
-	Action        Action `json:"action"`
-	Threshold     int    `json:"threshold"`
-	CooldownSec   int    `json:"cooldown_seconds"`
-	NeverTrash    bool   `json:"never_trash"`
-	Note          string `json:"note"`
-	Source        string `json:"source"` // builtin|learned
-	UpdatedAt     string `json:"updated_at,omitempty"`
+	Key         string `json:"key"`
+	Label       string `json:"label"`
+	Enabled     bool   `json:"enabled"`
+	Action      Action `json:"action"`
+	Threshold   int    `json:"threshold"`
+	CooldownSec int    `json:"cooldown_seconds"`
+	NeverTrash  bool   `json:"never_trash"`
+	Note        string `json:"note"`
+	Source      string `json:"source"` // builtin|learned
+	UpdatedAt   string `json:"updated_at,omitempty"`
 }
 
 // Observed is a dynamically collected error fingerprint.
 type Observed struct {
-	Key         string    `json:"key"`
-	Label       string    `json:"label"`
-	Signal      string    `json:"signal"`
-	Code        string    `json:"code"`
-	StatusCode  int       `json:"status_code"`
-	Count       int64     `json:"count"`
-	LastAt      time.Time `json:"last_at"`
-	Sample      string    `json:"sample"`
-	LastAuth    string    `json:"last_auth"`
-	LastFile    string    `json:"last_file"`
+	Key        string    `json:"key"`
+	Label      string    `json:"label"`
+	Signal     string    `json:"signal"`
+	Code       string    `json:"code"`
+	StatusCode int       `json:"status_code"`
+	Count      int64     `json:"count"`
+	LastAt     time.Time `json:"last_at"`
+	Sample     string    `json:"sample"`
+	LastAuth   string    `json:"last_auth"`
+	LastFile   string    `json:"last_file"`
 }
 
-// BuiltinDefaults seeds known xAI failure classes.
+// BuiltinDefaults seeds ONLY free_usage_429 + permission_403 (+ callers may add any_error).
+// Everything else is catalogued under "unmatched" until the user splits it.
 func BuiltinDefaults() map[string]Policy {
 	return map[string]Policy{
 		"free_usage_429": {
-			Key: "free_usage_429", Label: "429·免费额度用尽", Enabled: true,
+			Key: "free_usage_429", Label: "免费额度用尽", Enabled: true,
 			Action: ActionCooldown, Threshold: 1, CooldownSec: 0, Source: "builtin",
 			Note: "额度类：应冷却，不删号；请求/巡查统一此标签",
 		},
-		"spending_limit_402": {
-			Key: "spending_limit_402", Label: "402·消费限额", Enabled: true,
-			Action: ActionCooldown, Threshold: 1, CooldownSec: 86400, NeverTrash: true, Source: "builtin",
-			Note: "硬规则：永不自动进垃圾箱",
-		},
-		"auth_401": {
-			Key: "auth_401", Label: "401·凭证失效", Enabled: true,
-			Action: ActionCandidate, Threshold: 2, CooldownSec: 3600, Source: "builtin",
-			Note: "连续命中后候删，人工确认",
-		},
 		"permission_403": {
-			Key: "permission_403", Label: "403·权限拒绝", Enabled: true,
+			Key: "permission_403", Label: "权限拒绝", Enabled: true,
 			Action: ActionCooldown, Threshold: 3, CooldownSec: 1800, Source: "builtin",
 			Note: "默认阶梯：连续≥3冷却；≥15永久禁用（可在面板改）",
-		},
-		"code:invalid-argument": {
-			Key: "code:invalid-argument", Label: "参数无效/上下文过长", Enabled: true,
-			Action: ActionObserve, Threshold: 3, CooldownSec: 0, NeverTrash: true, Source: "builtin",
-			Note: "常见于上下文超长/非法参数；默认仅观察",
-		},
-		"http_404": {
-			Key: "http_404", Label: "404·路径/网关", Enabled: true,
-			Action: ActionObserve, Threshold: 3, CooldownSec: 0, NeverTrash: true, Source: "builtin",
-			Note: "多为路径/网关问题，不等于账号死号",
 		},
 	}
 }
 
-// KeyFromMatch builds catalog key from classifier result + status.
-func KeyFromMatch(res match.Result, statusCode int) string {
-	if res.Signal != match.SignalNone {
-		return string(res.Signal)
+// IsBuiltinCatalogKey reports whether key is one of the two built-in classes (or any_error).
+func IsBuiltinCatalogKey(key string) bool {
+	switch strings.TrimSpace(key) {
+	case "free_usage_429", "permission_403", "any_error", "unmatched":
+		return true
+	default:
+		return false
 	}
-	// collapse common HTTP statuses into builtin keys when possible
-	if statusCode == 401 {
-		return "auth_401"
+}
+
+// CollapseTarget returns where a dirty/legacy key should be merged, if at all.
+// User-created split keys (reason:*, custom labels) are NEVER collapsed.
+//
+// Rules:
+//   - free_usage_429:<suffix> → free_usage_429
+//   - permission_403:<suffix> → permission_403
+//   - legacy bare builtins (auth_401, spending_limit_402, http_404, …) → unmatched
+//   - reason:… / user custom keys → keep (ok=false)
+//   - free_usage_429 / permission_403 / any_error / unmatched → keep
+func CollapseTarget(key string) (target string, ok bool) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return "unmatched", true
+	}
+	switch key {
+	case "any_error", "unmatched", "free_usage_429", "permission_403":
+		return "", false
+	}
+	// User splits use reason: / custom names — never auto-merge.
+	if strings.HasPrefix(key, "reason:") {
+		return "", false
+	}
+	if i := strings.IndexByte(key, ':'); i > 0 {
+		parent := key[:i]
+		if parent == "free_usage_429" || parent == "permission_403" {
+			return parent, true
+		}
+		// code:invalid-argument and similar legacy → unmatched
+		if parent == "code" || parent == "http" || parent == "msg" {
+			return "unmatched", true
+		}
+		// unknown parent:suffix (user custom) → keep
+		return "", false
+	}
+	// bare legacy keys
+	switch key {
+	case "auth_401", "spending_limit_402", "http_404", "http_401", "http_0_disabled":
+		return "unmatched", true
+	}
+	if strings.HasPrefix(key, "http_") {
+		return "unmatched", true
+	}
+	// bare custom key → keep
+	return "", false
+}
+
+// NormalizeCatalogKey is kept for display fallbacks: only forces known builtins/unmatched.
+// Does NOT rewrite user split keys (reason:…).
+func NormalizeCatalogKey(key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return "unmatched"
+	}
+	if t, ok := CollapseTarget(key); ok {
+		return t
+	}
+	return key
+}
+
+// KeyFromMatch builds catalog key from classifier result + status.
+// Only 429/403 are auto-classified; everything else goes to "unmatched".
+func KeyFromMatch(res match.Result, statusCode int, body ...string) string {
+	if res.Signal == match.SignalFreeUsage429 {
+		return "free_usage_429"
+	}
+	if res.Signal == match.SignalPermission403 {
+		return "permission_403"
+	}
+	// status-only collapse for the two builtins when signal empty but HTTP clear
+	if statusCode == 429 {
+		return "free_usage_429"
 	}
 	if statusCode == 403 {
 		return "permission_403"
 	}
-	if statusCode == 402 {
-		return "spending_limit_402"
-	}
-	if statusCode == 429 {
-		return "free_usage_429"
-	}
-	if res.Code != "" {
-		return "code:" + sanitize(res.Code)
-	}
-	if statusCode > 0 {
-		return fmt.Sprintf("http_%d", statusCode)
-	}
-	if res.Reason != "" && res.Reason != "unmatched" {
-		return "reason:" + sanitize(res.Reason)
+	// body hint (free-usage / permission) when status weird
+	if len(body) > 0 {
+		low := strings.ToLower(body[0])
+		if strings.Contains(low, "free-usage") || strings.Contains(low, "free_usage") {
+			return "free_usage_429"
+		}
+		if strings.Contains(low, "permission-denied") || strings.Contains(low, "access to the chat endpoint is denied") {
+			return "permission_403"
+		}
 	}
 	return "unmatched"
 }
 
 func LabelOf(key string, res match.Result, statusCode int) string {
+	key = NormalizeCatalogKey(key)
 	switch key {
 	case "free_usage_429":
-		return "429·免费额度用尽"
-	case "spending_limit_402":
-		return "402·消费限额"
-	case "auth_401":
-		return "401·凭证失效"
+		return "免费额度用尽"
 	case "permission_403":
-		return "403·权限拒绝"
+		return "权限拒绝"
+	case "reason:http_426", "http_426":
+		return "终端版本过低"
 	case "unmatched":
 		return "未分类错误"
-	case "http_404":
-		return "404·路径/网关"
-	case "code:invalid-argument":
-		return "参数无效/上下文过长"
-	case "http_0_disabled", "reason:cpa_disabled":
-		return "CPA文件禁用(同步)"
-	case "reason:region_block":
-		return "区域限制"
-	}
-	if strings.HasPrefix(key, "code:") {
-		return "错误码 " + strings.TrimPrefix(key, "code:")
-	}
-	if strings.HasPrefix(key, "http_") {
-		return "HTTP " + strings.TrimPrefix(key, "http_")
-	}
-	if res.Reason == "region_block" {
-		return "区域限制"
-	}
-	if res.Code != "" {
-		return "错误码 " + res.Code
-	}
-	if statusCode > 0 {
-		return fmt.Sprintf("未分类 HTTP %d", statusCode)
+	case "any_error":
+		return "任意错误·连续"
 	}
 	if key != "" {
 		return key
@@ -159,18 +186,19 @@ func LabelOf(key string, res match.Result, statusCode int) string {
 func HumanMsg(key, sample string, status int) string {
 	s := strings.TrimSpace(htmlUnescape(sample))
 	low := strings.ToLower(s)
+	key = NormalizeCatalogKey(key)
 	switch {
 	case key == "free_usage_429" || strings.Contains(low, "free-usage") || strings.Contains(low, "free_usage"):
 		return "免费额度用尽"
-	case key == "spending_limit_402" || strings.Contains(low, "spending-limit") || strings.Contains(low, "run out of credits"):
-		return "消费限额"
 	case key == "permission_403" || strings.Contains(low, "permission-denied") || strings.Contains(low, "access to the chat endpoint is denied"):
 		return "权限拒绝"
-	case key == "auth_401" || strings.Contains(low, "authentication required") || strings.Contains(low, "invalid or expired credentials") || strings.Contains(low, "unauthorized"):
+	case strings.Contains(low, "spending-limit") || strings.Contains(low, "run out of credits") || status == 402:
+		return "消费限额"
+	case strings.Contains(low, "authentication required") || strings.Contains(low, "invalid or expired credentials") || strings.Contains(low, "unauthorized") || status == 401:
 		return "凭证失效"
-	case key == "http_404" || strings.Contains(low, "404 not found") || strings.Contains(low, "<html"):
+	case strings.Contains(low, "404 not found") || strings.Contains(low, "<html") || status == 404:
 		return "路径/网关 404"
-	case key == "code:invalid-argument" || (strings.Contains(low, "invalid-argument") && strings.Contains(low, "maximum prompt")):
+	case strings.Contains(low, "invalid-argument") && strings.Contains(low, "maximum prompt"):
 		return "上下文过长/参数无效"
 	case strings.Contains(low, "invalid-argument"):
 		return "参数无效"
@@ -180,10 +208,9 @@ func HumanMsg(key, sample string, status int) string {
 		return "CPA文件已禁用"
 	case strings.Contains(low, "region"):
 		return "区域限制"
-	case key != "" && !strings.HasPrefix(key, "unmatched") && !strings.HasPrefix(key, "http_") && !strings.HasPrefix(key, "code:") && !strings.HasPrefix(key, "reason:"):
-		// known key label without parens noise
-		lab := LabelOf(key, match.Result{}, status)
-		return strings.TrimSpace(strings.Split(lab, "(")[0])
+	case strings.Contains(low, "cli version") || strings.Contains(low, "grok cli") && strings.Contains(low, "outdated") ||
+		strings.Contains(low, "please update to version") || status == 426:
+		return "终端版本过低"
 	}
 	// strip json/html noise
 	if strings.HasPrefix(s, "{") || strings.Contains(low, "<html") {
@@ -196,12 +223,17 @@ func HumanMsg(key, sample string, status int) string {
 		if status == 404 {
 			return "路径/网关 404"
 		}
+		if status == 429 {
+			return "免费额度用尽"
+		}
+		if status == 426 {
+			return "终端版本过低"
+		}
 		if status > 0 {
 			return fmt.Sprintf("HTTP %d", status)
 		}
 		return "未分类错误"
 	}
-	// shorten URL-ish network errors
 	if strings.Contains(low, "post \"http") || strings.Contains(low, "get \"http") {
 		if strings.Contains(low, "eof") {
 			return "连接中断"
@@ -217,7 +249,6 @@ func HumanMsg(key, sample string, status int) string {
 		}
 		return "未分类错误"
 	}
-	// plain short text
 	if len(s) > 48 {
 		s = s[:48] + "…"
 	}
@@ -225,6 +256,7 @@ func HumanMsg(key, sample string, status int) string {
 }
 
 // ShapeOf returns a stable fingerprint for splitting unmatched errors.
+// Suggest keys stay under reason:/shape — never auto-create sibling 403/429 cards.
 func ShapeOf(sample string, status int) (shape, label, suggestKey string) {
 	msg := HumanMsg("", sample, status)
 	low := strings.ToLower(sample + " " + msg)
@@ -237,16 +269,23 @@ func ShapeOf(sample string, status int) (shape, label, suggestKey string) {
 		return "cpa_disabled", "CPA文件已禁用", "reason:cpa_disabled"
 	case strings.Contains(low, "region"):
 		return "region_block", "区域限制", "reason:region_block"
+	case status == 402 || strings.Contains(low, "spending-limit") || strings.Contains(low, "消费限额") || strings.Contains(low, "run out of credits"):
+		return "spending_402", "消费限额", "reason:spending_limit_402"
 	case status == 401 || strings.Contains(low, "凭证失效") || strings.Contains(low, "authentication"):
-		return "auth_401", "401·凭证失效", "auth_401"
-	case status == 403 || strings.Contains(low, "权限拒绝") || strings.Contains(low, "permission"):
-		return "permission_403", "403·权限拒绝", "permission_403"
+		return "auth_401", "凭证失效", "reason:auth_401"
 	case status == 404:
-		return "http_404", "404·路径/网关", "http_404"
+		return "http_404", "路径/网关 404", "reason:http_404"
+	case status == 429 || strings.Contains(low, "free-usage") || strings.Contains(low, "免费额度"):
+		// should already be free_usage_429 catalog; if under unmatched, suggest merge back
+		return "free_usage_429", "免费额度用尽", "free_usage_429"
+	case status == 403 || strings.Contains(low, "权限拒绝") || strings.Contains(low, "permission"):
+		return "permission_403", "权限拒绝", "permission_403"
+	case status == 426 || strings.Contains(low, "cli version") || (strings.Contains(low, "outdated") && strings.Contains(low, "grok")):
+		// stable shape so user split + routeBySplitShape keep matching
+		return "http_426", "终端版本过低", "reason:http_426"
 	case status > 0:
-		return fmt.Sprintf("http_%d", status), fmt.Sprintf("HTTP %d", status), fmt.Sprintf("http_%d", status)
+		return fmt.Sprintf("http_%d", status), fmt.Sprintf("HTTP %d", status), fmt.Sprintf("reason:http_%d", status)
 	default:
-		// fingerprint first 40 runes of human msg
 		fp := msg
 		if len(fp) > 40 {
 			fp = fp[:40]
@@ -256,7 +295,6 @@ func ShapeOf(sample string, status int) (shape, label, suggestKey string) {
 }
 
 func htmlUnescape(s string) string {
-	// tiny local unescape to avoid importing html in this package cycle risk — use strings replacer
 	r := strings.NewReplacer(
 		"&#34;", `"`, "&quot;", `"`, "&#39;", "'", "&apos;", "'",
 		"&lt;", "<", "&gt;", ">", "&amp;", "&",
@@ -265,16 +303,48 @@ func htmlUnescape(s string) string {
 	return r.Replace(s)
 }
 
+// ExtractBodyError extracts a short error identifier from a JSON response body.
+// Tries "error", "message", "detail", "code" fields. Returns "" if not JSON or no match.
+func ExtractBodyError(body string) string {
+	if body == "" {
+		return ""
+	}
+	// keep lightweight — full JSON parse lives in match.Classify
+	low := strings.ToLower(body)
+	if i := strings.Index(low, `"code"`); i >= 0 {
+		// crude extract after "code":
+		rest := body[i:]
+		if j := strings.Index(rest, ":"); j >= 0 {
+			rest = strings.TrimSpace(rest[j+1:])
+			rest = strings.Trim(rest, `",} `)
+			if rest != "" && len(rest) < 80 {
+				return rest
+			}
+		}
+	}
+	return ""
+}
+
 func sanitize(s string) string {
-	s = strings.TrimSpace(strings.ToLower(s))
-	s = strings.ReplaceAll(s, " ", "_")
-	if len(s) > 80 {
-		s = s[:80]
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '-' || r == '.' {
+			return r
+		}
+		if r == ' ' || r == '/' || r == ':' {
+			return '_'
+		}
+		return -1
+	}, s)
+	if len(s) > 64 {
+		s = s[:64]
 	}
 	return s
 }
 
-// HardNeverTrash returns true for keys that must never auto-trash.
+// HardNeverTrash is deprecated: no hard ban; trash follows policy/global config only.
+// Kept for API compat — always false.
 func HardNeverTrash(key string) bool {
-	return key == "spending_limit_402" || strings.Contains(key, "spending-limit")
+	return false
 }
+

@@ -6,26 +6,63 @@ import (
 	"github.com/openclaw-local/cpa-xai-sentry/internal/match"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/policy"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/sentrycfg"
+	"github.com/openclaw-local/cpa-xai-sentry/internal/state"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/tier"
 )
 
-func Test402NeverTrash(t *testing.T) {
+// 402 no longer hard-blocks trash: global delete_signals + auto_delete must work.
+func Test402CanTrashWhenConfigured(t *testing.T) {
 	cfg := sentrycfg.Default()
 	cfg.AutoDelete = true
 	cfg.AutoCooldown = true
 	cfg.DeleteSignals = []string{"spending_limit_402", "auth_401"}
 	cfg = cfg.Validate()
-	if contains(cfg.DeleteSignals, "spending_limit_402") {
-		t.Fatal("validate must strip 402 from delete_signals")
+	if !contains(cfg.DeleteSignals, "spending_limit_402") {
+		t.Fatal("validate must keep 402 in delete_signals when configured")
 	}
 	d := policy.Decide(cfg, policy.Input{
 		Signal: match.SignalSpendingLimit402, Streak: 5, Tier: tier.Free,
 	})
-	if d.Trash {
-		t.Fatal("402 must not trash")
+	if !d.Trash {
+		t.Fatalf("402 should trash when in delete_signals, got %+v", d)
 	}
-	if !d.Cooldown {
-		t.Fatal("402 should still cooldown when enabled")
+}
+
+// Policy ladder trash on 402 when never_trash is false.
+func Test402PolicyLadderTrash(t *testing.T) {
+	cfg := sentrycfg.Default()
+	cfg.AutoDelete = true
+	cfg.SentryEnabled = true
+	pol := state.ErrorPolicy{
+		Key: "spending_limit_402", Enabled: true, Action: "trash", Threshold: 1,
+		Escalations: []state.EscalationRule{{Streak: 1, Action: "trash"}},
+		NeverTrash:  false,
+	}
+	d := policy.Decide(cfg, policy.Input{
+		Signal: match.SignalSpendingLimit402, ErrorKey: "spending_limit_402",
+		Streak: 1, Tier: tier.Free, Policy: &pol,
+	})
+	if !d.Trash {
+		t.Fatalf("want trash from ladder, got %+v", d)
+	}
+}
+
+// Explicit never_trash on policy still blocks (optional panel flag, not hard key).
+func TestPolicyNeverTrashFlagStillHonored(t *testing.T) {
+	cfg := sentrycfg.Default()
+	cfg.AutoDelete = true
+	cfg.SentryEnabled = true
+	pol := state.ErrorPolicy{
+		Key: "spending_limit_402", Enabled: true,
+		Escalations: []state.EscalationRule{{Streak: 1, Action: "trash"}},
+		NeverTrash:  true,
+	}
+	d := policy.Decide(cfg, policy.Input{
+		Signal: match.SignalSpendingLimit402, ErrorKey: "spending_limit_402",
+		Streak: 1, Tier: tier.Free, Policy: &pol,
+	})
+	if d.Trash {
+		t.Fatal("policy never_trash=true must still block trash")
 	}
 }
 

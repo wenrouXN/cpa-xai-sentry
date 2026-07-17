@@ -45,6 +45,15 @@ type Account struct {
 	// PendingObserve: after cool/候删 auto-recover (ResetToActive). UI shows「恢复待观察」
 	// until a successful request proves the account is clean. Ladder streaks stay intact.
 	PendingObserve bool `json:"pending_observe,omitempty"`
+	// PendingSince: when PendingObserve was first set (not refreshed by heal re-touch).
+	// Used for idle TTL: long-idle pending without traffic → auto clear.
+	PendingSince time.Time `json:"pending_since,omitempty"`
+	// HealFailStreak: consecutive heal cycles where CPA file stayed/returned disabled.
+	// When high enough, escalate to CPA已禁用 and stop force-open spam.
+	HealFailStreak int `json:"heal_fail_streak,omitempty"`
+	// LastHealAt: last heal_active_file *attempt* (success or fail). Hard rate-limit key —
+	// do not rely on LastAction (may be overwritten by cooldown/patrol and re-trigger heal spam).
+	LastHealAt time.Time `json:"last_heal_at,omitempty"`
 	// Best-effort quota accounting (from error bodies / CPAMP day floors).
 	QuotaLimit     int64     `json:"quota_limit,omitempty"`
 	QuotaUsed      int64     `json:"quota_used,omitempty"`
@@ -84,10 +93,13 @@ type Store struct {
 	Logs          []ActionLog               `json:"logs"`
 	Trash         []TrashMeta               `json:"trash"`
 	ErrorPolicies map[string]ErrorPolicy    `json:"error_policies"`
-	Observed      map[string]*ObservedError `json:"observed_errors"`
-	Metrics       MetricsFloor              `json:"metrics"`
-	mu            sync.Mutex
-	path          string
+	// HiddenPolicyKeys: user 降回未分类'd catalog keys — do not re-seed empty builtin cards.
+	// New real hits of the same class still re-create a card via HandleUsage seed.
+	HiddenPolicyKeys []string                 `json:"hidden_policy_keys,omitempty"`
+	Observed         map[string]*ObservedError `json:"observed_errors"`
+	Metrics          MetricsFloor              `json:"metrics"`
+	mu               sync.Mutex
+	path             string
 }
 
 // EscalationRule is one tier: when streak/count >= Streak, apply Action.
@@ -100,7 +112,11 @@ type EscalationRule struct {
 // ErrorPolicy is persisted per-error control (dynamic catalog).
 type ErrorPolicy struct {
 	Key         string           `json:"key"`
-	Label       string           `json:"label"`
+	Label       string           `json:"label"` // 显示名称（用户可改；不再被硬编码覆盖）
+	// DisplayMsg: 报错日志「错误信息」短文案；空则用 HumanMsg 默认。
+	DisplayMsg  string           `json:"display_msg,omitempty"`
+	// SplitShape: when set, new unmatched hits with this shape route here (user split).
+	SplitShape  string           `json:"split_shape,omitempty"`
 	Enabled     bool             `json:"enabled"`
 	Action      string           `json:"action"` // legacy single action: observe|cooldown|candidate|trash|disable
 	Threshold   int              `json:"threshold"`
@@ -171,6 +187,7 @@ type ErrorHit struct {
 	Source string    `json:"source,omitempty"` // usage|patrol|tick|panel
 	Status int       `json:"status,omitempty"`
 	Sample string    `json:"sample,omitempty"`
+	Model  string    `json:"model,omitempty"` // request model when known
 }
 
 type MetricsFloor struct {
@@ -183,6 +200,8 @@ type MetricsFloor struct {
 	LastCPAMPCalls      int64  `json:"last_cpamp_calls,omitempty"`
 	LastCPAMPSuccess    int64  `json:"last_cpamp_success,omitempty"`
 	LastCPAMPFailure    int64  `json:"last_cpamp_failure,omitempty"`
+	// LastCPAMPFailMS watermark for failover failure backfill (usage.sqlite timestamp_ms).
+	LastCPAMPFailMS int64 `json:"last_cpamp_fail_ms,omitempty"`
 }
 
 const maxLogs = 2000
@@ -225,6 +244,13 @@ func Load(path string) (*Store, error) {
 	if s.Observed == nil {
 		s.Observed = map[string]*ObservedError{}
 	}
+	// v1.1.52: strip historical hard never_trash so trash follows panel ladder only
+	for k, p := range s.ErrorPolicies {
+		if p.NeverTrash {
+			p.NeverTrash = false
+			s.ErrorPolicies[k] = p
+		}
+	}
 	s.path = path
 	s.backfillLastActionsFromLogs()
 	return s, nil
@@ -246,6 +272,7 @@ func (s *Store) backfillLastActionsFromLogs() {
 func (s *Store) Save() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	fmt.Fprintf(os.Stderr, "[sentry-debug] Save accounts=%d path=%s\n", len(s.Accounts), s.path)
 	return s.saveLocked()
 }
 
@@ -256,7 +283,15 @@ func (s *Store) saveLocked() error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return err
 	}
+	acctCount := len(s.Accounts)
 	b, err := json.MarshalIndent(s, "", "  ")
+	if err == nil {
+		// verify serialized account count
+		var check struct{ Accounts map[string]json.RawMessage `json:"accounts"` }
+		if json.Unmarshal(b, &check) == nil {
+			fmt.Fprintf(os.Stderr, "[sentry-debug] SAVE_VERIFY mem=%d serialized=%d bytes=%d\n", acctCount, len(check.Accounts), len(b))
+		}
+	}
 	if err != nil {
 		return err
 	}
@@ -324,7 +359,11 @@ func (s *Store) IncStreak(authIndex, signal string) int {
 		acc.Streaks = map[string]int{}
 	}
 	acc.Streaks[signal]++
-	acc.LastSignal = signal
+	// any_error is a global ladder counter only — never overwrite primary last_signal
+	// (free_usage_429 / permission_403 / …) or cool rows show last_signal=any_error.
+	if signal != "any_error" {
+		acc.LastSignal = signal
+	}
 	acc.UpdatedAt = time.Now()
 	return acc.Streaks[signal]
 }
@@ -373,6 +412,9 @@ func (s *Store) ClearCoolDownResidue(authIndex string) {
 	acc.RecoverAt = time.Time{}
 	// do not clear LastSignal/Streaks — needed for policy ladders on live accounts
 	// half-recover residue also means "just came back" → pending observe until success
+	if !acc.PendingObserve {
+		acc.PendingSince = time.Now()
+	}
 	acc.PendingObserve = true
 	acc.UpdatedAt = time.Now()
 }
@@ -383,6 +425,7 @@ func (s *Store) ClearCoolDownResidue(authIndex string) {
 // must survive cool-down cycles. Streaks clear only on successful requests (streak mode)
 // or via ClearAuthStreaks / panel permanent re-enable paths that call ClearManualLock.
 // Marks PendingObserve so UI shows「恢复待观察」until a real success proves clean.
+// PendingSince is set only on the transition into pending (heal re-touch does not refresh TTL).
 func (s *Store) ResetToActive(authIndex string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -395,6 +438,11 @@ func (s *Store) ResetToActive(authIndex string) {
 	acc.DisableSource = ""
 	acc.PreDisabled = false
 	acc.RecoverAt = time.Time{}
+	if !acc.PendingObserve {
+		acc.PendingSince = time.Now()
+	} else if acc.PendingSince.IsZero() {
+		acc.PendingSince = time.Now()
+	}
 	acc.PendingObserve = true
 	// keep LastSignal + Streaks for escalation ladder continuity
 	if acc.Owner == "" {
@@ -411,10 +459,104 @@ func (s *Store) ClearPendingObserve(authIndex string) {
 	if acc == nil {
 		return
 	}
-	if acc.PendingObserve {
+	if acc.PendingObserve || !acc.PendingSince.IsZero() || acc.HealFailStreak != 0 {
 		acc.PendingObserve = false
+		acc.PendingSince = time.Time{}
+		acc.HealFailStreak = 0
 		acc.UpdatedAt = time.Now()
 	}
+}
+
+// SetPendingSince forces PendingSince (tests / ops repair). Does not toggle PendingObserve.
+func (s *Store) SetPendingSince(authIndex string, t time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	acc := s.Accounts[authIndex]
+	if acc == nil {
+		return
+	}
+	acc.PendingSince = t
+	acc.UpdatedAt = time.Now()
+}
+
+// ExpireIdlePending clears long-idle「恢复待观察」without wiping ladder streaks.
+// Also drops free_usage/spending residual last_signal so UI can become 正常·可用.
+// 403/401 streaks stay → UI shows 观察·403×N after pending is cleared.
+func (s *Store) ExpireIdlePending(authIndex string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	acc := s.Accounts[authIndex]
+	if acc == nil {
+		return
+	}
+	acc.PendingObserve = false
+	acc.PendingSince = time.Time{}
+	switch acc.LastSignal {
+	case "free_usage_429", "spending_limit_402":
+		acc.LastSignal = ""
+	}
+	acc.UpdatedAt = time.Now()
+}
+
+// IncHealFailStreak increments sticky-heal counter; returns new value.
+func (s *Store) IncHealFailStreak(authIndex string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	acc := s.Accounts[authIndex]
+	if acc == nil {
+		acc = &Account{AuthIndex: authIndex, Streaks: map[string]int{}}
+		s.Accounts[authIndex] = acc
+	}
+	acc.HealFailStreak++
+	acc.UpdatedAt = time.Now()
+	return acc.HealFailStreak
+}
+
+// ClearHealFailStreak resets after a verified force-open.
+func (s *Store) ClearHealFailStreak(authIndex string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if acc := s.Accounts[authIndex]; acc != nil && acc.HealFailStreak != 0 {
+		acc.HealFailStreak = 0
+		acc.UpdatedAt = time.Now()
+	}
+}
+
+// TouchLastHealAt stamps heal attempt time (rate-limit source of truth).
+func (s *Store) TouchLastHealAt(authIndex string, at time.Time) {
+	if s == nil || authIndex == "" {
+		return
+	}
+	if at.IsZero() {
+		at = time.Now()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	acc := s.Accounts[authIndex]
+	if acc == nil {
+		acc = &Account{AuthIndex: authIndex, Streaks: map[string]int{}}
+		s.Accounts[authIndex] = acc
+	}
+	acc.LastHealAt = at
+	acc.UpdatedAt = at
+}
+
+// MarkCPAFileDisabled marks sticky CPA已禁用 (not panel permanent ban).
+// Used when heal cannot keep the file open (stuck residual).
+func (s *Store) MarkCPAFileDisabled(authIndex string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	acc := s.Accounts[authIndex]
+	if acc == nil {
+		acc = &Account{AuthIndex: authIndex, Streaks: map[string]int{}}
+		s.Accounts[authIndex] = acc
+	}
+	acc.State = UserManual
+	acc.DisableSource = "cpa_file_disabled"
+	acc.PendingObserve = false
+	acc.PendingSince = time.Time{}
+	acc.RecoverAt = time.Time{}
+	acc.UpdatedAt = time.Now()
 }
 
 func (s *Store) CanAutoReenable(authIndex string) bool {
@@ -456,6 +598,8 @@ func (s *Store) ClearManualLock(authIndex string) {
 		acc.LastSignal = ""
 		// operator full reset → clean normal, no「恢复待观察」
 		acc.PendingObserve = false
+		acc.PendingSince = time.Time{}
+		acc.HealFailStreak = 0
 	}
 	s.mu.Unlock()
 }
@@ -479,8 +623,69 @@ func (s *Store) Log(entry ActionLog) {
 	}
 	s.Logs = kept
 	if len(s.Logs) > maxLogs {
-		s.Logs = s.Logs[len(s.Logs)-maxLogs:]
+		// Prefer retaining business-critical actions over maintenance noise
+		// (heal_summary / force-open / reassert spam) when the ring is full.
+		s.Logs = trimLogsPreferCritical(s.Logs, maxLogs)
 	}
+}
+
+// logActionPriority: higher = keep longer when ring is full.
+func logActionPriority(action string) int {
+	switch action {
+	case "cooldown", "manual_disable", "candidate", "reenable", "reenable_failed",
+		"reenable_file_still_closed", "cooldown_failed", "candidate_disable_failed",
+		"trash", "manual_enable", "manual_enable_file_still_closed", "permanent_disable",
+		"policy_permanent_disable",
+		// register lifecycle must survive permanent-patrol observe spam
+		"register", "patrol_alive_reopen":
+		return 3
+	case "cooldown_reassert", "cooldown_file_still_open", "heal_active_file",
+		"heal_active_file_failed", "heal_active_file_stuck", "patrol_alive", "patrol_alive_open",
+		"reopen_foreign", "maintenance", "observe":
+		// observe demoted: permanent_skip_demote floods ring during permanent patrol
+		return 2
+	case "heal_summary", "auto_backfill", "scrub_active", "clear_cpa_disabled_tag":
+		return 0
+	default:
+		return 1
+	}
+}
+
+// trimLogsPreferCritical keeps up to maxN logs, preferring high-priority actions
+// and newer entries. Order of remaining logs is preserved (time ascending).
+func trimLogsPreferCritical(logs []ActionLog, maxN int) []ActionLog {
+	if maxN <= 0 || len(logs) <= maxN {
+		return logs
+	}
+	type scored struct {
+		i, score int
+	}
+	ss := make([]scored, len(logs))
+	for i, e := range logs {
+		// priority dominates; among same priority prefer newer (higher index)
+		ss[i] = scored{i: i, score: logActionPriority(e.Action)*100000 + i}
+	}
+	// selection sort desc by score (small N; maxLogs=2000 worst case ok for rare trim)
+	for i := 0; i < len(ss); i++ {
+		best := i
+		for j := i + 1; j < len(ss); j++ {
+			if ss[j].score > ss[best].score {
+				best = j
+			}
+		}
+		ss[i], ss[best] = ss[best], ss[i]
+	}
+	keep := make(map[int]bool, maxN)
+	for k := 0; k < maxN && k < len(ss); k++ {
+		keep[ss[k].i] = true
+	}
+	out := make([]ActionLog, 0, maxN)
+	for i, e := range logs {
+		if keep[i] {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 func (s *Store) stampLastActionLocked(entry ActionLog) {
@@ -526,6 +731,13 @@ func (s *Store) stampLastActionLocked(entry ActionLog) {
 	acc.LastAction = entry.Action
 	// keep UpdatedAt as general mutation time too
 	acc.UpdatedAt = entry.At
+}
+
+// StampLastAction records last action without appending action logs (for batched heal).
+func (s *Store) StampLastAction(authIndex, action string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stampLastActionLocked(ActionLog{At: time.Now(), Auth: authIndex, Action: action})
 }
 
 func (s *Store) AddTrash(meta TrashMeta) {
@@ -583,6 +795,7 @@ func (s *Store) SetAccountState(authIndex string, st AccountState, disableSource
 	switch st {
 	case CooldownQuota, CooldownSpending, CooldownPermission, CandidateDead, UserManual, Trashed, Purged:
 		acc.PendingObserve = false
+		acc.PendingSince = time.Time{}
 	}
 	acc.UpdatedAt = time.Now()
 }
@@ -600,6 +813,9 @@ func (s *Store) SetRecoverAt(authIndex string, at time.Time) {
 func (s *Store) DeleteAccount(authIndex string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, ok := s.Accounts[authIndex]; ok {
+		fmt.Fprintf(os.Stderr, "[sentry-debug] DELETE_ACCOUNT auth=%s total_before=%d\n", authIndex, len(s.Accounts))
+	}
 	delete(s.Accounts, authIndex)
 }
 
@@ -718,7 +934,7 @@ func (s *Store) SnapshotLogsPage(offset, limit int) (page []ActionLog, total int
 	return page, total
 }
 
-func (s *Store) ObserveError(key, label, signal, code, sample, auth, file, source string, status int) {
+func (s *Store) ObserveError(key, label, signal, code, sample, auth, file, source string, status int, model ...string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.Observed == nil {
@@ -751,8 +967,15 @@ func (s *Store) ObserveError(key, label, signal, code, sample, auth, file, sourc
 	if len(hitSample) > 240 {
 		hitSample = hitSample[:240]
 	}
+	mod := ""
+	if len(model) > 0 {
+		mod = strings.TrimSpace(model[0])
+	}
+	if len(mod) > 80 {
+		mod = mod[:80]
+	}
 	o.Hits = append(o.Hits, ErrorHit{
-		At: o.LastAt, Auth: auth, File: file, Source: source, Status: status, Sample: hitSample,
+		At: o.LastAt, Auth: auth, File: file, Source: source, Status: status, Sample: hitSample, Model: mod,
 	})
 	// retain max 7 days + hard cap
 	cut := time.Now().Add(-errorHitRetention)
@@ -769,6 +992,8 @@ func (s *Store) ObserveError(key, label, signal, code, sample, auth, file, sourc
 }
 
 // ReclassifyErrorKey moves an observed error key (and optional policy) to a new key.
+// Special case to=unmatched: also works when there is no observed ring (empty builtin card)
+// and marks the key hidden so EnsureBuiltinPolicies will not re-seed it until new hits arrive.
 func (s *Store) ReclassifyErrorKey(from, to, newLabel string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -777,12 +1002,23 @@ func (s *Store) ReclassifyErrorKey(from, to, newLabel string) error {
 	if from == "" || to == "" || from == to {
 		return fmt.Errorf("invalid keys")
 	}
+	if from == "any_error" {
+		return fmt.Errorf("cannot unclassify any_error")
+	}
 	if s.Observed == nil {
 		s.Observed = map[string]*ObservedError{}
 	}
 	src := s.Observed[from]
+	// Empty builtin card: no observed hits — just drop policy + hide reseeding
 	if src == nil {
-		return fmt.Errorf("source key not found")
+		if to != "unmatched" {
+			return fmt.Errorf("source key not found")
+		}
+		if s.ErrorPolicies != nil {
+			delete(s.ErrorPolicies, from)
+		}
+		s.hidePolicyLocked(from)
+		return nil
 	}
 	dst := s.Observed[to]
 	if dst == nil {
@@ -812,21 +1048,69 @@ func (s *Store) ReclassifyErrorKey(from, to, newLabel string) error {
 		dst.Hits = dst.Hits[len(dst.Hits)-maxErrorHits:]
 	}
 	delete(s.Observed, from)
-	// move policy if present
+	// move/drop policy
 	if s.ErrorPolicies != nil {
 		if p, ok := s.ErrorPolicies[from]; ok {
-			p.Key = to
-			if newLabel != "" {
-				p.Label = newLabel
-			}
-			// don't overwrite builtin target unless missing
-			if _, exists := s.ErrorPolicies[to]; !exists {
-				s.ErrorPolicies[to] = p
-			}
 			delete(s.ErrorPolicies, from)
+			if to != "unmatched" {
+				if _, exists := s.ErrorPolicies[to]; !exists {
+					p.Key = to
+					if newLabel != "" {
+						p.Label = newLabel
+					}
+					s.ErrorPolicies[to] = p
+				}
+			}
 		}
 	}
+	if to == "unmatched" {
+		s.hidePolicyLocked(from)
+	}
 	return nil
+}
+
+func (s *Store) hidePolicyLocked(key string) {
+	key = strings.TrimSpace(key)
+	if key == "" || key == "unmatched" || key == "any_error" {
+		return
+	}
+	for _, k := range s.HiddenPolicyKeys {
+		if k == key {
+			return
+		}
+	}
+	s.HiddenPolicyKeys = append(s.HiddenPolicyKeys, key)
+}
+
+func (s *Store) isPolicyHiddenLocked(key string) bool {
+	for _, k := range s.HiddenPolicyKeys {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
+
+// IsPolicyHidden returns true if the user explicitly deleted (recycled) this policy.
+// Hidden policies should not be re-seeded by runtime or EnsureBuiltinPolicies.
+func (s *Store) IsPolicyHidden(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.isPolicyHiddenLocked(key)
+}
+
+// UnhidePolicy clears a hidden mark (e.g. when user re-enables a class manually).
+func (s *Store) UnhidePolicy(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key = strings.TrimSpace(key)
+	out := s.HiddenPolicyKeys[:0]
+	for _, k := range s.HiddenPolicyKeys {
+		if k != key {
+			out = append(out, k)
+		}
+	}
+	s.HiddenPolicyKeys = out
 }
 
 // SplitObservedByShape moves hits matching shape from unmatched (or from) into a new/existing key.
@@ -962,24 +1246,33 @@ func (s *Store) SplitObservedByShape(from, to, newLabel, shape string) (int, err
 	return len(moved), nil
 }
 
-// shape helper without importing errorsig (avoid cycle) — duplicate minimal logic
+// shape helper without importing errorsig (avoid cycle) — keep in sync with errorsig.ShapeOf.
 func shapeOfLocked(sample string, status int) (shape, label, key string) {
-	low := strings.ToLower(sample)
+	// Unescape common HTML entities so &#34; etc. don't break keyword match.
+	s := strings.NewReplacer(
+		"&#34;", `"`, "&quot;", `"`, "&#39;", "'", "&apos;", "'",
+		"&lt;", "<", "&gt;", ">", "&amp;", "&",
+	).Replace(sample)
+	low := strings.ToLower(s + " " + sample)
 	switch {
+	case strings.Contains(low, "free-usage") || strings.Contains(low, "free_usage") || status == 429:
+		return "free_usage_429", "429·免费额度用尽", "free_usage_429"
+	case strings.Contains(low, "spending-limit") || strings.Contains(low, "run out of credits") || status == 402:
+		return "spending_402", "消费限额", "reason:spending_limit_402"
+	case strings.Contains(low, "permission-denied") || strings.Contains(low, "access to the chat endpoint is denied") || status == 403:
+		return "permission_403", "403·权限拒绝", "permission_403"
+	case strings.Contains(low, "authentication required") || strings.Contains(low, "unauthorized") || status == 401:
+		return "auth_401", "凭证失效", "reason:auth_401"
 	case strings.Contains(low, "eof"):
 		return "net_eof", "连接中断", "reason:net_eof"
 	case strings.Contains(low, "timeout"):
 		return "net_timeout", "请求超时", "reason:net_timeout"
 	case strings.Contains(low, "cpa") && strings.Contains(low, "disabled"):
 		return "cpa_disabled", "CPA文件已禁用", "reason:cpa_disabled"
-	case status == 401 || strings.Contains(low, "authentication required"):
-		return "auth_401", "401·凭证失效", "auth_401"
-	case status == 403 || strings.Contains(low, "permission-denied"):
-		return "permission_403", "403·权限拒绝", "permission_403"
-	case status == 404 || strings.Contains(low, "404"):
-		return "http_404", "404·路径/网关", "http_404"
+	case status == 404 || strings.Contains(low, "404 not found"):
+		return "http_404", "路径/网关 404", "reason:http_404"
 	case status > 0:
-		return fmt.Sprintf("http_%d", status), fmt.Sprintf("HTTP %d", status), fmt.Sprintf("http_%d", status)
+		return fmt.Sprintf("http_%d", status), fmt.Sprintf("HTTP %d", status), fmt.Sprintf("reason:http_%d", status)
 	default:
 		fp := sample
 		if len(fp) > 40 {
@@ -1010,6 +1303,10 @@ func (s *Store) EnsureBuiltinPolicies(builtins map[string]ErrorPolicy) {
 		s.ErrorPolicies = map[string]ErrorPolicy{}
 	}
 	for k, p := range builtins {
+		if s.isPolicyHiddenLocked(k) {
+			// user 降回未分类 — do not resurrect empty builtin card
+			continue
+		}
 		if _, ok := s.ErrorPolicies[k]; !ok {
 			s.ErrorPolicies[k] = p
 		}
@@ -1028,6 +1325,32 @@ func (s *Store) UpsertErrorPolicy(p ErrorPolicy) {
 	defer s.mu.Unlock()
 	if s.ErrorPolicies == nil {
 		s.ErrorPolicies = map[string]ErrorPolicy{}
+	}
+	// saving a policy explicitly un-hides it
+	if p.Key != "" {
+		out := s.HiddenPolicyKeys[:0]
+		for _, k := range s.HiddenPolicyKeys {
+			if k != p.Key {
+				out = append(out, k)
+			}
+		}
+		s.HiddenPolicyKeys = out
+	}
+	// preserve split_shape / display_msg if panel save omitted them
+	if old, ok := s.ErrorPolicies[p.Key]; ok {
+		if strings.TrimSpace(p.SplitShape) == "" && strings.TrimSpace(old.SplitShape) != "" {
+			p.SplitShape = old.SplitShape
+		}
+		if strings.TrimSpace(p.DisplayMsg) == "" && strings.TrimSpace(old.DisplayMsg) != "" {
+			p.DisplayMsg = old.DisplayMsg
+		}
+		if strings.TrimSpace(p.Note) == "" && strings.TrimSpace(old.Note) != "" {
+			p.Note = old.Note
+		}
+	}
+	// derive split_shape from reason:http_N keys when still empty
+	if strings.TrimSpace(p.SplitShape) == "" && strings.HasPrefix(p.Key, "reason:") {
+		p.SplitShape = strings.TrimPrefix(p.Key, "reason:")
 	}
 	p.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	s.ErrorPolicies[p.Key] = p
@@ -1068,6 +1391,18 @@ func (s *Store) MetricsSnapshot() MetricsFloor {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.Metrics
+}
+
+// SetLastCPAMPFailMS advances the failover backfill watermark (only forward).
+func (s *Store) SetLastCPAMPFailMS(ms int64) {
+	if s == nil || ms <= 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ms > s.Metrics.LastCPAMPFailMS {
+		s.Metrics.LastCPAMPFailMS = ms
+	}
 }
 
 // UpdateQuota writes best-effort per-account quota numbers.
