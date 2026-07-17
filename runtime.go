@@ -16,8 +16,8 @@ import (
 	"github.com/openclaw-local/cpa-xai-sentry/internal/guard"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/panel"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/patrol"
-	"github.com/openclaw-local/cpa-xai-sentry/internal/regjob"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/persist"
+	"github.com/openclaw-local/cpa-xai-sentry/internal/regjob"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/sentrycfg"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/state"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/trash"
@@ -25,12 +25,12 @@ import (
 )
 
 type Runtime struct {
-	mu     sync.Mutex
-	Cfg    sentrycfg.Config
-	State  *state.Store
-	Trash  *trash.Store
-	CPA    *cpaapi.Client
-	Guard  *guard.Guard
+	mu       sync.Mutex
+	Cfg      sentrycfg.Config
+	State    *state.Store
+	Trash    *trash.Store
+	CPA      *cpaapi.Client
+	Guard    *guard.Guard
 	Patrol   *patrol.Runner
 	Register *regjob.Runner
 	Panel    *panel.API
@@ -121,6 +121,7 @@ func (r *Runtime) PersistPanelConfig() error {
 	if cpa != nil {
 		if err := cpa.WritePluginConfig(context.Background(), cfg.HostPluginPatch()); err != nil {
 			hostLog("warn", "host plugin config sync: "+err.Error())
+			return fmt.Errorf("host plugin config sync: %w", err)
 		}
 	}
 	r.mu.Lock()
@@ -198,7 +199,7 @@ func (r *Runtime) rebuild(cfg sentrycfg.Config) error {
 			st.Log(state.ActionLog{At: time.Now(), Source: "register", Action: "register", Reason: msg})
 		}
 	}
-		reg.PoolCounter = func(ctx context.Context) (enabled, cooldown int) {
+	reg.PoolCounter = func(ctx context.Context) (enabled, cooldown int) {
 		// CPA enabled files + sentry cooldown accounts (current cool, not only same-day recover)
 		if r.CPA != nil {
 			files, err := r.CPA.ListAuthFiles(ctx)
@@ -793,4 +794,3 @@ func (r *Runtime) startRegisterTicker() {
 		}
 	}()
 }
-

@@ -191,7 +191,6 @@ func (r *Runner) History() []Status {
 	return out
 }
 
-
 // HistoryPage returns a paginated slice of recent finished jobs.
 // limit=0 means default 10, max 50. offset is 0-based.
 // maxLogs caps logs per job (0 = no logs, -1 = all logs).
@@ -317,7 +316,7 @@ func (r *Runner) runJob(ctx context.Context, mode Mode) {
 
 	// run probes (existing Run feeds HandleUsage with real status/body;
 	// each probe also appends job log live via appendProbeResultLive)
-	results := r.Run(ctx, targets)
+	results := r.RunMode(ctx, targets, mode)
 	alive, cool, sig, errs := 0, 0, 0, 0
 	// cool = free-usage/402 cool-down signals from real probe
 	// sig  = 401/403 auth signals (fed to policy)
@@ -369,16 +368,15 @@ func (r *Runner) runJob(ctx context.Context, mode Mode) {
 	r.appendLog("", "", 0, "info", msg, "done")
 }
 
-
 func (r *Runner) collectTargets(ctx context.Context, mode Mode) []Target {
 	mode = ParseMode(string(mode))
 	out := make([]Target, 0, 64)
 	// Sentry-side buckets for mode filters.
-	blocked := map[string]*state.Account{}   // cool/候删/永禁/垃圾箱 — not "enabled"
-	cooling := map[string]*state.Account{}   // cool-down only
-	permanent := map[string]*state.Account{} // user_manual permanent only
+	blocked := map[string]*state.Account{}    // cool/候删/永禁/垃圾箱 — not "enabled"
+	cooling := map[string]*state.Account{}    // cool-down only
+	permanent := map[string]*state.Account{}  // user_manual permanent only
 	candidates := map[string]*state.Account{} // 候删
-	trashed := map[string]*state.Account{}   // 垃圾箱
+	trashed := map[string]*state.Account{}    // 垃圾箱
 	if r.Guard != nil && r.Guard.State != nil {
 		for _, acc := range r.Guard.State.AccountsSnapshot() {
 			keys := []string{}
@@ -559,7 +557,7 @@ func (r *Runner) appendLog(auth, label string, code int, level, text, action str
 	jobMu.Lock()
 	defer jobMu.Unlock()
 	line := LogLine{
-		At: time.Now().In(time.FixedZone("CST", 8*3600)).Format("15:04:05"),
+		At:   time.Now().In(time.FixedZone("CST", 8*3600)).Format("15:04:05"),
 		Auth: auth, Label: label, Code: code, Level: level, Text: text, Action: action,
 	}
 	jobLogs = append(jobLogs, line)

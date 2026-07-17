@@ -306,7 +306,7 @@ td.num,th.num{text-align:right}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.82</span>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.84</span>
         <span id="cfgTick" class="badge meta-soft">维护每30s</span>
         <span id="cfgPatrol" class="badge meta-soft">巡查关</span>
         <span id="cfgKeyBadge" class="badge meta-soft">密钥—</span>
@@ -1525,7 +1525,7 @@ async function refresh(){
     // keep register top switches in sync with live config (do not rely on opening 配置)
     try{ fillRegForm(CFG); }catch(e){}
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'1.1.82');
+    document.getElementById('ver').textContent='v'+(st.version||'1.1.84');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -1773,7 +1773,7 @@ function policyLogsHTML(key){
         '<td class="ops"><div class="ops-wrap">'+
           '<button type="button" class="xs" data-auth="'+auth+'" onclick="bulkOne(this.getAttribute(\'data-auth\'),\'enable\')">启用</button>'+
           '<button type="button" class="xs warn" data-auth="'+auth+'" onclick="bulkOne(this.getAttribute(\'data-auth\'),\'cooldown\')">冷却</button>'+
-          ((r.can_relogin||(findAccountByAuth(auth)||{}).can_relogin)?('<button type="button" class="xs primary" data-auth="'+auth+'" onclick="reloginOne(this.getAttribute(\'data-auth\'))" title="云端库存号·本地有密码">重登</button>'):'')+
+          (r.can_relogin?('<button type="button" class="xs primary" data-auth="'+auth+'" onclick="reloginOne(this.getAttribute(\'data-auth\'))" title="云端库存号·本地有密码">重登</button>'):'')+
           '<button type="button" class="xs danger" data-auth="'+auth+'" onclick="bulkOne(this.getAttribute(\'data-auth\'),\'disable\')">永久禁用</button>'+
           '<button type="button" class="xs danger" data-auth="'+auth+'" onclick="bulkOne(this.getAttribute(\'data-auth\'),\'trash\')" title="移入垃圾箱（可恢复）">垃圾箱</button>'+
         '</div></td>'+
@@ -2285,8 +2285,11 @@ async function patrolPoll(){
         if(st){
           renderKPIs(st.summary, st.trash_count||0, st.cooldown_stats||{}, st.inventory||{}, st.usage||{});
           fillStateFilter(st.state_filters, st.summary);
-          const prevSel=typeof selectedAuths==='function'? selectedAuths():[];
-          if(st.accounts) renderAccountRows(st.accounts, prevSel);
+          const prevSel=new Set(typeof selectedAuths==='function'? selectedAuths():[]);
+          if(st.accounts){
+            LAST_ACCOUNTS=st.accounts;
+            document.getElementById('accBody').innerHTML=renderAccountRows(st.accounts, prevSel);
+          }
         }
         if(lg&&lg.logs) renderLogs(lg.logs);
       }catch(e){}
@@ -2427,12 +2430,11 @@ async function bulkRelogin(){
 }
 async function reloginOne(auth){
   const a=findAccountByAuth(auth);
-  if(!a||!a.can_relogin){ toast('该账号不是云端可重登号（需本地有密码）'); return; }
   try{
     const body={auths:[auth]};
-    if(a.email) body.emails=[a.email];
+    if(a&&a.email) body.emails=[a.email];
     await j('/register/relogin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    toast('已发起重登 · '+(a.email||auth));
+    toast('已发起重登 · '+((a&&a.email)||auth));
   }catch(e){ toast('重登失败:'+e.message) }
 }
 

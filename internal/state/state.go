@@ -40,8 +40,8 @@ type Account struct {
 	RecoverAt     time.Time      `json:"recover_at"`
 	UpdatedAt     time.Time      `json:"updated_at"`
 	// LastActionAt/LastAction: last sentry action log on this account (cooldown/reopen/...)
-	LastActionAt  time.Time `json:"last_action_at,omitempty"`
-	LastAction    string    `json:"last_action,omitempty"`
+	LastActionAt time.Time `json:"last_action_at,omitempty"`
+	LastAction   string    `json:"last_action,omitempty"`
 	// PendingObserve: after cool/候删 auto-recover (ResetToActive). UI shows「恢复待观察」
 	// until a successful request proves the account is clean. Ladder streaks stay intact.
 	PendingObserve bool `json:"pending_observe,omitempty"`
@@ -88,14 +88,14 @@ type TrashMeta struct {
 }
 
 type Store struct {
-	Version       string                    `json:"version"`
-	Accounts      map[string]*Account       `json:"accounts"`
-	Logs          []ActionLog               `json:"logs"`
-	Trash         []TrashMeta               `json:"trash"`
-	ErrorPolicies map[string]ErrorPolicy    `json:"error_policies"`
+	Version       string                 `json:"version"`
+	Accounts      map[string]*Account    `json:"accounts"`
+	Logs          []ActionLog            `json:"logs"`
+	Trash         []TrashMeta            `json:"trash"`
+	ErrorPolicies map[string]ErrorPolicy `json:"error_policies"`
 	// HiddenPolicyKeys: user 降回未分类'd catalog keys — do not re-seed empty builtin cards.
 	// New real hits of the same class still re-create a card via HandleUsage seed.
-	HiddenPolicyKeys []string                 `json:"hidden_policy_keys,omitempty"`
+	HiddenPolicyKeys []string                  `json:"hidden_policy_keys,omitempty"`
 	Observed         map[string]*ObservedError `json:"observed_errors"`
 	Metrics          MetricsFloor              `json:"metrics"`
 	mu               sync.Mutex
@@ -104,25 +104,25 @@ type Store struct {
 
 // EscalationRule is one tier: when streak/count >= Streak, apply Action.
 type EscalationRule struct {
-	Streak     int    `json:"streak"`               // threshold N
-	Action     string `json:"action"`               // observe|cooldown|candidate|disable|trash
+	Streak      int    `json:"streak"` // threshold N
+	Action      string `json:"action"` // observe|cooldown|candidate|disable|trash
 	CooldownSec int    `json:"cooldown_seconds,omitempty"`
 }
 
 // ErrorPolicy is persisted per-error control (dynamic catalog).
 type ErrorPolicy struct {
-	Key         string           `json:"key"`
-	Label       string           `json:"label"` // 显示名称（用户可改；不再被硬编码覆盖）
+	Key   string `json:"key"`
+	Label string `json:"label"` // 显示名称（用户可改；不再被硬编码覆盖）
 	// DisplayMsg: 报错日志「错误信息」短文案；空则用 HumanMsg 默认。
-	DisplayMsg  string           `json:"display_msg,omitempty"`
+	DisplayMsg string `json:"display_msg,omitempty"`
 	// SplitShape: when set, new unmatched hits with this shape route here (user split).
-	SplitShape  string           `json:"split_shape,omitempty"`
-	Enabled     bool             `json:"enabled"`
-	Action      string           `json:"action"` // legacy single action: observe|cooldown|candidate|trash|disable
-	Threshold   int              `json:"threshold"`
-	CooldownSec int              `json:"cooldown_seconds"`
+	SplitShape  string `json:"split_shape,omitempty"`
+	Enabled     bool   `json:"enabled"`
+	Action      string `json:"action"` // legacy single action: observe|cooldown|candidate|trash|disable
+	Threshold   int    `json:"threshold"`
+	CooldownSec int    `json:"cooldown_seconds"`
 	// CountMode: "streak" (default, success clears) | "total" (accumulate until reset)
-	CountMode   string           `json:"count_mode,omitempty"`
+	CountMode string `json:"count_mode,omitempty"`
 	// Escalations optional multi-tier rules; if empty, Threshold+Action is used as one tier.
 	Escalations []EscalationRule `json:"escalations,omitempty"`
 	NeverTrash  bool             `json:"never_trash"`
@@ -191,15 +191,15 @@ type ErrorHit struct {
 }
 
 type MetricsFloor struct {
-	DayKey              string `json:"day_key"`
-	TokensFloor         int64  `json:"tokens_floor"`
-	CallsFloor          int64  `json:"calls_floor"`
-	BackfillSource      string `json:"backfill_source,omitempty"`
-	BackfillAt          string `json:"backfill_at,omitempty"`
-	LastCPAMPTokens     int64  `json:"last_cpamp_tokens,omitempty"`
-	LastCPAMPCalls      int64  `json:"last_cpamp_calls,omitempty"`
-	LastCPAMPSuccess    int64  `json:"last_cpamp_success,omitempty"`
-	LastCPAMPFailure    int64  `json:"last_cpamp_failure,omitempty"`
+	DayKey           string `json:"day_key"`
+	TokensFloor      int64  `json:"tokens_floor"`
+	CallsFloor       int64  `json:"calls_floor"`
+	BackfillSource   string `json:"backfill_source,omitempty"`
+	BackfillAt       string `json:"backfill_at,omitempty"`
+	LastCPAMPTokens  int64  `json:"last_cpamp_tokens,omitempty"`
+	LastCPAMPCalls   int64  `json:"last_cpamp_calls,omitempty"`
+	LastCPAMPSuccess int64  `json:"last_cpamp_success,omitempty"`
+	LastCPAMPFailure int64  `json:"last_cpamp_failure,omitempty"`
 	// LastCPAMPFailMS watermark for failover failure backfill (usage.sqlite timestamp_ms).
 	LastCPAMPFailMS int64 `json:"last_cpamp_fail_ms,omitempty"`
 }
@@ -272,7 +272,6 @@ func (s *Store) backfillLastActionsFromLogs() {
 func (s *Store) Save() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	fmt.Fprintf(os.Stderr, "[sentry-debug] Save accounts=%d path=%s\n", len(s.Accounts), s.path)
 	return s.saveLocked()
 }
 
@@ -283,15 +282,7 @@ func (s *Store) saveLocked() error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return err
 	}
-	acctCount := len(s.Accounts)
 	b, err := json.MarshalIndent(s, "", "  ")
-	if err == nil {
-		// verify serialized account count
-		var check struct{ Accounts map[string]json.RawMessage `json:"accounts"` }
-		if json.Unmarshal(b, &check) == nil {
-			fmt.Fprintf(os.Stderr, "[sentry-debug] SAVE_VERIFY mem=%d serialized=%d bytes=%d\n", acctCount, len(check.Accounts), len(b))
-		}
-	}
 	if err != nil {
 		return err
 	}
@@ -813,9 +804,6 @@ func (s *Store) SetRecoverAt(authIndex string, at time.Time) {
 func (s *Store) DeleteAccount(authIndex string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.Accounts[authIndex]; ok {
-		fmt.Fprintf(os.Stderr, "[sentry-debug] DELETE_ACCOUNT auth=%s total_before=%d\n", authIndex, len(s.Accounts))
-	}
 	delete(s.Accounts, authIndex)
 }
 
@@ -841,7 +829,6 @@ func (s *Store) AccountsSnapshot() []*Account {
 	}
 	return out
 }
-
 
 func (s *Store) UpdateMeta(authIndex, fileName, email, tierName string) {
 	s.mu.Lock()
@@ -1171,12 +1158,18 @@ func (s *Store) SplitObservedByShape(from, to, newLabel, shape string) (int, err
 		if s.ErrorPolicies != nil {
 			if p, ok := s.ErrorPolicies[from]; ok {
 				p.Key = to
-				if newLabel != "" { p.Label = newLabel }
-				if _, exists := s.ErrorPolicies[to]; !exists { s.ErrorPolicies[to] = p }
+				if newLabel != "" {
+					p.Label = newLabel
+				}
+				if _, exists := s.ErrorPolicies[to]; !exists {
+					s.ErrorPolicies[to] = p
+				}
 				delete(s.ErrorPolicies, from)
 			}
 		}
-		if s.ErrorPolicies == nil { s.ErrorPolicies = map[string]ErrorPolicy{} }
+		if s.ErrorPolicies == nil {
+			s.ErrorPolicies = map[string]ErrorPolicy{}
+		}
 		if _, ok := s.ErrorPolicies[to]; !ok {
 			s.ErrorPolicies[to] = ErrorPolicy{Key: to, Label: newLabel, Enabled: true, Action: "observe", Threshold: 1, Source: "split", Note: "从错误形态拆分"}
 		}
@@ -1504,11 +1497,11 @@ func (s *Store) CooldownStats(now time.Time) map[string]any {
 		}
 	}
 	out := map[string]any{
-		"cooling":         cooling,
-		"pending_suggest": pendingSuggest,
-		"with_quota":      withQuota,
-		"quota_limit_sum": knownLimit,
-		"quota_used_sum":  knownUsed,
+		"cooling":          cooling,
+		"pending_suggest":  pendingSuggest,
+		"with_quota":       withQuota,
+		"quota_limit_sum":  knownLimit,
+		"quota_used_sum":   knownUsed,
 		"quota_remain_sum": knownRemain,
 	}
 	if !earliest.IsZero() {

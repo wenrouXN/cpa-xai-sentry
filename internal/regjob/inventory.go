@@ -157,7 +157,9 @@ func (r *Runner) TryAuth401Relogin(ctx context.Context, email, auth string) (att
 
 	_, err := r.StartRelogin(ctx, []string{email}, "auth_401")
 	if err != nil {
-		return true, "attempted_fail:" + err.Error()
+		// A failed start is not an active relogin attempt; let Guard fall back
+		// to the normal auth_401 candidate path.
+		return false, "attempted_fail:" + err.Error()
 	}
 	return true, "attempted"
 }

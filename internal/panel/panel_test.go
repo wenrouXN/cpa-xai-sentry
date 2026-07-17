@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -28,7 +29,7 @@ func TestTrashListNoTokensAndPurgeConfirm(t *testing.T) {
 	defer srv.Close()
 
 	tok := "tok_panel"
-	raw := []byte("{\"email\":\"a@b.com\",\"access_token\":\""+tok+"\",\"disabled\":false}")
+	raw := []byte("{\"email\":\"a@b.com\",\"access_token\":\"" + tok + "\",\"disabled\":false}")
 	meta := state.TrashMeta{ID: "p1", AuthIndex: "a", FileName: "xai-a.json", Email: "a@b.com", TrashedAt: time.Now()}
 	if err := tr.MoveToTrash(meta, raw, func() error { return nil }); err != nil {
 		t.Fatal(err)
@@ -100,5 +101,31 @@ func TestUIHasCPAMPAccent(t *testing.T) {
 	_, _ = buf.ReadFrom(resp.Body)
 	if !strings.Contains(buf.String(), "#409eff") {
 		t.Fatal("missing CPAMP accent")
+	}
+}
+
+func TestPersistEndpointRedactsRegisterPassword(t *testing.T) {
+	dir := t.TempDir()
+	cfg := sentrycfg.Default()
+	cfg.StatePath = filepath.Join(dir, "state.json")
+	cfg.RegisterPassword = "super-secret-register-password"
+	st := state.New(cfg.StatePath)
+	tr := trash.New(filepath.Join(dir, "trash"), 7, true, st)
+	api := &panel.API{Cfg: &cfg, State: st, Trash: tr, Guard: guard.New(cfg, st, tr, nil)}
+	srv := httptest.NewServer(api.Handler())
+	defer srv.Close()
+	p := filepath.Join(dir, "runtime-overrides.json")
+	if err := os.WriteFile(p, []byte(`{"register_password":"super-secret-register-password","patrol_mode":"enabled"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.Get(srv.URL + "/persist")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b := new(bytes.Buffer)
+	_, _ = b.ReadFrom(resp.Body)
+	if strings.Contains(b.String(), "super-secret-register-password") {
+		t.Fatalf("password leak: %s", b.String())
 	}
 }

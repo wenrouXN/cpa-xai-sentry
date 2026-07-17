@@ -142,12 +142,10 @@ func KeyFromMatch(res match.Result, statusCode int, body ...string) string {
 	if res.Signal == match.SignalPermission403 {
 		return "permission_403"
 	}
-	// status-only collapse for the two builtins when signal empty but HTTP clear
+	// Status-only fallback is safe for 429. A bare 403 is not: gateways,
+	// region blocks and HTML deny pages also use 403 and must remain unmatched.
 	if statusCode == 429 {
 		return "free_usage_429"
-	}
-	if statusCode == 403 {
-		return "permission_403"
 	}
 	// body hint (free-usage / permission) when status weird
 	if len(body) > 0 {
@@ -347,4 +345,3 @@ func sanitize(s string) string {
 func HardNeverTrash(key string) bool {
 	return false
 }
-

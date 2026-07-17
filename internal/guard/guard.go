@@ -2,8 +2,6 @@ package guard
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -19,17 +17,16 @@ import (
 	"github.com/openclaw-local/cpa-xai-sentry/internal/trash"
 )
 
-
 type Guard struct {
-	Cfg      sentrycfg.Config
-	State    *state.Store
+	Cfg   sentrycfg.Config
+	State *state.Store
 	// PatrolRunning, if set, returns true when a patrol job is in progress.
 	// Used to skip pruneDuplicateAccounts during patrol to avoid deleting
 	// accounts that patrol goroutines are still creating.
 	PatrolRunning func() bool
-	Trash    *trash.Store
-	CPA      *cpaapi.Client
-	Resolver *cpaapi.Resolver
+	Trash         *trash.Store
+	CPA           *cpaapi.Client
+	Resolver      *cpaapi.Resolver
 	// mu serializes HandleUsage / Tick / manual ops so cool-down ownership
 	// cannot race with self-heal reopen.
 	mu sync.Mutex
@@ -160,14 +157,11 @@ type UsageEvent struct {
 	Note       string
 	Label      string
 	Model      string // request model when known
+	PatrolMode string // patrol scope; gates privileged recovery
 }
 
 // HandleUsage applies match+policy. source defaults to usage.
 func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
-	// DEBUG: trace patrol calls
-	if ev.Source == "patrol" {
-		fmt.Fprintf(os.Stderr, "[sentry-debug] HandleUsage source=patrol auth=%s file=%s provider=%s status=%d\n", ev.AuthIndex, ev.FileName, ev.Provider, ev.StatusCode)
-	}
 	if !g.Cfg.Enabled || !g.Cfg.SentryEnabled {
 		return nil
 	}
@@ -175,9 +169,6 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 	defer g.mu.Unlock()
 	g.enrichIdentity(ctx, &ev)
 	if !IsXAI(ev.Provider, ev.FileName) && !IsXAI(ev.Provider, ev.AuthIndex) && !IsXAI(ev.Provider, ev.Email) {
-		if ev.Source == "patrol" {
-			fmt.Fprintf(os.Stderr, "[sentry-debug] NOT_XAI provider=%s file=%s auth=%s email=%s\n", ev.Provider, ev.FileName, ev.AuthIndex, ev.Email)
-		}
 		return nil
 	}
 	if ev.Source == "" {
@@ -187,9 +178,6 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 	// (double-publish / retry) — skip full cool path to avoid twin logs + recover stretch.
 	if !(ev.Success || (ev.StatusCode >= 200 && ev.StatusCode < 300)) {
 		if g.shouldDedupeFailUsage(ev) {
-			if ev.Source == "patrol" {
-				fmt.Fprintf(os.Stderr, "[sentry-debug] DEDUPED auth=%s status=%d\n", ev.AuthIndex, ev.StatusCode)
-			}
 			return nil
 		}
 	}
@@ -197,12 +185,7 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 	g.State.UpdateMeta(ev.AuthIndex, ev.FileName, ev.Email, tierName)
 	acc := g.State.Get(ev.AuthIndex)
 	if acc == nil {
-		if ev.Source == "patrol" {
-			fmt.Fprintf(os.Stderr, "[sentry-debug] Touch NEW account auth=%s source=patrol\n", ev.AuthIndex)
-		}
 		acc = g.State.Touch(ev.AuthIndex)
-	} else if ev.Source == "patrol" {
-		fmt.Fprintf(os.Stderr, "[sentry-debug] Touch EXISTING account auth=%s state=%s\n", ev.AuthIndex, acc.State)
 	}
 	// day usage counters (local)
 	loc, _ := time.LoadLocation("Asia/Shanghai")
@@ -241,9 +224,6 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 	}
 
 	res := match.Classify(ev.StatusCode, ev.Body)
-	if ev.Source == "patrol" {
-		fmt.Fprintf(os.Stderr, "[sentry-debug] CLASSIFY auth=%s status=%d signal=%s kind=%s reason=%s body100=%s\n", ev.AuthIndex, ev.StatusCode, res.Signal, res.Kind, res.Reason, func() string { if len(ev.Body)>100 { return ev.Body[:100] }; return ev.Body }())
-	}
 	// best-effort quota parse from failure body
 	q := quota.Parse(ev.Body)
 	if res.Signal == match.SignalFreeUsage429 {
@@ -314,8 +294,6 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 					Signal: res.Signal, ErrorKey: errKey, Streak: streak,
 					Tier: tier.Tier(acc.Tier), Policy: &p,
 				})
-				fmt.Fprintf(os.Stderr, "[sentry-debug] NONE_SIGNAL_POLICY auth=%s key=%s streak=%d disable=%v cool=%v reason=%s\n",
-					ev.AuthIndex, errKey, streak, act.Disable, act.Cooldown, act.Reason)
 			}
 		}
 
@@ -394,9 +372,6 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 		Signal: res.Signal, ErrorKey: errKey, Streak: streak,
 		Tier: tier.Tier(acc.Tier), Policy: polPtr,
 	})
-	if ev.Source == "patrol" && (errKey == "permission_403" || errKey != "permission_403") {
-		fmt.Fprintf(os.Stderr, "[sentry-debug] POLICY_DECIDE auth=%s key=%s streak=%d disable=%v cooldown=%v reason=%s\n", ev.AuthIndex, errKey, streak, act.Disable, act.Cooldown, act.Reason)
-	}
 	// global any_error ladder: if stronger, upgrade act
 	if ap, ok := g.State.GetErrorPolicy("any_error"); ok && ap.Enabled {
 		anyAct := policy.Decide(g.Cfg, policy.Input{
@@ -417,13 +392,7 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 	// Alive → reopenAfterProbeAlive; errors → normal cool/候删/策略阶梯.
 
 	// permanent disable is strongest; skip lighter cool if both somehow set
-		if ev.Source == "patrol" {
-			fmt.Fprintf(os.Stderr, "[sentry-debug] ACT_DISABLE auth=%s disable=%v reason=%s\n", ev.AuthIndex, act.Disable, act.Reason)
-		}
-	fmt.Fprintf(os.Stderr, "[sentry-debug] BEFORE_DISABLE_CHECK auth=%s disable=%v cooldown=%v reason=%s\n", ev.AuthIndex, act.Disable, act.Cooldown, act.Reason)
 	if act.Disable {
-		fmt.Fprintf(os.Stderr, "[sentry-debug] ACT_DISABLE_CHECKED auth=%s disable=%v\n", ev.AuthIndex, act.Disable)
-		fmt.Fprintf(os.Stderr, "[sentry-debug] ACT_DISABLE_TRUE auth=%s reason=%s\n", ev.AuthIndex, act.Reason)
 		if err := g.applyPermanentDisable(ctx, ev, act.Reason); err != nil {
 			return err
 		}
@@ -1203,7 +1172,6 @@ func emailFromXAIFile(name string) string {
 	return ""
 }
 
-
 // shouldProtectDisable reports whether this account's CPA disable must not be auto-opened.
 // Includes cool-down grace: recent cooldown/candidate actions stay protected even if
 // state was briefly wiped (race with concurrent tick).
@@ -1270,13 +1238,14 @@ func (g *Guard) shouldProtectDisable(acc *state.Account, now time.Time) bool {
 const healActiveFileCooldown = 15 * time.Minute
 const fileVerifyWait = 1200 * time.Millisecond // shared by heal open / cool close verify
 const healVerifyWait = fileVerifyWait          // alias
-const healStuckAfter = 3                      // consecutive failed verifies → sticky CPA已禁用
-const reassertLogCooldown = 15 * time.Minute    // cooldown_reassert log rate limit per account
+const healStuckAfter = 3                       // consecutive failed verifies → sticky CPA已禁用
+const reassertLogCooldown = 15 * time.Minute   // cooldown_reassert log rate limit per account
 // reassertSettleAfterCool: after primary cool/candidate/manual_disable, skip 冷却补关.
 // Live 2k logs (v1.1.45): 89% cool→reassert pairs are 30–60s (one tick), p90≈61s,
 // and cooldown_file_still_open=0 — almost all early reasserts are CPA list/hotload lag
 // after ensureAuthDisabled already ran, not real external reopen. 2m covers p90 + margin.
 const reassertSettleAfterCool = 2 * time.Minute
+
 // healSettleAfterOpen: after primary open intent, skip 强制打开 while CPA list settles.
 // Live 2k logs: 88% heal pairs follow manual_enable in 60–120s (p50≈80s); bulk 21:00
 // wave was list lag not sticky closed. 2m mirrors cool-side settle. Exclude
@@ -2142,7 +2111,6 @@ func (g *Guard) pruneDuplicateAccounts() {
 	for _, a := range accs {
 		k := keyOf(a)
 		if k == "" {
-			fmt.Fprintf(os.Stderr, "[sentry-debug] PRUNE_SKIP_EMPTY_KEY auth=%s email=%s file=%s\n", a.AuthIndex, a.Email, a.FileName)
 			continue
 		}
 		if cur, ok := best[k]; !ok {
@@ -2218,11 +2186,11 @@ func (g *Guard) clearStreaksByCountMode(authIndex string) {
 
 // policyActionRank compares policy outcomes for any_error upgrade (higher wins).
 func policyActionRank(a policy.Action) int {
+	if a.Disable {
+		return 50
+	}
 	if a.Trash {
 		return 40
-	}
-	if a.Disable {
-		return 30
 	}
 	if a.Candidate {
 		return 20
@@ -2234,7 +2202,6 @@ func policyActionRank(a policy.Action) int {
 }
 
 func (g *Guard) applyPermanentDisable(ctx context.Context, ev UsageEvent, reason string) error {
-	fmt.Fprintf(os.Stderr, "[sentry-debug] PERM_DISABLE_ENTER auth=%s reason=%s\n", ev.AuthIndex, reason)
 	name := ev.FileName
 	if name == "" || cpaapi.LooksLikeOpaqueID(name) {
 		if acc := g.State.Get(ev.AuthIndex); acc != nil {
@@ -2246,9 +2213,6 @@ func (g *Guard) applyPermanentDisable(ctx context.Context, ev UsageEvent, reason
 	// ownership first (closed loop), then CPA file
 	g.State.SetAccountState(ev.AuthIndex, state.UserManual, "user_manual")
 	g.State.SetRecoverAt(ev.AuthIndex, time.Time{})
-	if a := g.State.Get(ev.AuthIndex); a != nil {
-		fmt.Fprintf(os.Stderr, "[sentry-debug] PERM_DISABLE_SET auth=%s state=%s disable_source=%s\n", ev.AuthIndex, a.State, a.DisableSource)
-	}
 	if name != "" && !cpaapi.LooksLikeOpaqueID(name) {
 		g.State.UpdateMeta(ev.AuthIndex, name, ev.Email, "")
 	}
@@ -2280,12 +2244,21 @@ func (g *Guard) reopenAfterProbeAlive(ctx context.Context, ev UsageEvent) {
 	if acc.State == state.Trashed || acc.State == state.Purged {
 		return
 	}
+	wasCandidate := acc.State == state.CandidateDead
+	// Only real auth_401 candidates have an automatic retry/relogin recovery path.
+	if wasCandidate && acc.LastSignal != string(match.SignalAuth401) {
+		return
+	}
 	wasCool := acc.State == state.CooldownQuota || acc.State == state.CooldownSpending ||
-		acc.State == state.CooldownPermission || acc.State == state.CandidateDead
+		acc.State == state.CooldownPermission || wasCandidate
 	wasPermanent := acc.State == state.UserManual || acc.DisableSource == "user_manual"
 	// cpa_file_disabled sticky still treated as "owned closed" that probe can open
 	if acc.State == state.UserManual && (acc.DisableSource == "cpa_file_disabled" || acc.DisableSource == "cpa_disabled") {
 		wasPermanent = true
+	}
+	// Only an explicit permanent-range patrol may clear a manual permanent lock.
+	if wasPermanent && strings.ToLower(strings.TrimSpace(ev.PatrolMode)) != "permanent" {
+		return
 	}
 	name := ev.FileName
 	if name == "" || cpaapi.LooksLikeOpaqueID(name) {

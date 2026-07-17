@@ -111,7 +111,7 @@ func TestPatrolAliveReopensPermanent(t *testing.T) {
 	g := guard.New(cfg, st, trash.New(filepath.Join(dir, "t"), 7, true, st), cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, dir))
 	_ = g.HandleUsage(context.Background(), guard.UsageEvent{
 		AuthIndex: "perm1", FileName: "xai-perm@lovc.eu.cc.json", Email: "perm@lovc.eu.cc",
-		Provider: "xai", StatusCode: 200, Success: true, Source: "patrol",
+		Provider: "xai", StatusCode: 200, Success: true, Source: "patrol", PatrolMode: "permanent",
 	})
 	acc := st.Get("perm1")
 	if acc.State != state.Active {
@@ -121,6 +121,79 @@ func TestPatrolAliveReopensPermanent(t *testing.T) {
 		t.Fatal("want SetDisabled(false) for permanent alive")
 	}
 	// subsequent policy error should still apply (not stuck permanent forever without re-policy)
+}
+
+func TestPatrolAliveDoesNotReopenPermanentOutsidePermanentMode(t *testing.T) {
+	dir := t.TempDir()
+	var setFalse atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v0/management/auth-files/status" {
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if d, ok := body["disabled"].(bool); ok && !d {
+				setFalse.Add(1)
+			}
+		}
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+	cfg := sentrycfg.Default()
+	cfg.SentryEnabled, cfg.ManagementURL, cfg.ManagementKey = true, srv.URL, "k"
+	st := state.New(filepath.Join(dir, "s.json"))
+	st.Touch("perm-all")
+	st.UpdateMeta("perm-all", "xai-perm-all.json", "perm-all@x.test", "")
+	st.SetAccountState("perm-all", state.UserManual, "user_manual")
+	g := guard.New(cfg, st, trash.New(filepath.Join(dir, "t"), 7, true, st), cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, dir))
+	if err := g.HandleUsage(context.Background(), guard.UsageEvent{
+		AuthIndex: "perm-all", FileName: "xai-perm-all.json", Email: "perm-all@x.test",
+		Provider: "xai", StatusCode: 200, Success: true, Source: "patrol", PatrolMode: "all",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if st.Get("perm-all").State != state.UserManual {
+		t.Fatal("all patrol must not reopen permanent account")
+	}
+	if setFalse.Load() != 0 {
+		t.Fatal("all patrol must not enable permanent auth file")
+	}
+}
+
+func TestPatrolAliveDoesNotReopenNon401Candidate(t *testing.T) {
+	dir := t.TempDir()
+	var setFalse atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v0/management/auth-files/status" {
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if d, ok := body["disabled"].(bool); ok && !d {
+				setFalse.Add(1)
+			}
+		}
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+	cfg := sentrycfg.Default()
+	cfg.SentryEnabled, cfg.ManagementURL, cfg.ManagementKey = true, srv.URL, "k"
+	st := state.New(filepath.Join(dir, "s.json"))
+	st.Touch("cand403")
+	st.UpdateMeta("cand403", "xai-cand403.json", "cand403@x.test", "")
+	st.SetAccountState("cand403", state.CandidateDead, "plugin_auto")
+	st.SetLastSignal("cand403", "permission_403")
+	g := guard.New(cfg, st, trash.New(filepath.Join(dir, "t"), 7, true, st), cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, dir))
+	if err := g.HandleUsage(context.Background(), guard.UsageEvent{
+		AuthIndex: "cand403", FileName: "xai-cand403.json", Email: "cand403@x.test",
+		Provider: "xai", StatusCode: 200, Success: true, Source: "patrol", PatrolMode: "candidate",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if st.Get("cand403").State != state.CandidateDead {
+		t.Fatal("non-401 candidate must remain candidate after patrol alive")
+	}
+	if setFalse.Load() != 0 {
+		t.Fatal("non-401 candidate auth file must remain disabled")
+	}
 }
 
 // Trashed accounts must never be reopened by patrol alive.

@@ -34,7 +34,10 @@ func TestKeyFromMatchOnly429403(t *testing.T) {
 	if k := errorsig.KeyFromMatch(match.Result{Signal: match.SignalFreeUsage429}, 429); k != "free_usage_429" {
 		t.Fatal(k)
 	}
-	if k := errorsig.KeyFromMatch(match.Result{}, 403); k != "permission_403" {
+	if k := errorsig.KeyFromMatch(match.Result{}, 403, `{"error":"Access Denied"}`); k != "unmatched" {
+		t.Fatal(k)
+	}
+	if k := errorsig.KeyFromMatch(match.Result{Signal: match.SignalPermission403}, 403); k != "permission_403" {
 		t.Fatal(k)
 	}
 	if k := errorsig.KeyFromMatch(match.Result{}, 401); k != "unmatched" {

@@ -20,8 +20,8 @@ import (
 	"github.com/openclaw-local/cpa-xai-sentry/internal/match"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/patrol"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/persist"
-	"github.com/openclaw-local/cpa-xai-sentry/internal/regjob"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/quota"
+	"github.com/openclaw-local/cpa-xai-sentry/internal/regjob"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/sentrycfg"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/state"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/trash"
@@ -517,20 +517,16 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			cpampByEmail[strings.ToLower(v.Label)] = v
 		}
 	}
-	regEmails := map[string]bool{}
-	if a.Register != nil && a.Cfg != nil && a.Cfg.RegisterEnabled {
-		regEmails = a.Register.EmailSet(r.Context(), false)
-	}
 	type row struct {
-		AuthIndex       string         `json:"auth_index"`
-		FileName        string         `json:"file_name"`
-		Email           string         `json:"email"`
-		DisplayName     string         `json:"display_name"`
-		Tier            string         `json:"tier"`
-		State           string         `json:"state"`
-		Signal          string         `json:"last_signal"`
-	SignalMsg       string         `json:"signal_msg,omitempty"`
-		CanRelogin      bool           `json:"can_relogin,omitempty"`
+		AuthIndex   string `json:"auth_index"`
+		FileName    string `json:"file_name"`
+		Email       string `json:"email"`
+		DisplayName string `json:"display_name"`
+		Tier        string `json:"tier"`
+		State       string `json:"state"`
+		Signal      string `json:"last_signal"`
+		SignalMsg   string `json:"signal_msg,omitempty"`
+
 		DisableSource   string         `json:"disable_source"`
 		Streaks         map[string]int `json:"streaks,omitempty"`
 		StreakSummary   string         `json:"streak_summary"`
@@ -595,7 +591,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			obsByKey[p.Key] = dm
 		} else if lab := strings.TrimSpace(p.Label); lab != "" {
 			if _, ok := obsByKey[p.Key]; !ok {
-			obsByKey[p.Key] = lab
+				obsByKey[p.Key] = lab
 			}
 		}
 	}
@@ -855,27 +851,21 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		} else if qText != "" {
 			usageMain = qText
 		}
-		canRelogin := false
-		if em := strings.ToLower(strings.TrimSpace(acc.Email)); em != "" && regEmails[em] {
-			canRelogin = true
-		} else if em := strings.ToLower(strings.TrimSpace(display)); em != "" && strings.Contains(em, "@") && regEmails[em] {
-			canRelogin = true
-		}
 		rows = append(rows, row{
-			AuthIndex: acc.AuthIndex, FileName: acc.FileName, Email: acc.Email, DisplayName: display, CanRelogin: canRelogin,
+			AuthIndex: acc.AuthIndex, FileName: acc.FileName, Email: acc.Email, DisplayName: display,
 			Tier: acc.Tier, State: string(acc.State), Signal: acc.LastSignal,
 			DisableSource: acc.DisableSource, Streaks: acc.Streaks, StreakSummary: streakSum,
 			SuggestedAction: act, Reason: reason, RecoverAt: ra, UpdatedAt: ua,
 			RequestAt: reqAt, ActionAt: actAt, LastAction: acc.LastAction, LastActionLabel: logActionZH(acc.LastAction),
 			PendingObserve: acc.PendingObserve,
-			QuotaLimit: qLimit, QuotaUsed: qUsed, QuotaRemaining: qRem,
+			QuotaLimit:     qLimit, QuotaUsed: qUsed, QuotaRemaining: qRem,
 			QuotaSource: qSrc, DayCalls: dayC, DayFailCalls: dayF,
 			DayTokens: dayT, DaySuccess: dayS, DayInputTokens: dayIn, DayOutputTokens: dayOut,
 			TotalCalls: totC, TotalSuccess: totS, TotalFailure: totF, TotalTokens: totT,
 			Recent15:  recent15,
 			QuotaText: usageMain, UsageSource: usageSrc, SuccessRate: rate, DaySuccessRate: dayRate,
 			QuotaRatioText: ratioText,
-			SignalMsg:       obsByKey[acc.LastSignal],
+			SignalMsg:      obsByKey[acc.LastSignal],
 			SortMS:         lastReqMS, ActionMS: actionMS,
 		})
 	}
@@ -960,23 +950,23 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	usage := map[string]any{
-		"day_calls":      dayCalls,
-		"day_fail_calls": dayFails,
-		"day_tokens":     dayTokens,
-		"cpamp_tokens":   m.TokensFloor,
-		"cpamp_calls":    m.CallsFloor,
-		"cpamp_day":      m.DayKey,
-		"cpamp_db":       cpampDB,
-		"cpamp_accounts": len(cpampByAuth),
-		"pool_est":              poolEst,
-		"pool_per_account":      quota.FreeQuotaPerAccount,
-		"pool_xai_total":        xaiN,
-		"pool_enabled":          enabledN,
-		"pool_cooldown":         coolN,
-		"pool_accounts":         poolAccounts,
-		"pool_used":             usedTok,
-		"pool_remaining":        remainTok,
-		"pool_used_pct":         pct,
+		"day_calls":        dayCalls,
+		"day_fail_calls":   dayFails,
+		"day_tokens":       dayTokens,
+		"cpamp_tokens":     m.TokensFloor,
+		"cpamp_calls":      m.CallsFloor,
+		"cpamp_day":        m.DayKey,
+		"cpamp_db":         cpampDB,
+		"cpamp_accounts":   len(cpampByAuth),
+		"pool_est":         poolEst,
+		"pool_per_account": quota.FreeQuotaPerAccount,
+		"pool_xai_total":   xaiN,
+		"pool_enabled":     enabledN,
+		"pool_cooldown":    coolN,
+		"pool_accounts":    poolAccounts,
+		"pool_used":        usedTok,
+		"pool_remaining":   remainTok,
+		"pool_used_pct":    pct,
 		"pool_remaining_pct": func() float64 {
 			v := 100 - pct
 			if v < 0 {
@@ -984,8 +974,8 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			}
 			return v
 		}(),
-		"pool_source":           "日池=(CPA开启+冷却中)×2M；已用=今日token",
-		"pool_note":             "候删/永禁不计入；可接流量≠日池账号（可接=仅CPA开）",
+		"pool_source": "日池=(CPA开启+冷却中)×2M；已用=今日token",
+		"pool_note":   "候删/永禁不计入；可接流量≠日池账号（可接=仅CPA开）",
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":     "cpa-xai-sentry",
@@ -1336,9 +1326,9 @@ func (a *API) handleConfig(w http.ResponseWriter, r *http.Request) {
 		if err := a.persistSwitches(); err != nil {
 			// still return saved live config, but tell UI persist had issues
 			writeJSON(w, 200, map[string]any{
-				"config": a.Cfg.Redact(),
-				"ok": true,
-				"persist_error": err.Error(),
+				"config":          a.Cfg.Redact(),
+				"ok":              true,
+				"persist_error":   err.Error(),
 				"persist_warning": "配置已应用，但写入磁盘/宿主时出错：" + err.Error(),
 			})
 			return
@@ -1377,6 +1367,11 @@ func (a *API) handlePersist(w http.ResponseWriter, r *http.Request) {
 	disk := map[string]any{}
 	if b, err := os.ReadFile(path); err == nil && len(b) > 0 {
 		_ = json.Unmarshal(b, &disk)
+	}
+	for _, key := range []string{"register_password", "management_key", "cpamp_admin_key"} {
+		if _, ok := disk[key]; ok {
+			disk[key] = "********"
+		}
 	}
 	writeJSON(w, 200, map[string]any{
 		"ok":                   true,
@@ -2277,13 +2272,19 @@ func (a *API) handlePatrolStatus(w http.ResponseWriter, r *http.Request) {
 	offset := 0
 	maxLogs := 0 // default: no embedded logs (use separate logs endpoint)
 	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil { limit = n }
+		if n, err := strconv.Atoi(v); err == nil {
+			limit = n
+		}
 	}
 	if v := r.URL.Query().Get("offset"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil { offset = n }
+		if n, err := strconv.Atoi(v); err == nil {
+			offset = n
+		}
 	}
 	if v := r.URL.Query().Get("logs"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil { maxLogs = n }
+		if n, err := strconv.Atoi(v); err == nil {
+			maxLogs = n
+		}
 	}
 	var hist any = []any{}
 	total := 0
@@ -2506,8 +2507,8 @@ func (a *API) handleAccountRecent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
 		"ok": true, "auth": auth, "account": account, "file": file,
 		"limit": limit, "db": path,
-		"events": events, // oldest→newest
-		"actions": acts,  // newest-first action log slice
+		"events":  events, // oldest→newest
+		"actions": acts,   // newest-first action log slice
 	})
 }
 
@@ -2642,7 +2643,7 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 		byKey[p.Key] = row{
 			Key: p.Key, Label: lab, DisplayMsg: strings.TrimSpace(p.DisplayMsg),
 			SplitShape: strings.TrimSpace(p.SplitShape),
-			Enabled: p.Enabled, Action: p.Action,
+			Enabled:    p.Enabled, Action: p.Action,
 			ActionLabel: actionLabel(p.Action), Threshold: p.Threshold, CooldownSec: p.CooldownSec,
 			CountMode: cm, Escalations: esc,
 			NeverTrash: p.NeverTrash, Note: p.Note, Source: p.Source,
@@ -2667,7 +2668,7 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-		// 8788/cloud inventory for relogin button (password-capable accounts)
+	// 8788/cloud inventory for relogin button (password-capable accounts)
 	regEmailSet := map[string]bool{}
 	if a.Register != nil && a.Cfg != nil && a.Cfg.RegisterEnabled {
 		regEmailSet = a.Register.EmailSet(r.Context(), false)
@@ -3136,7 +3137,6 @@ func (a *API) handleBackfill(w http.ResponseWriter, r *http.Request) {
 		"help":    "从 CPAMP 监控分析拉取今日 xAI 汇总，写入用量地板（只升不降），用于对照插件观察数据。",
 	})
 }
-
 
 func (a *API) handleRegisterStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

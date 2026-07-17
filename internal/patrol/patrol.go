@@ -80,6 +80,12 @@ type Result struct {
 // Run probes targets with limited concurrency. Network errors never trash.
 // v1.1.36: each probe appends job log immediately (not only after whole batch).
 func (r *Runner) Run(ctx context.Context, targets []Target) []Result {
+	return r.RunMode(ctx, targets, ModeEnabled)
+}
+
+// RunMode passes the patrol scope into Guard so privileged recovery cannot be
+// triggered by a diagnostic all scan.
+func (r *Runner) RunMode(ctx context.Context, targets []Target, mode Mode) []Result {
 	if len(targets) == 0 {
 		return nil
 	}
@@ -128,6 +134,7 @@ func (r *Runner) Run(ctx context.Context, targets []Target) []Result {
 					Note:       t.Note,
 					Label:      t.Label,
 					Model:      r.Cfg.PatrolModel,
+					PatrolMode: string(ParseMode(string(mode))),
 				})
 			}
 		}()
