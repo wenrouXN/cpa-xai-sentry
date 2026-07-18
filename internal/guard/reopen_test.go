@@ -271,7 +271,7 @@ func TestTickDoesNotReopenMatchedCooldownByFileName(t *testing.T) {
 			// no email field — only name (as some CPA list responses)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"files": []map[string]any{{
-					"name": "xai-5w4ggr8txx@lovc.eu.cc.json",
+					"name":     "xai-5w4ggr8txx@lovc.eu.cc.json",
 					"provider": "xai", "type": "xai", "disabled": true,
 				}},
 			})
@@ -368,13 +368,13 @@ func TestTickProtectsCooldownMatchedByAuthIndex(t *testing.T) {
 		case r.URL.Path == "/v0/management/auth-files" && r.Method == http.MethodGet:
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"files": []map[string]any{{
-					"name": "xai-63p73ccpdz@lovc.eu.cc.json",
-					"id": "xai-63p73ccpdz@lovc.eu.cc.json",
-					"path": "/root/.cli-proxy-api/xai-63p73ccpdz@lovc.eu.cc.json",
+					"name":       "xai-63p73ccpdz@lovc.eu.cc.json",
+					"id":         "xai-63p73ccpdz@lovc.eu.cc.json",
+					"path":       "/root/.cli-proxy-api/xai-63p73ccpdz@lovc.eu.cc.json",
 					"auth_index": "25a0202c2ec35d69",
-					"email": "63p73ccpdz@lovc.eu.cc",
-					"account": "63p73ccpdz@lovc.eu.cc",
-					"provider": "xai", "type": "xai", "disabled": true,
+					"email":      "63p73ccpdz@lovc.eu.cc",
+					"account":    "63p73ccpdz@lovc.eu.cc",
+					"provider":   "xai", "type": "xai", "disabled": true,
 				}},
 			})
 		case r.URL.Path == "/v0/management/auth-files/status":
@@ -559,7 +559,6 @@ func TestTickReassertsOwnedCooldownIfFileEnabled(t *testing.T) {
 	}
 }
 
-
 func TestDefaultReopenForeignDisabledTrue(t *testing.T) {
 	cfg := sentrycfg.Default()
 	if !cfg.ReopenForeignDisabled {
@@ -602,7 +601,6 @@ func TestConservativeTickDoesNotOverwriteCooldown(t *testing.T) {
 		t.Fatalf("cool-down overwritten: state=%s src=%s", acc.State, acc.DisableSource)
 	}
 }
-
 
 func TestAutoTickSkipsForeignScan(t *testing.T) {
 	// v1.1.32+: untracked / sticky CPA已禁用 still manual-only for full foreign scan.

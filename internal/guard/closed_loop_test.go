@@ -84,19 +84,18 @@ func TestClosedLoopCooldownRecover(t *testing.T) {
 	cpa := cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, cfg.AuthDir)
 	g := guard.New(cfg, st, ts, cpa)
 
-	// force 403 cool-down
+	// force 403 cool-down with exact builtin chat permission sample
+	permBody := `{"code":"permission-denied","error":"Access to the chat endpoint is denied. Please ensure you're using the correct credentials."}`
 	err := g.HandleUsage(context.Background(), guard.UsageEvent{
 		Provider: "xai", AuthIndex: "hash1", FileName: "xai-a@x.com.json", Email: "a@x.com",
-		StatusCode: 403, Body: `{"code":"permission-denied","error":"permission denied"}`,
-		Source: "usage",
+		StatusCode: 403, Body: permBody, Source: "usage",
 	})
 	// threshold 3 for 403 builtin - call thrice
 	_ = err
 	for i := 0; i < 3; i++ {
 		_ = g.HandleUsage(context.Background(), guard.UsageEvent{
 			Provider: "xai", AuthIndex: "hash1", FileName: "xai-a@x.com.json", Email: "a@x.com",
-			StatusCode: 403, Body: `{"code":"permission-denied","error":"permission denied"}`,
-			Source: "usage",
+			StatusCode: 403, Body: permBody, Source: "usage",
 		})
 	}
 	acc := st.Get("hash1")

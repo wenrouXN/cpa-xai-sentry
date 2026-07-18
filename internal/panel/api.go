@@ -582,7 +582,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	// policy display_msg overrides (split cards like reason:http_426)
+	// policy display_msg overrides learned/split fingerprint cards
 	for _, p := range a.State.ListErrorPolicies() {
 		if p.Key == "" {
 			continue
@@ -1910,7 +1910,7 @@ func logActionZH(a string) string {
 	}
 }
 
-// signalDisplayZH: 对外展示用「错误码·中文名」，不暴露 reason:http_426 这类内部 key。
+// signalDisplayZH: 对外展示用「错误码·中文名」，不暴露内部指纹 key。
 // 技术 key 仍存 state/last_signal 用于路由，但日志/弹窗只显示中文标题。
 func (a *API) signalDisplayZH(sig string) string {
 	sig = strings.TrimSpace(sig)
@@ -2001,7 +2001,7 @@ func signalHTTPCode(sig string) string {
 	case "permission_403":
 		return "403"
 	}
-	// reason:http_426 / http_426
+	// fingerprint policies can still expose their recorded HTTP status elsewhere
 	s := strings.TrimSpace(sig)
 	s = strings.TrimPrefix(s, "reason:")
 	if strings.HasPrefix(s, "http_") {
@@ -2048,8 +2048,6 @@ func logSignalZHFallback(s string) string {
 		return "凭证失效"
 	case "permission_403":
 		return "权限拒绝"
-	case "reason:http_426", "http_426":
-		return "终端版本过低"
 	case "any_error":
 		return "任意错误"
 	case "unmatched":
@@ -2547,27 +2545,7 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 		}
 		a.State.EnsureBuiltinPolicies(builtins)
 	}
-	// collapse dirty/legacy keys ONLY:
-	//  - free_usage_429:* / permission_403:* → parent
-	//  - bare auth_401/402/404/code:/http_* → unmatched
-	// NEVER touch user reason:* splits or custom keys.
 	changed := false
-	for _, p := range a.State.ListErrorPolicies() {
-		if t, ok := errorsig.CollapseTarget(p.Key); ok && t != p.Key {
-			label := errorsig.LabelOf(t, match.Result{}, 0)
-			if err := a.State.ReclassifyErrorKey(p.Key, t, label); err == nil {
-				changed = true
-			}
-		}
-	}
-	for _, o := range a.State.ListObserved() {
-		if t, ok := errorsig.CollapseTarget(o.Key); ok && t != o.Key {
-			label := errorsig.LabelOf(t, match.Result{}, 0)
-			if err := a.State.ReclassifyErrorKey(o.Key, t, label); err == nil {
-				changed = true
-			}
-		}
-	}
 	// ensure unmatched exists as bucket (observe only)
 	if _, ok := a.State.GetErrorPolicy("unmatched"); !ok {
 		a.State.UpsertErrorPolicy(state.ErrorPolicy{
@@ -3023,9 +3001,6 @@ func (a *API) handleErrorReclassify(w http.ResponseWriter, r *http.Request) {
 			}
 			if in.Shape != "" {
 				pol.SplitShape = in.Shape
-			} else if pol.SplitShape == "" && strings.HasPrefix(in.To, "reason:") {
-				// e.g. reason:http_426 → http_426
-				pol.SplitShape = strings.TrimPrefix(in.To, "reason:")
 			}
 			if pol.DisplayMsg == "" {
 				// keep a useful short msg even if user left blank

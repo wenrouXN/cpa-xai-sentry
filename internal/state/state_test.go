@@ -1,6 +1,7 @@
 package state_test
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -55,6 +56,36 @@ func TestSaveLoad(t *testing.T) {
 	}
 	if len(s2.Logs) != 1 {
 		t.Fatal(len(s2.Logs))
+	}
+}
+
+func TestLoadV1ResetsOnlyErrorEngine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	raw := `{"version":"1","accounts":{"a":{"auth_index":"a","state":"cooldown_quota","last_signal":"http_426","streaks":{"http_426":3},"day_calls":9}},"logs":[{"auth":"a","action":"cooldown"}],"trash":[{"id":"t"}],"error_policies":{"http_426":{"key":"http_426"}},"hidden_policy_keys":["http_426"],"observed_errors":{"http_426":{"key":"http_426","count":2}}}`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := state.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := s.Get("a")
+	if s.Version != "2" || len(s.ErrorPolicies) != 0 || len(s.Observed) != 0 || len(s.HiddenPolicyKeys) != 0 {
+		t.Fatalf("error engine not reset: version=%s policies=%d observed=%d hidden=%d", s.Version, len(s.ErrorPolicies), len(s.Observed), len(s.HiddenPolicyKeys))
+	}
+	if a == nil || a.State != state.CooldownQuota || a.DayCalls != 9 || a.LastSignal != "" || len(a.Streaks) != 0 {
+		t.Fatalf("account migration mismatch: %+v", a)
+	}
+	if len(s.Logs) != 1 || len(s.Trash) != 1 {
+		t.Fatalf("operational history lost: logs=%d trash=%d", len(s.Logs), len(s.Trash))
+	}
+	// re-load from disk: must already be v2 without replaying old catalog
+	s2, err := state.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s2.Version != "2" || len(s2.ErrorPolicies) != 0 {
+		t.Fatalf("migration must be persisted: version=%s policies=%d", s2.Version, len(s2.ErrorPolicies))
 	}
 }
 

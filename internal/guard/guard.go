@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/openclaw-local/cpa-xai-sentry/internal/cpaapi"
+	"github.com/openclaw-local/cpa-xai-sentry/internal/errorfp"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/errorsig"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/match"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/policy"
@@ -86,7 +87,8 @@ func (g *Guard) routeBySplitShape(body string, status int) string {
 	if g.State == nil {
 		return ""
 	}
-	shape, _, suggest := errorsig.ShapeOf(body, status)
+	fp := errorfp.Build(body, status)
+	shape, suggest := fp.Shape, fp.SuggestKey
 	if shape == "" {
 		return ""
 	}
@@ -98,7 +100,6 @@ func (g *Guard) routeBySplitShape(body string, status int) string {
 		if ss != "" && ss == shape {
 			return p.Key
 		}
-		// repair path: split cards often key=reason:http_426 but SplitShape was lost
 		if p.Key == suggest || p.Key == "reason:"+shape || p.Key == shape {
 			return p.Key
 		}
@@ -157,7 +158,6 @@ type UsageEvent struct {
 	Note       string
 	Label      string
 	Model      string // request model when known
-	PatrolMode string // patrol scope; gates privileged recovery
 }
 
 // HandleUsage applies match+policy. source defaults to usage.
@@ -201,9 +201,12 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 
 	if ev.Success || (ev.StatusCode >= 200 && ev.StatusCode < 300) {
 		g.clearStreaksByCountMode(ev.AuthIndex)
-		// closed-loop: successful request while active clears residual error signal
-		// and ends「恢复待观察」→ 正常·可用
-		if acc := g.State.Get(ev.AuthIndex); acc != nil && (acc.State == state.Active || acc.State == "") {
+		// A real success is authoritative. Patrol first reopens any selected account;
+		// then all success paths clear the current error lifecycle.
+		if strings.EqualFold(ev.Source, "patrol") {
+			g.reopenAfterProbeAlive(ctx, ev)
+		}
+		if acc := g.State.Get(ev.AuthIndex); acc != nil {
 			if acc.LastSignal != "" {
 				g.State.SetLastSignal(ev.AuthIndex, "")
 			}
@@ -211,14 +214,9 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 				g.State.ClearPendingObserve(ev.AuthIndex)
 			}
 		}
-		// still try parse remaining from success body if any
-		if q := quota.Parse(ev.Body); q.Limit > 0 || q.Remaining > 0 || q.Used > 0 {
+		// success body may still carry remaining/used quota floors
+		if q := quota.Parse(ev.Body); q.Limit > 0 || q.Remaining > 0 || q.Used > 0 || !q.ResetAt.IsZero() {
 			g.State.UpdateQuota(ev.AuthIndex, q.Limit, q.Used, q.Remaining, q.Source, q.ResetAt)
-		}
-		// v1.1.36: patrol probe alive must reopen cool-down / closed files
-		// (HandleUsage success alone never left cool state or forced CPA enable).
-		if strings.EqualFold(ev.Source, "patrol") {
-			g.reopenAfterProbeAlive(ctx, ev)
 		}
 		return nil
 	}
@@ -233,7 +231,16 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 		g.State.UpdateQuota(ev.AuthIndex, q.Limit, q.Used, q.Remaining, q.Source, q.ResetAt)
 	}
 	errKey := errorsig.KeyFromMatch(res, ev.StatusCode, ev.Body)
-	// User withdrew a builtin class → new hits go to unmatched (can re-split later).
+	_, fingerprintLabel, suggestedKey := errorsig.ShapeOf(ev.Body, ev.StatusCode)
+	// Classification is driven by the normalized actual response fingerprint.
+	// A saved split/merge mapping wins; otherwise the fingerprint itself becomes
+	// the learned class. HTTP status alone never decides the class.
+	if k := g.routeBySplitShape(ev.Body, ev.StatusCode); k != "" {
+		errKey = k
+	} else if suggestedKey != "" {
+		errKey = suggestedKey
+	}
+	// User withdrew a class → new hits go to unmatched until explicitly merged/split again.
 	if g.State != nil && g.State.IsPolicyHidden(errKey) {
 		errKey = "unmatched"
 	}
@@ -244,6 +251,12 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 		}
 	}
 	label := errorsig.LabelOf(errKey, res, ev.StatusCode)
+	if strings.HasPrefix(errKey, "reason:fp_") && fingerprintLabel != "" {
+		label = fingerprintLabel
+	}
+	// The normalized fingerprint/class is the source of truth for logs and state.
+	// Signal remains classifier metadata used for default cooldown subtype only.
+	res.Reason = errKey
 	// always learn/observe errors into dynamic catalog (even unmatched)
 	// keep enough of body to retain tokens (actual/limit) for UI/quota rehydration
 	sample := ev.Body
@@ -278,14 +291,14 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 	}
 
 	if res.Signal == match.SignalNone {
-		// 426 / 网络类等无内置 Signal：仍可能被拆分成 reason:http_426 等策略卡。
-		// 旧逻辑只 Observe + any_error 就 return，导致拆分类阶梯永远不触发。
+		// Non-builtin fingerprints use the same policy engine as builtins.
+		g.beginFingerprintRun(ev.AuthIndex, errKey)
 		g.State.SetLastSignal(ev.AuthIndex, errKey)
 		anyStreak := g.State.IncStreak(ev.AuthIndex, "any_error")
 		var act policy.Action
 		var polPtr *state.ErrorPolicy
 
-		// 1) 具体拆分类 / 已路由策略（如 reason:http_426）
+		// 1) 具体指纹类 / 已路由策略
 		if errKey != "" && errKey != "unmatched" && errKey != "any_error" {
 			streak := g.State.IncStreak(ev.AuthIndex, errKey)
 			if p, ok := g.State.GetErrorPolicy(errKey); ok {
@@ -350,14 +363,10 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 		_ = g.State.Save()
 		return nil
 	}
-	if res.Kind == match.KindQuota {
-		g.State.ClearAuthStreaks(ev.AuthIndex)
-	}
-
+	// The policy streak belongs to the actual classified fingerprint, not merely
+	// to HTTP status/signal. Changing error shape starts a new consecutive run.
 	streakKey := errKey
-	if res.Signal != match.SignalNone {
-		streakKey = string(res.Signal)
-	}
+	g.beginFingerprintRun(ev.AuthIndex, streakKey)
 	streak := g.State.IncStreak(ev.AuthIndex, streakKey)
 	// any_error: consecutive failures of any kind (cleared on success with streak mode)
 	anyStreak := g.State.IncStreak(ev.AuthIndex, "any_error")
@@ -557,12 +566,13 @@ func (g *Guard) applyCooldown(ctx context.Context, ev UsageEvent, res match.Resu
 			recoverAt = maxAt
 		}
 	}
-	// Prefer primary classified signal over empty (any_error cool path).
-	sig := string(res.Signal)
-	if sig == "" || sig == "none" {
-		if acc != nil && acc.LastSignal != "" && acc.LastSignal != "any_error" {
-			sig = acc.LastSignal
-		}
+	// LastSignal is already the resolved fingerprint/class set by the caller.
+	sig := ""
+	if cur := g.State.Get(ev.AuthIndex); cur != nil {
+		sig = cur.LastSignal
+	}
+	if sig == "" || sig == "any_error" {
+		sig = string(res.Signal)
 	}
 	if sig != "" && sig != "any_error" {
 		g.State.SetLastSignal(ev.AuthIndex, sig)
@@ -586,7 +596,7 @@ func (g *Guard) applyCooldown(ctx context.Context, ev UsageEvent, res match.Resu
 	g.State.SetRecoverAt(ev.AuthIndex, recoverAt)
 	// stamp last action early (before Log) so grace window covers SetDisabled latency
 	g.State.Log(state.ActionLog{
-		Auth: ev.AuthIndex, Source: ev.Source, Signal: string(res.Signal),
+		Auth: ev.AuthIndex, Source: ev.Source, Signal: sig,
 		Action: "cooldown", Reason: res.Reason,
 	})
 	_ = g.State.Save() // persist ownership before file I/O so concurrent ticks see it
@@ -663,6 +673,12 @@ func (g *Guard) shouldDedupeFailUsage(ev UsageEvent) bool {
 	}
 	acc := g.State.Get(ev.AuthIndex)
 	if acc == nil || acc.LastActionAt.IsZero() {
+		return false
+	}
+	// Deduplicate only the same normalized response shape. A changed real error
+	// must pass through immediately even if the previous action was seconds ago.
+	_, _, incomingKey := errorsig.ShapeOf(ev.Body, ev.StatusCode)
+	if incomingKey != "" && acc.LastSignal != "" && incomingKey != acc.LastSignal {
 		return false
 	}
 	age := g.Now().Sub(acc.LastActionAt)
@@ -2165,6 +2181,20 @@ func (g *Guard) resolveFileName(ctx context.Context, authIndex, fileName, email 
 	return name
 }
 
+func (g *Guard) beginFingerprintRun(authIndex, key string) {
+	if g.State == nil || authIndex == "" || key == "" {
+		return
+	}
+	acc := g.State.Get(authIndex)
+	if acc == nil || acc.LastSignal == "" || acc.LastSignal == key || acc.LastSignal == "any_error" {
+		return
+	}
+	// Historical totals remain in ObservedError.Count/Hits. Account streaks are
+	// the current consecutive lifecycle. Preserve only the global any_error run;
+	// the previous primary shape is no longer consecutive.
+	g.State.ClearAuthStreaksExcept(authIndex, map[string]bool{"any_error": true})
+}
+
 // clearStreaksByCountMode clears streaks for keys using streak mode; keeps total-mode counters.
 func (g *Guard) clearStreaksByCountMode(authIndex string) {
 	if g.State == nil {
@@ -2240,25 +2270,16 @@ func (g *Guard) reopenAfterProbeAlive(ctx context.Context, ev UsageEvent) {
 	if acc == nil {
 		acc = g.State.Touch(ev.AuthIndex)
 	}
-	// trash: never auto-restore from probe
+	// Trash/purged is destructive storage state, not a schedulable patrol state.
 	if acc.State == state.Trashed || acc.State == state.Purged {
 		return
 	}
-	wasCandidate := acc.State == state.CandidateDead
-	// Only real auth_401 candidates have an automatic retry/relogin recovery path.
-	if wasCandidate && acc.LastSignal != string(match.SignalAuth401) {
-		return
-	}
 	wasCool := acc.State == state.CooldownQuota || acc.State == state.CooldownSpending ||
-		acc.State == state.CooldownPermission || wasCandidate
+		acc.State == state.CooldownPermission || acc.State == state.CandidateDead
 	wasPermanent := acc.State == state.UserManual || acc.DisableSource == "user_manual"
-	// cpa_file_disabled sticky still treated as "owned closed" that probe can open
+	// cpa_file_disabled sticky still treated as an owned closed file that probe can open.
 	if acc.State == state.UserManual && (acc.DisableSource == "cpa_file_disabled" || acc.DisableSource == "cpa_disabled") {
 		wasPermanent = true
-	}
-	// Only an explicit permanent-range patrol may clear a manual permanent lock.
-	if wasPermanent && strings.ToLower(strings.TrimSpace(ev.PatrolMode)) != "permanent" {
-		return
 	}
 	name := ev.FileName
 	if name == "" || cpaapi.LooksLikeOpaqueID(name) {

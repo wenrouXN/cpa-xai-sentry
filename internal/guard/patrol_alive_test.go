@@ -111,7 +111,7 @@ func TestPatrolAliveReopensPermanent(t *testing.T) {
 	g := guard.New(cfg, st, trash.New(filepath.Join(dir, "t"), 7, true, st), cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, dir))
 	_ = g.HandleUsage(context.Background(), guard.UsageEvent{
 		AuthIndex: "perm1", FileName: "xai-perm@lovc.eu.cc.json", Email: "perm@lovc.eu.cc",
-		Provider: "xai", StatusCode: 200, Success: true, Source: "patrol", PatrolMode: "permanent",
+		Provider: "xai", StatusCode: 200, Success: true, Source: "patrol",
 	})
 	acc := st.Get("perm1")
 	if acc.State != state.Active {
@@ -123,7 +123,7 @@ func TestPatrolAliveReopensPermanent(t *testing.T) {
 	// subsequent policy error should still apply (not stuck permanent forever without re-policy)
 }
 
-func TestPatrolAliveDoesNotReopenPermanentOutsidePermanentMode(t *testing.T) {
+func TestPatrolAliveReopensPermanentFromAnySelectedRange(t *testing.T) {
 	dir := t.TempDir()
 	var setFalse atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -147,19 +147,19 @@ func TestPatrolAliveDoesNotReopenPermanentOutsidePermanentMode(t *testing.T) {
 	g := guard.New(cfg, st, trash.New(filepath.Join(dir, "t"), 7, true, st), cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, dir))
 	if err := g.HandleUsage(context.Background(), guard.UsageEvent{
 		AuthIndex: "perm-all", FileName: "xai-perm-all.json", Email: "perm-all@x.test",
-		Provider: "xai", StatusCode: 200, Success: true, Source: "patrol", PatrolMode: "all",
+		Provider: "xai", StatusCode: 200, Success: true, Source: "patrol",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if st.Get("perm-all").State != state.UserManual {
-		t.Fatal("all patrol must not reopen permanent account")
+	if st.Get("perm-all").State != state.Active {
+		t.Fatal("a selected permanent account with real 2xx must become active")
 	}
-	if setFalse.Load() != 0 {
-		t.Fatal("all patrol must not enable permanent auth file")
+	if setFalse.Load() == 0 {
+		t.Fatal("a selected permanent account with real 2xx must enable auth file")
 	}
 }
 
-func TestPatrolAliveDoesNotReopenNon401Candidate(t *testing.T) {
+func TestPatrolAliveReopensCandidateRegardlessOfPreviousError(t *testing.T) {
 	dir := t.TempDir()
 	var setFalse atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -184,15 +184,53 @@ func TestPatrolAliveDoesNotReopenNon401Candidate(t *testing.T) {
 	g := guard.New(cfg, st, trash.New(filepath.Join(dir, "t"), 7, true, st), cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, dir))
 	if err := g.HandleUsage(context.Background(), guard.UsageEvent{
 		AuthIndex: "cand403", FileName: "xai-cand403.json", Email: "cand403@x.test",
-		Provider: "xai", StatusCode: 200, Success: true, Source: "patrol", PatrolMode: "candidate",
+		Provider: "xai", StatusCode: 200, Success: true, Source: "patrol",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if st.Get("cand403").State != state.CandidateDead {
-		t.Fatal("non-401 candidate must remain candidate after patrol alive")
+	if st.Get("cand403").State != state.Active {
+		t.Fatal("a selected candidate with real 2xx must become active")
 	}
-	if setFalse.Load() != 0 {
-		t.Fatal("non-401 candidate auth file must remain disabled")
+	if setFalse.Load() == 0 {
+		t.Fatal("a selected candidate with real 2xx must enable auth file")
+	}
+}
+
+func TestErrorShapeChangeStartsNewLifecycle(t *testing.T) {
+	dir := t.TempDir()
+	cfg := sentrycfg.Default()
+	cfg.SentryEnabled = true
+	cfg.AutoCooldown = false
+	st := state.New(filepath.Join(dir, "s.json"))
+	g := guard.New(cfg, st, trash.New(filepath.Join(dir, "t"), 7, true, st), nil)
+	permission := `{"code":"permission-denied","error":"Access to the chat endpoint is denied."}`
+	gateway := `{"error":"Access Denied"}`
+	for i := 0; i < 2; i++ {
+		if err := g.HandleUsage(context.Background(), guard.UsageEvent{
+			AuthIndex: "shape-switch", FileName: "xai-shape-switch.json", Provider: "xai",
+			StatusCode: 403, Body: permission, Source: "usage",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if st.Get("shape-switch").Streaks["permission_403"] != 2 {
+		t.Fatalf("permission streak=%v", st.Get("shape-switch").Streaks)
+	}
+	if err := g.HandleUsage(context.Background(), guard.UsageEvent{
+		AuthIndex: "shape-switch", FileName: "xai-shape-switch.json", Provider: "xai",
+		StatusCode: 403, Body: gateway, Source: "usage",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	acc := st.Get("shape-switch")
+	if acc.LastSignal == "permission_403" {
+		t.Fatalf("shape change must change current signal: %+v", acc)
+	}
+	if acc.Streaks[acc.LastSignal] != 1 {
+		t.Fatalf("new shape must start streak at 1: %+v", acc.Streaks)
+	}
+	if acc.Streaks["permission_403"] != 0 {
+		t.Fatalf("old consecutive streak must clear: %+v", acc.Streaks)
 	}
 }
 

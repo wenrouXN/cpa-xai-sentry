@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/openclaw-local/cpa-xai-sentry/internal/errorfp"
 )
 
 type AccountState string
@@ -25,6 +27,7 @@ const (
 )
 
 const Owner = "cpa_xai_sentry"
+const schemaVersion = "2"
 
 type Account struct {
 	AuthIndex     string         `json:"auth_index"`
@@ -210,7 +213,7 @@ const errorHitRetention = 7 * 24 * time.Hour
 
 func New(path string) *Store {
 	return &Store{
-		Version:       "1",
+		Version:       schemaVersion,
 		Accounts:      map[string]*Account{},
 		Logs:          nil,
 		Trash:         nil,
@@ -235,6 +238,24 @@ func Load(path string) (*Store, error) {
 	if err := json.Unmarshal(b, s); err != nil {
 		return nil, err
 	}
+	// v2 deliberately starts the error engine from a clean model. Operational
+	// account state, usage, logs and trash survive; old classifier output and
+	// policy routing do not.
+	migrated := false
+	if s.Version != schemaVersion {
+		s.Version = schemaVersion
+		s.ErrorPolicies = map[string]ErrorPolicy{}
+		s.Observed = map[string]*ObservedError{}
+		s.HiddenPolicyKeys = nil
+		for _, a := range s.Accounts {
+			if a == nil {
+				continue
+			}
+			a.LastSignal = ""
+			a.Streaks = map[string]int{}
+		}
+		migrated = true
+	}
 	if s.Accounts == nil {
 		s.Accounts = map[string]*Account{}
 	}
@@ -244,15 +265,14 @@ func Load(path string) (*Store, error) {
 	if s.Observed == nil {
 		s.Observed = map[string]*ObservedError{}
 	}
-	// v1.1.52: strip historical hard never_trash so trash follows panel ladder only
-	for k, p := range s.ErrorPolicies {
-		if p.NeverTrash {
-			p.NeverTrash = false
-			s.ErrorPolicies[k] = p
-		}
-	}
 	s.path = path
 	s.backfillLastActionsFromLogs()
+	if migrated && path != "" {
+		// persist clean schema immediately so restart does not re-migrate
+		if err := s.Save(); err != nil {
+			return s, err
+		}
+	}
 	return s, nil
 }
 
@@ -1035,12 +1055,24 @@ func (s *Store) ReclassifyErrorKey(from, to, newLabel string) error {
 		dst.Hits = dst.Hits[len(dst.Hits)-maxErrorHits:]
 	}
 	delete(s.Observed, from)
-	// move/drop policy
+	// move/drop policy; when destination already exists, still keep source SplitShape
+	// so future fingerprints continue to route to the merged card.
 	if s.ErrorPolicies != nil {
 		if p, ok := s.ErrorPolicies[from]; ok {
 			delete(s.ErrorPolicies, from)
 			if to != "unmatched" {
-				if _, exists := s.ErrorPolicies[to]; !exists {
+				if dest, exists := s.ErrorPolicies[to]; exists {
+					if strings.TrimSpace(dest.SplitShape) == "" && strings.TrimSpace(p.SplitShape) != "" {
+						dest.SplitShape = p.SplitShape
+					}
+					if strings.TrimSpace(dest.DisplayMsg) == "" && strings.TrimSpace(p.DisplayMsg) != "" {
+						dest.DisplayMsg = p.DisplayMsg
+					}
+					if newLabel != "" {
+						dest.Label = newLabel
+					}
+					s.ErrorPolicies[to] = dest
+				} else {
 					p.Key = to
 					if newLabel != "" {
 						p.Label = newLabel
@@ -1239,42 +1271,9 @@ func (s *Store) SplitObservedByShape(from, to, newLabel, shape string) (int, err
 	return len(moved), nil
 }
 
-// shape helper without importing errorsig (avoid cycle) — keep in sync with errorsig.ShapeOf.
 func shapeOfLocked(sample string, status int) (shape, label, key string) {
-	// Unescape common HTML entities so &#34; etc. don't break keyword match.
-	s := strings.NewReplacer(
-		"&#34;", `"`, "&quot;", `"`, "&#39;", "'", "&apos;", "'",
-		"&lt;", "<", "&gt;", ">", "&amp;", "&",
-	).Replace(sample)
-	low := strings.ToLower(s + " " + sample)
-	switch {
-	case strings.Contains(low, "free-usage") || strings.Contains(low, "free_usage") || status == 429:
-		return "free_usage_429", "429·免费额度用尽", "free_usage_429"
-	case strings.Contains(low, "spending-limit") || strings.Contains(low, "run out of credits") || status == 402:
-		return "spending_402", "消费限额", "reason:spending_limit_402"
-	case strings.Contains(low, "permission-denied") || strings.Contains(low, "access to the chat endpoint is denied") || status == 403:
-		return "permission_403", "403·权限拒绝", "permission_403"
-	case strings.Contains(low, "authentication required") || strings.Contains(low, "unauthorized") || status == 401:
-		return "auth_401", "凭证失效", "reason:auth_401"
-	case strings.Contains(low, "eof"):
-		return "net_eof", "连接中断", "reason:net_eof"
-	case strings.Contains(low, "timeout"):
-		return "net_timeout", "请求超时", "reason:net_timeout"
-	case strings.Contains(low, "cpa") && strings.Contains(low, "disabled"):
-		return "cpa_disabled", "CPA文件已禁用", "reason:cpa_disabled"
-	case status == 404 || strings.Contains(low, "404 not found"):
-		return "http_404", "路径/网关 404", "reason:http_404"
-	case status > 0:
-		return fmt.Sprintf("http_%d", status), fmt.Sprintf("HTTP %d", status), fmt.Sprintf("reason:http_%d", status)
-	default:
-		fp := sample
-		if len(fp) > 40 {
-			fp = fp[:40]
-		}
-		fp = strings.ToLower(strings.TrimSpace(fp))
-		fp = strings.ReplaceAll(fp, " ", "_")
-		return "msg:" + fp, "未分类片段", "reason:msg"
-	}
+	fp := errorfp.Build(sample, status)
+	return fp.Shape, fp.Message, fp.SuggestKey
 }
 
 func (s *Store) ListObserved() []ObservedError {
@@ -1341,8 +1340,8 @@ func (s *Store) UpsertErrorPolicy(p ErrorPolicy) {
 			p.Note = old.Note
 		}
 	}
-	// derive split_shape from reason:http_N keys when still empty
-	if strings.TrimSpace(p.SplitShape) == "" && strings.HasPrefix(p.Key, "reason:") {
+	// derive split_shape only for fingerprint keys (reason:fp_*)
+	if strings.TrimSpace(p.SplitShape) == "" && strings.HasPrefix(p.Key, "reason:fp_") {
 		p.SplitShape = strings.TrimPrefix(p.Key, "reason:")
 	}
 	p.UpdatedAt = time.Now().UTC().Format(time.RFC3339)

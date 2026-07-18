@@ -9,7 +9,7 @@ func TestSnapshotLogsPageNewestFirst(t *testing.T) {
 	s := New("")
 	base := time.Date(2026, 7, 14, 10, 0, 0, 0, time.FixedZone("CST", 8*3600))
 	for i := 0; i < 5; i++ {
-		s.Log(ActionLog{At: base.Add(time.Duration(i) * time.Minute), Action: "a", Auth: "x", Reason: string(rune('0'+i))})
+		s.Log(ActionLog{At: base.Add(time.Duration(i) * time.Minute), Action: "a", Auth: "x", Reason: string(rune('0' + i))})
 	}
 	page, total := s.SnapshotLogsPage(0, 2)
 	if total != 5 {

@@ -83,9 +83,9 @@ func (r *Runner) Run(ctx context.Context, targets []Target) []Result {
 	return r.RunMode(ctx, targets, ModeEnabled)
 }
 
-// RunMode passes the patrol scope into Guard so privileged recovery cannot be
-// triggered by a diagnostic all scan.
-func (r *Runner) RunMode(ctx context.Context, targets []Target, mode Mode) []Result {
+// RunMode keeps mode selection at target collection; once selected, every real
+// result follows the same Guard state machine.
+func (r *Runner) RunMode(ctx context.Context, targets []Target, _ Mode) []Result {
 	if len(targets) == 0 {
 		return nil
 	}
@@ -134,7 +134,6 @@ func (r *Runner) RunMode(ctx context.Context, targets []Target, mode Mode) []Res
 					Note:       t.Note,
 					Label:      t.Label,
 					Model:      r.Cfg.PatrolModel,
-					PatrolMode: string(ParseMode(string(mode))),
 				})
 			}
 		}()

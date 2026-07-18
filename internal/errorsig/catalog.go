@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openclaw-local/cpa-xai-sentry/internal/errorfp"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/match"
 )
 
@@ -74,61 +75,12 @@ func IsBuiltinCatalogKey(key string) bool {
 	}
 }
 
-// CollapseTarget returns where a dirty/legacy key should be merged, if at all.
-// User-created split keys (reason:*, custom labels) are NEVER collapsed.
-//
-// Rules:
-//   - free_usage_429:<suffix> → free_usage_429
-//   - permission_403:<suffix> → permission_403
-//   - legacy bare builtins (auth_401, spending_limit_402, http_404, …) → unmatched
-//   - reason:… / user custom keys → keep (ok=false)
-//   - free_usage_429 / permission_403 / any_error / unmatched → keep
-func CollapseTarget(key string) (target string, ok bool) {
-	key = strings.TrimSpace(key)
-	if key == "" {
-		return "unmatched", true
-	}
-	switch key {
-	case "any_error", "unmatched", "free_usage_429", "permission_403":
-		return "", false
-	}
-	// User splits use reason: / custom names — never auto-merge.
-	if strings.HasPrefix(key, "reason:") {
-		return "", false
-	}
-	if i := strings.IndexByte(key, ':'); i > 0 {
-		parent := key[:i]
-		if parent == "free_usage_429" || parent == "permission_403" {
-			return parent, true
-		}
-		// code:invalid-argument and similar legacy → unmatched
-		if parent == "code" || parent == "http" || parent == "msg" {
-			return "unmatched", true
-		}
-		// unknown parent:suffix (user custom) → keep
-		return "", false
-	}
-	// bare legacy keys
-	switch key {
-	case "auth_401", "spending_limit_402", "http_404", "http_401", "http_0_disabled":
-		return "unmatched", true
-	}
-	if strings.HasPrefix(key, "http_") {
-		return "unmatched", true
-	}
-	// bare custom key → keep
-	return "", false
-}
-
-// NormalizeCatalogKey is kept for display fallbacks: only forces known builtins/unmatched.
-// Does NOT rewrite user split keys (reason:…).
+// NormalizeCatalogKey only fills an empty key. v2 never rewrites persisted
+// classifier keys; split/merge is explicit user state.
 func NormalizeCatalogKey(key string) string {
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return "unmatched"
-	}
-	if t, ok := CollapseTarget(key); ok {
-		return t
 	}
 	return key
 }
@@ -167,8 +119,6 @@ func LabelOf(key string, res match.Result, statusCode int) string {
 		return "免费额度用尽"
 	case "permission_403":
 		return "权限拒绝"
-	case "reason:http_426", "http_426":
-		return "终端版本过低"
 	case "unmatched":
 		return "未分类错误"
 	case "any_error":
@@ -253,43 +203,13 @@ func HumanMsg(key, sample string, status int) string {
 	return s
 }
 
-// ShapeOf returns a stable fingerprint for splitting unmatched errors.
-// Suggest keys stay under reason:/shape — never auto-create sibling 403/429 cards.
+// ShapeOf returns a stable fingerprint from the actual response shape.
+// HTTP status is one component, never the whole identity. Known builtins retain
+// their stable keys; every other shape gets reason:fp_<hash> so 403/402/etc.
+// samples remain independently split/mergeable.
 func ShapeOf(sample string, status int) (shape, label, suggestKey string) {
-	msg := HumanMsg("", sample, status)
-	low := strings.ToLower(sample + " " + msg)
-	switch {
-	case strings.Contains(low, "连接中断") || strings.Contains(low, "eof"):
-		return "net_eof", "连接中断", "reason:net_eof"
-	case strings.Contains(low, "timeout") || strings.Contains(low, "超时"):
-		return "net_timeout", "请求超时", "reason:net_timeout"
-	case strings.Contains(low, "cpa") && strings.Contains(low, "disabled"):
-		return "cpa_disabled", "CPA文件已禁用", "reason:cpa_disabled"
-	case strings.Contains(low, "region"):
-		return "region_block", "区域限制", "reason:region_block"
-	case status == 402 || strings.Contains(low, "spending-limit") || strings.Contains(low, "消费限额") || strings.Contains(low, "run out of credits"):
-		return "spending_402", "消费限额", "reason:spending_limit_402"
-	case status == 401 || strings.Contains(low, "凭证失效") || strings.Contains(low, "authentication"):
-		return "auth_401", "凭证失效", "reason:auth_401"
-	case status == 404:
-		return "http_404", "路径/网关 404", "reason:http_404"
-	case status == 429 || strings.Contains(low, "free-usage") || strings.Contains(low, "免费额度"):
-		// should already be free_usage_429 catalog; if under unmatched, suggest merge back
-		return "free_usage_429", "免费额度用尽", "free_usage_429"
-	case status == 403 || strings.Contains(low, "权限拒绝") || strings.Contains(low, "permission"):
-		return "permission_403", "权限拒绝", "permission_403"
-	case status == 426 || strings.Contains(low, "cli version") || (strings.Contains(low, "outdated") && strings.Contains(low, "grok")):
-		// stable shape so user split + routeBySplitShape keep matching
-		return "http_426", "终端版本过低", "reason:http_426"
-	case status > 0:
-		return fmt.Sprintf("http_%d", status), fmt.Sprintf("HTTP %d", status), fmt.Sprintf("reason:http_%d", status)
-	default:
-		fp := msg
-		if len(fp) > 40 {
-			fp = fp[:40]
-		}
-		return "msg:" + sanitize(fp), msg, "reason:" + sanitize(fp)
-	}
+	fp := errorfp.Build(sample, status)
+	return fp.Shape, HumanMsg("", sample, status), fp.SuggestKey
 }
 
 func htmlUnescape(s string) string {

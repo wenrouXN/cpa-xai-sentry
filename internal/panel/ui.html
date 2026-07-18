@@ -306,7 +306,7 @@ td.num,th.num{text-align:right}
   <div class="top">
     <div>
       <div class="eyebrow">xAI 额度哨兵</div>
-      <h1>XAI 哨兵 <span id="ver" class="badge">v1.1.84</span>
+      <h1>XAI 哨兵 <span id="ver" class="badge">v1.2.0</span>
         <span id="cfgTick" class="badge meta-soft">维护每30s</span>
         <span id="cfgPatrol" class="badge meta-soft">巡查关</span>
         <span id="cfgKeyBadge" class="badge meta-soft">密钥—</span>
@@ -1525,7 +1525,7 @@ async function refresh(){
     // keep register top switches in sync with live config (do not rely on opening 配置)
     try{ fillRegForm(CFG); }catch(e){}
     modeBadge(st.mode, st.mode_label||st.mode);
-    document.getElementById('ver').textContent='v'+(st.version||'1.1.84');
+    document.getElementById('ver').textContent='v'+(st.version||'1.2.0');
     syncMaskBtn();
     document.getElementById('updatedAt').textContent=(st.updated_at||'-').replace('T',' ').replace('Z','');
     const cool=st.cooldown_stats||{};
@@ -2050,9 +2050,9 @@ async function saveErrorKey(key, silent){
       key:e.key,label,display_msg,enabled,action,threshold,cooldown_seconds:cooldown,
       count_mode, escalations, never_trash:never, note, source:e.source||'user'
     };
-    // keep split routing fingerprint (otherwise 426 等拆分类保存后失效)
+    // keep split routing fingerprint for reason:fp_* cards
     if(e.split_shape) body.split_shape=e.split_shape;
-    else if(String(e.key||'').startsWith('reason:')) body.split_shape=String(e.key).slice('reason:'.length);
+    else if(String(e.key||'').startsWith('reason:fp_')) body.split_shape=String(e.key).slice('reason:'.length);
     await j('/errors/policy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     if(!silent) toast('已保存: '+label+' · '+escalations.map(x=>'≥'+x.streak+(ACT_ZH[x.action]||x.action)).join(' / '));
     e.enabled=enabled; e.action=action; e.threshold=threshold; e.cooldown_seconds=cooldown;

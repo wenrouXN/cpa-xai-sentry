@@ -39,7 +39,7 @@ func TestApplyCooldownLogsOnce(t *testing.T) {
 	g := guard.New(cfg, st, trash.New(filepath.Join(dir, "t"), 7, true, st), cpaapi.New(cfg.ManagementURL, cfg.ManagementKey, dir))
 	_ = g.HandleUsage(context.Background(), guard.UsageEvent{
 		Provider: "xai", AuthIndex: "h", FileName: "xai-a@x.com.json", Email: "a@x.com",
-		StatusCode: 403, Body: `{"code":"permission-denied","error":"denied"}`, Source: "patrol",
+		StatusCode: 403, Body: `{"code":"permission-denied","error":"Access to the chat endpoint is denied."}`, Source: "patrol",
 	})
 	n := 0
 	for _, e := range st.SnapshotLogs() {

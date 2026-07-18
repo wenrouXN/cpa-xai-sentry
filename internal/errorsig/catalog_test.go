@@ -7,29 +7,6 @@ import (
 	"github.com/openclaw-local/cpa-xai-sentry/internal/match"
 )
 
-func TestCollapseTargetKeepsUserSplits(t *testing.T) {
-	for _, k := range []string{"reason:net_eof", "reason:auth_401", "my_custom", "free_usage_429", "permission_403", "unmatched", "any_error"} {
-		if tgt, ok := errorsig.CollapseTarget(k); ok {
-			t.Fatalf("%s should keep, got %q ok=%v", k, tgt, ok)
-		}
-	}
-	cases := map[string]string{
-		"permission_403:access_denied": "permission_403",
-		"free_usage_429:foo":           "free_usage_429",
-		"auth_401":                     "unmatched",
-		"spending_limit_402":           "unmatched",
-		"http_404":                     "unmatched",
-		"code:invalid-argument":        "unmatched",
-		"http_502":                     "unmatched",
-	}
-	for k, want := range cases {
-		got, ok := errorsig.CollapseTarget(k)
-		if !ok || got != want {
-			t.Fatalf("%s: got %q ok=%v want %q", k, got, ok, want)
-		}
-	}
-}
-
 func TestKeyFromMatchOnly429403(t *testing.T) {
 	if k := errorsig.KeyFromMatch(match.Result{Signal: match.SignalFreeUsage429}, 429); k != "free_usage_429" {
 		t.Fatal(k)
@@ -48,5 +25,57 @@ func TestKeyFromMatchOnly429403(t *testing.T) {
 	}
 	if k := errorsig.KeyFromMatch(match.Result{}, 404); k != "unmatched" {
 		t.Fatal(k)
+	}
+}
+
+func TestShapeUsesActualErrorFingerprintNotBareHTTPStatus(t *testing.T) {
+	permission := `{"code":"permission-denied","error":"Access to the chat endpoint is denied. Please ensure you're using the correct credentials."}`
+	region := `{"code":"permission-denied","error":"Model is not available in your region"}`
+	gateway := `{"error":"Access Denied"}`
+
+	sp, _, _ := errorsig.ShapeOf(permission, 403)
+	sr, _, _ := errorsig.ShapeOf(region, 403)
+	sg, _, _ := errorsig.ShapeOf(gateway, 403)
+	if sp == sr || sp == sg || sr == sg {
+		t.Fatalf("actual 403 samples must have distinct fingerprints: permission=%q region=%q gateway=%q", sp, sr, sg)
+	}
+	if sp != "permission_403" {
+		t.Fatalf("known chat permission sample should keep builtin fingerprint, got %q", sp)
+	}
+}
+
+func TestFingerprintNormalizesDynamicValues(t *testing.T) {
+	a := `{"code":"permission-denied","error":"Your team 16edcf33-2122-44f3-ad42-def578e8fc43 reached monthly spending limit 2061725"}`
+	b := `{"code":"permission-denied","error":"Your team aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee reached monthly spending limit 1999999"}`
+	fa, _, _ := errorsig.ShapeOf(a, 402)
+	fb, _, _ := errorsig.ShapeOf(b, 402)
+	if fa != fb {
+		t.Fatalf("dynamic UUID/numbers must not split one real error shape: %q != %q", fa, fb)
+	}
+}
+
+func TestRealLogSamplesProduceStableDistinctFingerprints(t *testing.T) {
+	cases := []struct {
+		status int
+		body   string
+	}{
+		{500, `Post "https://cli-chat-proxy.grok.com/v1/responses": EOF`},
+		{402, `{"code":"personal-team-blocked:spending-limit","error":"You have run out of credits or need a Grok subscription."}`},
+		{402, `{"code":"permission-denied","error":"Your team 16edcf33-2122-44f3-ad42-def578e8fc43 has either used all available credits or reached its monthly spending limit."}`},
+		{429, `{"code":"subscription:free-usage-exhausted","error":"You've used all the included free usage for model grok-4.5-build-free for now. tokens (actual/limit): 2061725/2000000"}`},
+		{403, `{"code":"permission-denied","error":"Access to the chat endpoint is denied."}`},
+		{426, `{"error":"Your Grok CLI version (none) is outdated. Please update to version 0.1.202 or later"}`},
+		{401, `{"error":"Invalid or expired credentials (reason=no auth context)"}`},
+	}
+	seen := map[string]bool{}
+	for _, tc := range cases {
+		fp, _, _ := errorsig.ShapeOf(tc.body, tc.status)
+		if fp == "" {
+			t.Fatalf("empty fingerprint for %d %s", tc.status, tc.body)
+		}
+		if seen[fp] {
+			t.Fatalf("different real samples collapsed into %q", fp)
+		}
+		seen[fp] = true
 	}
 }

@@ -53,6 +53,22 @@ func TestUnclassifyWithHitsMergesToUnmatched(t *testing.T) {
 	}
 }
 
+func TestReclassifyPersistsSourceShapeOnExistingDestination(t *testing.T) {
+	st := New("")
+	from := "reason:fp_source"
+	to := "merged"
+	st.ObserveError(from, "来源", "none", "x", "sample", "a", "f", "usage", 402)
+	st.UpsertErrorPolicy(ErrorPolicy{Key: from, Label: "来源", SplitShape: "fp_source", Enabled: true})
+	st.UpsertErrorPolicy(ErrorPolicy{Key: to, Label: "合并", Enabled: true})
+	if err := st.ReclassifyErrorKey(from, to, "合并"); err != nil {
+		t.Fatal(err)
+	}
+	p, ok := st.GetErrorPolicy(to)
+	if !ok || p.SplitShape != "fp_source" {
+		t.Fatalf("destination must retain source fingerprint route: %+v ok=%v", p, ok)
+	}
+}
+
 func TestUpsertUnhides(t *testing.T) {
 	dir := t.TempDir()
 	st := New(filepath.Join(dir, "s.json"))

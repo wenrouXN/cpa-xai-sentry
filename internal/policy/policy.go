@@ -1,6 +1,8 @@
 package policy
 
 import (
+	"strings"
+
 	"github.com/openclaw-local/cpa-xai-sentry/internal/errorsig"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/match"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/sentrycfg"
@@ -43,7 +45,13 @@ func Decide(cfg sentrycfg.Config, in Input) Action {
 		return decidePolicy(cfg, in, *in.Policy)
 	}
 
-	// Legacy global switches + scopes
+	// v2: only exact builtins may fall back to global signal ladders.
+	// Fingerprint / unmatched classes require an explicit policy card.
+	if !isBuiltinAutoKey(key, in.Signal) {
+		return Action{Reason: "无匹配策略", ErrorKey: key}
+	}
+
+	// Builtin global switches + scopes
 	if in.Signal == match.SignalNone {
 		return Action{Reason: "无匹配信号", ErrorKey: key}
 	}
@@ -217,6 +225,24 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b[i:])
+}
+
+// isBuiltinAutoKey gates legacy global signal ladders. Only exact free_usage_429
+// and permission_403 (or their matching signals) may auto-act without an
+// explicit fingerprint policy. any_error is handled via its own policy card.
+func isBuiltinAutoKey(key string, sig match.Signal) bool {
+	switch strings.TrimSpace(key) {
+	case "free_usage_429", "permission_403":
+		return true
+	}
+	switch sig {
+	case match.SignalFreeUsage429, match.SignalPermission403:
+		// only when the classified key still is that builtin (not a fingerprint)
+		k := strings.TrimSpace(key)
+		return k == "" || k == string(sig) || k == "free_usage_429" || k == "permission_403"
+	default:
+		return false
+	}
 }
 
 func contains(ss []string, x string) bool {
