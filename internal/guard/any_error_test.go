@@ -59,9 +59,9 @@ func TestAnyErrorLadderCoversMixedSignals(t *testing.T) {
 	if acc.Streaks["any_error"] < 3 {
 		t.Fatalf("any_error streak=%v want ≥3", acc.Streaks)
 	}
-	// should be in cool due to any_error ≥3
-	if acc.State != state.CooldownPermission && acc.State != state.CooldownQuota && acc.State != state.CooldownSpending {
-		t.Fatalf("state=%s want cool (any_error)", acc.State)
+	// should be in policy cool due to any_error ≥3
+	if acc.State != state.CooldownPolicy {
+		t.Fatalf("state=%s want cooldown_policy (any_error)", acc.State)
 	}
 }
 

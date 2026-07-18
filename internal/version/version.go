@@ -2,4 +2,4 @@
 package version
 
 // Version is embedded in plugin ABI metadata, management API, and panel UI.
-const Version = "1.2.7"
+const Version = "1.3.0"

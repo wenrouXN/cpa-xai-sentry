@@ -59,7 +59,7 @@ func TestSaveLoad(t *testing.T) {
 	}
 }
 
-func TestLoadV1ResetsOnlyErrorEngine(t *testing.T) {
+func TestLoadV3ReclassifiesCooldownStates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	raw := `{"version":"1","accounts":{"a":{"auth_index":"a","state":"cooldown_quota","last_signal":"http_426","streaks":{"http_426":3},"day_calls":9}},"logs":[{"auth":"a","action":"cooldown"}],"trash":[{"id":"t"}],"error_policies":{"http_426":{"key":"http_426"}},"hidden_policy_keys":["http_426"],"observed_errors":{"http_426":{"key":"http_426","count":2}}}`
 	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
@@ -70,22 +70,56 @@ func TestLoadV1ResetsOnlyErrorEngine(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := s.Get("a")
-	if s.Version != "2" || len(s.ErrorPolicies) != 0 || len(s.Observed) != 0 || len(s.HiddenPolicyKeys) != 0 {
-		t.Fatalf("error engine not reset: version=%s policies=%d observed=%d hidden=%d", s.Version, len(s.ErrorPolicies), len(s.Observed), len(s.HiddenPolicyKeys))
+	if s.Version != "3" || len(s.ErrorPolicies) != 1 || len(s.Observed) != 1 || len(s.HiddenPolicyKeys) != 1 {
+		t.Fatalf("migration mismatch: version=%s policies=%d observed=%d hidden=%d", s.Version, len(s.ErrorPolicies), len(s.Observed), len(s.HiddenPolicyKeys))
 	}
-	if a == nil || a.State != state.CooldownQuota || a.DayCalls != 9 || a.LastSignal != "" || len(a.Streaks) != 0 {
+	if a == nil || a.State != state.CooldownPolicy || a.DayCalls != 9 || a.LastSignal != "http_426" || a.Streaks["http_426"] != 3 {
 		t.Fatalf("account migration mismatch: %+v", a)
 	}
 	if len(s.Logs) != 1 || len(s.Trash) != 1 {
 		t.Fatalf("operational history lost: logs=%d trash=%d", len(s.Logs), len(s.Trash))
 	}
-	// re-load from disk: must already be v2 without replaying old catalog
+	// re-load from disk: must already be v3 without replaying migration
 	s2, err := state.Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s2.Version != "2" || len(s2.ErrorPolicies) != 0 {
+	if s2.Version != "3" || s2.Get("a").State != state.CooldownPolicy {
 		t.Fatalf("migration must be persisted: version=%s policies=%d", s2.Version, len(s2.ErrorPolicies))
+	}
+}
+
+func TestLoadV3CooldownClassMatrix(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	raw := `{"version":"2","accounts":{
+		"free":{"auth_index":"free","state":"cooldown_policy","last_signal":"free_usage_429"},
+		"spend":{"auth_index":"spend","state":"cooldown_quota","last_signal":"spending_limit_402"},
+		"perm":{"auth_index":"perm","state":"cooldown_quota","last_signal":"permission_403"},
+		"auth":{"auth_index":"auth","state":"cooldown_quota","last_signal":"auth_401"},
+		"fp":{"auth_index":"fp","state":"cooldown_quota","last_signal":"reason:fp_abc"},
+		"empty":{"auth_index":"empty","state":"cooldown_quota"},
+		"cand":{"auth_index":"cand","state":"candidate_dead","last_signal":"permission_403"}
+	}}`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := state.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]state.AccountState{
+		"free":  state.CooldownQuota,
+		"spend": state.CooldownSpending,
+		"perm":  state.CooldownPermission,
+		"auth":  state.CooldownAuth,
+		"fp":    state.CooldownPolicy,
+		"empty": state.CooldownPolicy,
+		"cand":  state.CandidateDead,
+	}
+	for id, st := range want {
+		if got := s.Get(id); got == nil || got.State != st {
+			t.Fatalf("%s want %s got %+v", id, st, got)
+		}
 	}
 }
 

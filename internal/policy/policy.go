@@ -227,19 +227,19 @@ func itoa(n int) string {
 	return string(b[i:])
 }
 
-// isBuiltinAutoKey gates legacy global signal ladders. Only exact free_usage_429
-// and permission_403 (or their matching signals) may auto-act without an
+// isBuiltinAutoKey gates legacy global signal ladders. Only exact built-in
+// classes (or their matching signals) may auto-act without an
 // explicit fingerprint policy. any_error is handled via its own policy card.
 func isBuiltinAutoKey(key string, sig match.Signal) bool {
 	switch strings.TrimSpace(key) {
-	case "free_usage_429", "permission_403":
+	case "free_usage_429", "spending_limit_402", "permission_403", "auth_401":
 		return true
 	}
 	switch sig {
-	case match.SignalFreeUsage429, match.SignalPermission403:
+	case match.SignalFreeUsage429, match.SignalSpendingLimit402, match.SignalPermission403, match.SignalAuth401:
 		// only when the classified key still is that builtin (not a fingerprint)
 		k := strings.TrimSpace(key)
-		return k == "" || k == string(sig) || k == "free_usage_429" || k == "permission_403"
+		return k == "" || k == string(sig)
 	default:
 		return false
 	}

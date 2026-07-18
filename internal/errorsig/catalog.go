@@ -48,7 +48,7 @@ type Observed struct {
 	LastFile   string    `json:"last_file"`
 }
 
-// BuiltinDefaults seeds ONLY free_usage_429 + permission_403 (+ callers may add any_error).
+// BuiltinDefaults seeds strict built-in classes (+ callers may add any_error).
 // Everything else is catalogued under "unmatched" until the user splits it.
 func BuiltinDefaults() map[string]Policy {
 	return map[string]Policy{
@@ -62,13 +62,23 @@ func BuiltinDefaults() map[string]Policy {
 			Action: ActionCooldown, Threshold: 3, CooldownSec: 1800, Source: "builtin",
 			Note: "默认阶梯：连续≥3冷却；≥15永久禁用（可在面板改）",
 		},
+		"spending_limit_402": {
+			Key: "spending_limit_402", Label: "消费限额", Enabled: true,
+			Action: ActionCooldown, Threshold: 1, CooldownSec: 0, Source: "builtin",
+			Note: "402 / spending-limit：消费限额冷却；不进入免费日池",
+		},
+		"auth_401": {
+			Key: "auth_401", Label: "凭证失效", Enabled: true,
+			Action: ActionCandidate, Threshold: 2, CooldownSec: 0, Source: "builtin",
+			Note: "401 凭证失效：默认候删；开启重登时先进入短冷却",
+		},
 	}
 }
 
-// IsBuiltinCatalogKey reports whether key is one of the two built-in classes (or any_error).
+// IsBuiltinCatalogKey reports whether key is a built-in class (or any_error).
 func IsBuiltinCatalogKey(key string) bool {
 	switch strings.TrimSpace(key) {
-	case "free_usage_429", "permission_403", "any_error", "unmatched":
+	case "free_usage_429", "spending_limit_402", "permission_403", "auth_401", "any_error", "unmatched":
 		return true
 	default:
 		return false
@@ -92,17 +102,27 @@ func KeyFromMatch(res match.Result, statusCode int, body ...string) string {
 	if res.Signal == match.SignalFreeUsage429 {
 		return "free_usage_429"
 	}
+	if res.Signal == match.SignalSpendingLimit402 {
+		return "spending_limit_402"
+	}
 	if res.Signal == match.SignalPermission403 {
 		return "permission_403"
+	}
+	if res.Signal == match.SignalAuth401 {
+		return "auth_401"
 	}
 	// body evidence when signal missed (weird status / partial body)
 	if len(body) > 0 {
 		low := strings.ToLower(body[0])
-		if strings.Contains(low, "free-usage") || strings.Contains(low, "free_usage") ||
-			strings.Contains(low, "included free usage") {
+		if (statusCode == 429 || statusCode == 0) && (strings.Contains(low, "free-usage") || strings.Contains(low, "free_usage") ||
+			strings.Contains(low, "included free usage")) {
 			return "free_usage_429"
 		}
-		if strings.Contains(low, "permission-denied") || strings.Contains(low, "access to the chat endpoint is denied") {
+		if (statusCode == 402 || statusCode == 0) && (strings.Contains(low, "spending-limit") || strings.Contains(low, "run out of credits") ||
+			strings.Contains(low, "need a grok subscription")) {
+			return "spending_limit_402"
+		}
+		if (statusCode == 403 || statusCode == 0) && (strings.Contains(low, "permission-denied") || strings.Contains(low, "access to the chat endpoint is denied")) {
 			return "permission_403"
 		}
 	}
@@ -115,8 +135,12 @@ func LabelOf(key string, res match.Result, statusCode int) string {
 	switch key {
 	case "free_usage_429":
 		return "免费额度用尽"
+	case "spending_limit_402":
+		return "消费限额"
 	case "permission_403":
 		return "权限拒绝"
+	case "auth_401":
+		return "凭证失效"
 	case "unmatched":
 		return "未分类错误"
 	case "any_error":
@@ -170,7 +194,7 @@ func HumanMsg(key, sample string, status int) string {
 			return "路径/网关 404"
 		}
 		if status == 429 {
-			return "免费额度用尽"
+			return "HTTP 429"
 		}
 		if status == 426 {
 			return "终端版本过低"

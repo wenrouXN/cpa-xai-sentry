@@ -13,7 +13,9 @@ import (
 
 	"github.com/openclaw-local/cpa-xai-sentry/internal/cpaapi"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/cpamp"
+	"github.com/openclaw-local/cpa-xai-sentry/internal/errorsig"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/guard"
+	"github.com/openclaw-local/cpa-xai-sentry/internal/match"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/panel"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/patrol"
 	"github.com/openclaw-local/cpa-xai-sentry/internal/persist"
@@ -468,7 +470,7 @@ func (r *Runtime) maybeBackfillCPAMPFailures(cfg sentrycfg.Config, st *state.Sto
 		if auth == "" {
 			continue
 		}
-		if alreadyHandledRecently(st, auth, e.Status, e.TimestampMS) {
+		if alreadyHandledRecently(st, auth, e.Status, e.Body, e.TimestampMS) {
 			continue
 		}
 		pending = append(pending, auth)
@@ -488,7 +490,7 @@ func (r *Runtime) maybeBackfillCPAMPFailures(cfg sentrycfg.Config, st *state.Sto
 		}
 		// skip if we already have a very recent matching action for this auth+signal window
 		// (avoid double-applying when plugin path already worked)
-		if alreadyHandledRecently(st, auth, e.Status, e.TimestampMS) {
+		if alreadyHandledRecently(st, auth, e.Status, e.Body, e.TimestampMS) {
 			continue
 		}
 		ev := guard.UsageEvent{
@@ -521,7 +523,7 @@ func (r *Runtime) maybeBackfillCPAMPFailures(cfg sentrycfg.Config, st *state.Sto
 }
 
 // alreadyHandledRecently: if last action for auth is cooldown/disable within ~2m of event, skip.
-func alreadyHandledRecently(st *state.Store, auth string, status int, eventMS int64) bool {
+func alreadyHandledRecently(st *state.Store, auth string, status int, body string, eventMS int64) bool {
 	if st == nil || auth == "" {
 		return false
 	}
@@ -533,10 +535,17 @@ func alreadyHandledRecently(st *state.Store, auth string, status int, eventMS in
 	if acc.State == state.UserManual || acc.DisableSource == "user_manual" {
 		return true
 	}
-	// if currently in cool with matching signal / any cool ownership, skip
-	if (acc.State == state.CooldownQuota || acc.State == state.CooldownSpending || acc.State == state.CooldownPermission || acc.State == state.CandidateDead) &&
-		acc.DisableSource == "plugin_auto" {
-		return true
+	res := match.Classify(status, body)
+	errKey := errorsig.KeyFromMatch(res, status, body)
+	wantState := cooldownStateForBackfill(res, errKey)
+	if (state.IsCooldownState(acc.State) || acc.State == state.CandidateDead) && acc.DisableSource == "plugin_auto" {
+		if strings.TrimSpace(acc.LastSignal) != strings.TrimSpace(errKey) {
+			return false
+		}
+		if acc.State == state.CandidateDead {
+			return true
+		}
+		return acc.State == wantState
 	}
 	if acc.LastActionAt.IsZero() {
 		return false
@@ -560,6 +569,23 @@ func alreadyHandledRecently(st *state.Store, auth string, status int, eventMS in
 		return true
 	}
 	return false
+}
+
+func cooldownStateForBackfill(res match.Result, errKey string) state.AccountState {
+	switch res.Signal {
+	case match.SignalFreeUsage429:
+		return state.CooldownQuota
+	case match.SignalSpendingLimit402:
+		return state.CooldownSpending
+	case match.SignalPermission403:
+		return state.CooldownPermission
+	case match.SignalAuth401:
+		return state.CooldownAuth
+	}
+	if errKey == "auth_401" {
+		return state.CooldownAuth
+	}
+	return state.CooldownPolicy
 }
 
 func handleUsageEvent(request []byte) ([]byte, error) {

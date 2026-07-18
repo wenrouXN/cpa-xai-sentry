@@ -17,9 +17,11 @@ type AccountState string
 
 const (
 	Active             AccountState = "active"
-	CooldownQuota      AccountState = "cooldown_quota"      // generic cool bucket (free_usage 429 OR fingerprint cool); display uses last_signal
+	CooldownQuota      AccountState = "cooldown_quota"      // free_usage_429 only
 	CooldownSpending   AccountState = "cooldown_spending"   // 402 spending
 	CooldownPermission AccountState = "cooldown_permission" // 403 permission cool
+	CooldownPolicy     AccountState = "cooldown_policy"     // fingerprint / split / any_error policy cool
+	CooldownAuth       AccountState = "cooldown_auth"       // short auth_401 relogin cool
 	CandidateDead      AccountState = "candidate_dead"
 	UserManual         AccountState = "user_manual"
 	Trashed            AccountState = "trashed"
@@ -27,7 +29,16 @@ const (
 )
 
 const Owner = "cpa_xai_sentry"
-const schemaVersion = "2"
+const schemaVersion = "3"
+
+func IsCooldownState(st AccountState) bool {
+	switch st {
+	case CooldownQuota, CooldownSpending, CooldownPermission, CooldownPolicy, CooldownAuth:
+		return true
+	default:
+		return false
+	}
+}
 
 type Account struct {
 	AuthIndex     string         `json:"auth_index"`
@@ -284,24 +295,7 @@ func Load(path string) (*Store, error) {
 	if err := json.Unmarshal(b, s); err != nil {
 		return nil, err
 	}
-	// v2 deliberately starts the error engine from a clean model. Operational
-	// account state, usage, logs and trash survive; old classifier output and
-	// policy routing do not.
 	migrated := false
-	if s.Version != schemaVersion {
-		s.Version = schemaVersion
-		s.ErrorPolicies = map[string]ErrorPolicy{}
-		s.Observed = map[string]*ObservedError{}
-		s.HiddenPolicyKeys = nil
-		for _, a := range s.Accounts {
-			if a == nil {
-				continue
-			}
-			a.LastSignal = ""
-			a.Streaks = map[string]int{}
-		}
-		migrated = true
-	}
 	if s.Accounts == nil {
 		s.Accounts = map[string]*Account{}
 	}
@@ -310,6 +304,11 @@ func Load(path string) (*Store, error) {
 	}
 	if s.Observed == nil {
 		s.Observed = map[string]*ObservedError{}
+	}
+	if s.Version != schemaVersion {
+		s.migrateV3CoolStatesLocked()
+		s.Version = schemaVersion
+		migrated = true
 	}
 	s.path = path
 	s.backfillLastActionsFromLogs()
@@ -320,6 +319,45 @@ func Load(path string) (*Store, error) {
 		}
 	}
 	return s, nil
+}
+
+func (s *Store) migrateV3CoolStatesLocked() {
+	for _, a := range s.Accounts {
+		if a == nil || !IsCooldownState(a.State) {
+			continue
+		}
+		switch cooldownStateForSignal(a.LastSignal) {
+		case CooldownQuota:
+			a.State = CooldownQuota
+		case CooldownSpending:
+			a.State = CooldownSpending
+		case CooldownPermission:
+			a.State = CooldownPermission
+		case CooldownAuth:
+			a.State = CooldownAuth
+		default:
+			a.State = CooldownPolicy
+		}
+		a.UpdatedAt = time.Now()
+	}
+}
+
+func cooldownStateForSignal(signal string) AccountState {
+	sig := strings.TrimSpace(signal)
+	switch sig {
+	case "free_usage_429":
+		return CooldownQuota
+	case "spending_limit_402":
+		return CooldownSpending
+	case "permission_403":
+		return CooldownPermission
+	case "auth_401":
+		return CooldownAuth
+	}
+	if strings.Contains(sig, "spending-limit") || strings.Contains(sig, "spending_limit") {
+		return CooldownSpending
+	}
+	return CooldownPolicy
 }
 
 // backfillLastActionsFromLogs fills LastAction/LastActionAt from retained logs (newest wins).
@@ -639,7 +677,7 @@ func (s *Store) CanAutoReenable(authIndex string) bool {
 	}
 	// legacy: cool-down state without source still treated as ours if recover_at set
 	switch acc.State {
-	case CooldownQuota, CooldownSpending, CooldownPermission, CandidateDead:
+	case CooldownQuota, CooldownSpending, CooldownPermission, CooldownPolicy, CooldownAuth, CandidateDead:
 		return !acc.RecoverAt.IsZero()
 	}
 	return false
@@ -850,7 +888,7 @@ func (s *Store) SetAccountState(authIndex string, st AccountState, disableSource
 	}
 	// re-enter cool/候删/禁用/垃圾箱: leave the post-recover watch phase
 	switch st {
-	case CooldownQuota, CooldownSpending, CooldownPermission, CandidateDead, UserManual, Trashed, Purged:
+	case CooldownQuota, CooldownSpending, CooldownPermission, CooldownPolicy, CooldownAuth, CandidateDead, UserManual, Trashed, Purged:
 		acc.PendingObserve = false
 		acc.PendingSince = time.Time{}
 	}
@@ -1556,8 +1594,7 @@ func (s *Store) CooldownStats(now time.Time) map[string]any {
 		if a == nil {
 			continue
 		}
-		st := string(a.State)
-		if strings.HasPrefix(st, "cooldown") {
+		if IsCooldownState(a.State) {
 			cooling++
 			if !a.RecoverAt.IsZero() {
 				if earliest.IsZero() || a.RecoverAt.Before(earliest) {
@@ -1571,7 +1608,8 @@ func (s *Store) CooldownStats(now time.Time) map[string]any {
 		if a.State == Active && a.LastSignal == "free_usage_429" {
 			pendingSuggest++
 		}
-		if a.QuotaLimit > 0 || a.QuotaRemaining > 0 || a.QuotaUsed > 0 {
+		if (a.LastSignal == "free_usage_429" || strings.HasPrefix(a.QuotaSource, "free_usage")) &&
+			(a.QuotaLimit > 0 || a.QuotaRemaining > 0 || a.QuotaUsed > 0) {
 			withQuota++
 			knownLimit += a.QuotaLimit
 			knownUsed += a.QuotaUsed

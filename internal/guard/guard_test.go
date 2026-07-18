@@ -56,8 +56,8 @@ func TestNonBuiltinFingerprintsDoNotUseLegacyGlobalSignalActions(t *testing.T) {
 		status int
 		body   string
 	}{
-		{"spending", 402, `{"code":"personal-team-blocked:spending-limit","error":"You have run out of credits"}`},
-		{"auth", 401, `{"error":"Invalid or expired credentials"}`},
+		{"bare402", 402, `{"error":"Payment required"}`},
+		{"bare401", 401, `{"error":"Login failed"}`},
 		{"generic403", 403, `{"error":"Access Denied"}`},
 	}
 	for _, tc := range cases {
@@ -199,6 +199,14 @@ func TestStrictBuiltinsBypassUnmatched(t *testing.T) {
 			auth: "builtin-403", status: 403, key: "permission_403",
 			body: `{"code":"permission-denied","error":"Access to the chat endpoint is denied. Please ensure you're using the correct credentials."}`,
 		},
+		{
+			auth: "builtin-402", status: 402, key: "spending_limit_402",
+			body: `{"code":"personal-team-blocked:spending-limit","error":"You have run out of credits or need a Grok subscription."}`,
+		},
+		{
+			auth: "builtin-401", status: 401, key: "auth_401",
+			body: `{"error":"Invalid or expired credentials (no auth context)"}`,
+		},
 	}
 	for _, tc := range cases {
 		if err := g.HandleUsage(context.Background(), guard.UsageEvent{
@@ -274,29 +282,16 @@ func Test402FollowsPolicyNoHardBan(t *testing.T) {
 	}
 }
 
-func TestAuth401RequiresExplicitPolicy(t *testing.T) {
+func TestAuth401BuiltinCandidate(t *testing.T) {
 	cfg := sentrycfg.Default()
 	cfg.AutoCandidate = true
 	cfg.AutoCooldown = true
 	g, st, _, _ := setup(t, cfg)
 	body := `{"error":"Invalid or expired credentials (no auth context)"}`
-	fpKey := "reason:" + mustShape(t, body, 401)
-	// no policy → observe only
 	ev := guard.UsageEvent{
 		Provider: "xai", AuthIndex: "a", FileName: "xai-a.json", Email: "a@b.com",
 		StatusCode: 401, Body: body,
 	}
-	_ = g.HandleUsage(context.Background(), ev)
-	_ = g.HandleUsage(context.Background(), ev)
-	if acc := st.Get("a"); acc == nil || (acc.State != state.Active && acc.State != "") {
-		t.Fatalf("without policy 401 fingerprint must only observe: %+v", acc)
-	}
-	// with explicit fingerprint policy → candidate
-	st.UpsertErrorPolicy(state.ErrorPolicy{
-		Key: fpKey, Label: "凭证失效", Enabled: true, Action: "candidate", Threshold: 2,
-		SplitShape:  strings.TrimPrefix(fpKey, "reason:"),
-		Escalations: []state.EscalationRule{{Streak: 2, Action: "candidate"}},
-	})
 	_ = g.HandleUsage(context.Background(), ev)
 	_ = g.HandleUsage(context.Background(), ev)
 	if acc := st.Get("a"); acc == nil || acc.State != state.CandidateDead {
@@ -304,7 +299,29 @@ func TestAuth401RequiresExplicitPolicy(t *testing.T) {
 		if acc != nil {
 			got = string(acc.State)
 		}
-		t.Fatalf("want candidate_dead after explicit policy, got %s", got)
+		t.Fatalf("want candidate_dead after builtin auth_401 threshold, got %s", got)
+	}
+}
+
+func TestAuth401ReloginUsesCooldownAuth(t *testing.T) {
+	cfg := sentrycfg.Default()
+	cfg.AutoCandidate = true
+	cfg.AutoCooldown = true
+	cfg.Auth401CooldownSec = 600
+	g, st, _, _ := setup(t, cfg)
+	g.TryRelogin = func(ctx context.Context, email, auth string) (bool, string) {
+		return true, "test"
+	}
+	body := `{"error":"Invalid or expired credentials (no auth context)"}`
+	ev := guard.UsageEvent{
+		Provider: "xai", AuthIndex: "a", FileName: "xai-a.json", Email: "a@b.com",
+		StatusCode: 401, Body: body,
+	}
+	_ = g.HandleUsage(context.Background(), ev)
+	_ = g.HandleUsage(context.Background(), ev)
+	acc := st.Get("a")
+	if acc == nil || acc.State != state.CooldownAuth || acc.LastSignal != "auth_401" {
+		t.Fatalf("want cooldown_auth with auth_401, got %+v", acc)
 	}
 }
 

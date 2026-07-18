@@ -367,6 +367,10 @@ func (a *API) suggestAction(acc *state.Account) (action, reason string) {
 		return "wait", "402·消费冷却"
 	case state.CooldownPermission:
 		return "review", "403·权限冷却"
+	case state.CooldownPolicy:
+		return "wait", a.cooldownPolicyStatusLabel(acc)
+	case state.CooldownAuth:
+		return "wait", "401·凭证冷却"
 	case state.UserManual:
 		if acc.DisableSource == "cpa_file_disabled" || acc.DisableSource == "cpa_disabled" {
 			return "manual", "CPA文件已禁用"
@@ -442,6 +446,23 @@ func (a *API) cooldownQuotaStatusLabel(acc *state.Account) string {
 			return code + "·冷却"
 		}
 		return "冷却"
+	}
+}
+
+func (a *API) cooldownPolicyStatusLabel(acc *state.Account) string {
+	if acc == nil {
+		return "策略冷却"
+	}
+	switch acc.LastSignal {
+	case "any_error":
+		return "任意错误·策略冷却"
+	case "":
+		return "策略冷却"
+	default:
+		if code := a.fingerprintHTTPCode(acc.LastSignal); code != "" {
+			return code + "·策略冷却"
+		}
+		return "策略冷却"
 	}
 }
 
@@ -667,7 +688,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		// apply actual/limit for THIS response only (do not mutate store on /state read)
-		if hasCU && (cuOK.Actual > 0 || cuOK.Limit > 0) {
+		if hasCU && acc.LastSignal == "free_usage_429" && (cuOK.Actual > 0 || cuOK.Limit > 0) {
 			acc.QuotaLimit, acc.QuotaUsed = cuOK.Limit, cuOK.Actual
 			acc.QuotaRemaining = max64(0, cuOK.Limit-cuOK.Actual)
 			acc.QuotaSource = "cpamp_fail_body"
@@ -717,6 +738,12 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		case state.CooldownPermission:
 			summary["cooldown"]++
 			summary["cooldown_permission"]++
+		case state.CooldownPolicy:
+			summary["cooldown"]++
+			summary["cooldown_policy"]++
+		case state.CooldownAuth:
+			summary["cooldown"]++
+			summary["cooldown_auth"]++
 		case state.CandidateDead:
 			summary["candidate"]++
 		case state.UserManual:
@@ -765,7 +792,8 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			coolQuotaZH := a.cooldownQuotaStatusLabel(acc)
 			stZH := map[string]string{
 				"active": "正常·可用", "cooldown_quota": coolQuotaZH, "cooldown_spending": "402·消费冷却",
-				"cooldown_permission": "403·权限冷却", "candidate_dead": "候删", "user_manual": "永久禁用",
+				"cooldown_permission": "403·权限冷却", "cooldown_policy": "策略冷却", "cooldown_auth": "401·凭证冷却",
+				"candidate_dead": "候删", "user_manual": "永久禁用",
 				"trashed": "垃圾箱", "purged": "已清除",
 			}
 			blob := strings.ToLower(strings.Join([]string{
@@ -830,6 +858,11 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		}
 		qLimit, qUsed, qRem := acc.QuotaLimit, acc.QuotaUsed, acc.QuotaRemaining
 		qSrc := acc.QuotaSource
+		quotaEvidence := acc.LastSignal == "free_usage_429" || strings.HasPrefix(qSrc, "free_usage")
+		if !quotaEvidence {
+			qLimit, qUsed, qRem = 0, 0, 0
+			qSrc = ""
+		}
 		qText := ""
 		// Prefer real body/cpamp numbers. If none, show "用尽" without inventing 2M/2M.
 		if (qLimit == 0 && qUsed == 0 && qRem == 0) &&
@@ -874,11 +907,11 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		}
 		// free-tier 24h quota: prefer real limit from error body, else 2M estimate
 		quota24 := qLimit
-		if quota24 <= 0 {
+		if quotaEvidence && quota24 <= 0 {
 			quota24 = quota.FreeQuotaPerAccount
 		}
 		ratioText := ""
-		if dayT > 0 || qUsed > 0 {
+		if quotaEvidence && (dayT > 0 || qUsed > 0) {
 			// 今日用量 / 24小时额度
 			ratioText = formatTokens(dayT) + " / " + formatTokens(quota24)
 		}
@@ -953,23 +986,16 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		xaiN = asInt(inv["auth_total"])
 	}
 	enabledN := asInt(inv["auth_enabled"])
-	// 日池口径（统一）：
-	//   日池账号数 = CPA 已开启 + 当前冷却中（均可在滚动 24h 内提供约 2M 免费额度）
+	// 日池口径（v3）：
+	//   日池账号数 = CPA 已开启 + 真实 free_usage_429 额度冷却中
 	//   日池总量   = 日池账号数 × 2M
 	//   日池已用   = 今日 token（优先 CPAMP 按号汇总，否则本地 floor）
 	//   日池剩余   = max(0, 总量-已用)
-	// 说明：候删/永禁/垃圾箱不计入日池；「当天是否到期」不再砍掉冷却号（冷却本身就是额度窗口）。
+	// 说明：spending/permission/auth/policy 冷却、候删、永禁、垃圾箱不计入免费日池。
 	coolN := 0
 	for _, acc := range a.State.AccountsSnapshot() {
-		st := string(acc.State)
-		if strings.Contains(st, "cooldown") {
+		if acc.State == state.CooldownQuota && acc.LastSignal == "free_usage_429" {
 			coolN++
-		}
-	}
-	if coolN == 0 {
-		// fall back to summary-style cooldown_stats if state walk empty
-		if v, ok := cool["cooling"].(int); ok {
-			coolN = v
 		}
 	}
 	poolAccounts := enabledN + coolN
@@ -1015,8 +1041,8 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			}
 			return v
 		}(),
-		"pool_source": "日池=(CPA开启+冷却中)×2M；已用=今日token",
-		"pool_note":   "候删/永禁不计入；可接流量≠日池账号（可接=仅CPA开）",
+		"pool_source": "日池=(CPA开启+free_usage_429额度冷却)×2M；已用=今日token",
+		"pool_note":   "policy/auth/spending/permission冷却、候删、永禁不计入；可接流量≠日池账号（可接=仅CPA开）",
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":     "cpa-xai-sentry",
@@ -1030,9 +1056,11 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			{"value": "active_watch", "label": "待观察（全部）", "count": summary["active_watch"]},
 			{"value": "active_watch_idle", "label": "正常·待观察", "count": summary["active_watch_idle"]},
 			{"value": "active_watch_signal", "label": "正常·有信号观察", "count": summary["active_watch_signal"]},
-			{"value": "cooldown_quota", "label": "冷却", "count": summary["cooldown_quota"]},
+			{"value": "cooldown_quota", "label": "429·额度冷却", "count": summary["cooldown_quota"]},
 			{"value": "cooldown_spending", "label": "402·消费冷却", "count": summary["cooldown_spending"]},
 			{"value": "cooldown_permission", "label": "403·权限冷却", "count": summary["cooldown_permission"]},
+			{"value": "cooldown_policy", "label": "策略冷却", "count": summary["cooldown_policy"]},
+			{"value": "cooldown_auth", "label": "401·凭证冷却", "count": summary["cooldown_auth"]},
 			{"value": "candidate_dead", "label": "候删", "count": summary["candidate"]},
 			{"value": "user_manual", "label": "永久禁用", "count": summary["user_manual"]},
 			{"value": "cpa_disabled", "label": "CPA已禁用", "count": summary["cpa_disabled"]},

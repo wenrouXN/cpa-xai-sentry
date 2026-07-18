@@ -130,7 +130,7 @@ func TestPersistEndpointRedactsRegisterPassword(t *testing.T) {
 	}
 }
 
-func TestStateCooldownQuotaFingerprintDisplayUsesLastSignalHTTP(t *testing.T) {
+func TestStateCooldownPolicyFingerprintDisplayUsesLastSignalHTTP(t *testing.T) {
 	dir := t.TempDir()
 	cfg := sentrycfg.Default()
 	st := state.New(filepath.Join(dir, "s.json"))
@@ -142,7 +142,7 @@ func TestStateCooldownQuotaFingerprintDisplayUsesLastSignalHTTP(t *testing.T) {
 	fp := "reason:fp_426test"
 	st.Touch("a426")
 	st.SetLastSignal("a426", fp)
-	st.SetAccountState("a426", state.CooldownQuota, "plugin_auto")
+	st.SetAccountState("a426", state.CooldownPolicy, "plugin_auto")
 	st.UpsertErrorPolicy(state.ErrorPolicy{Key: fp, Label: "终端版本过低", DisplayMsg: "终端版本过低", Enabled: true})
 	st.ObserveError(fp, "终端版本过低", "none", "", `{"error":"cli version outdated"}`, "a426", "xai-a.json", "usage", 426)
 
@@ -164,15 +164,15 @@ func TestStateCooldownQuotaFingerprintDisplayUsesLastSignalHTTP(t *testing.T) {
 	if len(out.Accounts) != 1 {
 		t.Fatalf("want one account, got %+v", out.Accounts)
 	}
-	if out.Accounts[0].Reason != "426·冷却" {
-		t.Fatalf("want 426·冷却, got %+v", out.Accounts[0])
+	if out.Accounts[0].Reason != "426·策略冷却" {
+		t.Fatalf("want 426·策略冷却, got %+v", out.Accounts[0])
 	}
 	if strings.Contains(out.Accounts[0].Reason, "429") || strings.Contains(out.Accounts[0].QuotaText, "用尽") {
 		t.Fatalf("fingerprint cooldown must not look like quota exhaustion: %+v", out.Accounts[0])
 	}
 }
 
-func TestEmptyLastSignalCooldownIsNotQuotaExhausted(t *testing.T) {
+func TestEmptyLastSignalPolicyCooldownIsNotQuotaExhausted(t *testing.T) {
 	dir := t.TempDir()
 	cfg := sentrycfg.Default()
 	st := state.New(filepath.Join(dir, "s.json"))
@@ -182,8 +182,8 @@ func TestEmptyLastSignalCooldownIsNotQuotaExhausted(t *testing.T) {
 	defer srv.Close()
 
 	st.Touch("hist")
-	st.SetAccountState("hist", state.CooldownQuota, "plugin_auto")
-	// empty last_signal: historical v2 wipe — must not show 429·额度冷却
+	st.SetAccountState("hist", state.CooldownPolicy, "plugin_auto")
+	// empty last_signal policy cool — must not show 429·额度冷却
 	resp, err := http.Get(srv.URL + "/state")
 	if err != nil {
 		t.Fatal(err)
@@ -201,8 +201,8 @@ func TestEmptyLastSignalCooldownIsNotQuotaExhausted(t *testing.T) {
 	if len(out.Accounts) != 1 {
 		t.Fatalf("%+v", out.Accounts)
 	}
-	if out.Accounts[0].Reason != "冷却" {
-		t.Fatalf("want 冷却, got %q", out.Accounts[0].Reason)
+	if out.Accounts[0].Reason != "策略冷却" {
+		t.Fatalf("want 策略冷却, got %q", out.Accounts[0].Reason)
 	}
 	if strings.Contains(out.Accounts[0].Reason, "429") || strings.Contains(out.Accounts[0].QuotaText, "用尽") {
 		t.Fatalf("empty-signal cool must not look like free_usage: %+v", out.Accounts[0])

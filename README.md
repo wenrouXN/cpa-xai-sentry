@@ -8,7 +8,7 @@ CLIProxyAPI **native CGO plugin** for xAI / Grok account fleet:
 - **Register** tab talks to local `grok-register-lite` (`:8788`) as a black box (manual / floor / schedule)
 - **Web panel** for live accounts, error policies, trash, action logs
 
-Current version: **v1.2.7** (single source: `internal/version.Version`)
+Current version: **v1.3.0** (single source: `internal/version.Version`)
 
 > Successor to `cpa-xai-quota-guard`. Run **only this plugin** for xAI free-usage guarding — do not run both enforcers.
 
@@ -27,6 +27,8 @@ Status is **code + action**, not a blank “normal”:
 | `429·额度冷却` | Free-usage exhausted → cooldown |
 | `402·消费冷却` | Spending limit → cooldown |
 | `403·权限冷却` | Permission denied → cooldown |
+| `401·凭证冷却` | Short auth relogin cooldown |
+| `策略冷却` | Fingerprint / split / `any_error` policy cooldown; never counted as free quota |
 | `401·候删` | Auth invalid → candidate |
 | `永久禁用` | Panel / policy permanent disable (auto re-enable only via **permanent patrol** alive probe) |
 | `CPA已禁用` | Auth file disabled outside sentry (rare; may be reopened when configured) |
@@ -43,8 +45,9 @@ Builtin focus:
 | Key | Notes |
 |---|---|
 | `free_usage_429` | Free quota exhausted |
+| `spending_limit_402` | 402 / spending-limit only; not counted as free quota |
 | `permission_403` | xAI permission-denied / chat-endpoint denied only — **not** generic gateway `Access Denied` |
-| `auth_401` | Invalid credentials → candidate path |
+| `auth_401` | Invalid credentials → candidate path; relogin uses `cooldown_auth` |
 | `reason:http_426` (example split) | SignalNone-class split still runs the **user ladder** (not observe-only early-return) |
 | `unmatched` / `any_error` | Catch-all; can be split by shape |
 
@@ -266,8 +269,10 @@ go test ./internal/match -run GenericAccessDenied -v
 
 Notable design choices:
 
-- **Closed-loop recovery**: cool-down due → `ResetToActive` (clear signal/streaks/lock)
-- **No cooldown↔sync loop**: maintenance does not re-cool already cooling accounts
+- **v3 cooldown classes**: `cooldown_quota` is only `free_usage_429`; `cooldown_spending`, `cooldown_permission`, `cooldown_auth`, and `cooldown_policy` are separate states.
+- **No quota disguise**: bare 429 stays `unmatched`; policy / auth / spending / permission cooldowns are excluded from the free daily pool.
+- **Closed-loop recovery**: cool-down due → `ResetToActive` (clear lock, keep ladder streaks until success/operator reset)
+- **No cooldown↔sync loop**: maintenance does not re-cool already cooling accounts; idempotency requires same state class + same key
 - **Permanent disable** ≠ cooldown: `user_manual` re-enables only via permanent patrol alive path (when enabled)
 - **Strict permission match**: generic HTTP `Access Denied` does not become `permission_403`
 
@@ -289,7 +294,7 @@ See **[docs/AUTH_CLOSED_LOOP.md](docs/AUTH_CLOSED_LOOP.md)** for the full state 
 - Unit tests for match / guard / policy / patrol / state / panel paths
 - Atomic state save (`*.tmp` + rename, mode 0600)
 - Account `Get` returns a snapshot copy (no concurrent map/field races on returned pointers)
-- Single version source: `internal/version.Version` (currently **1.2.7**)
+- Single version source: `internal/version.Version` (currently **1.3.0**)
 - Permanent disable requires master `sentry_enabled`
 - Default remove path is trash (7d); 402 / Super-Heavy protected from auto-trash
 - Do not run together with `cpa-xai-quota-guard`

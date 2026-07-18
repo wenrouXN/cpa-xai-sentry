@@ -389,7 +389,7 @@ func (r *Runner) collectTargets(ctx context.Context, mode Mode) []Target {
 			if acc.FileName != "" {
 				keys = append(keys, strings.ToLower(strings.TrimSpace(acc.FileName)))
 			}
-			isCool := acc.State == state.CooldownQuota || acc.State == state.CooldownSpending || acc.State == state.CooldownPermission
+			isCool := state.IsCooldownState(acc.State)
 			isPerm := acc.State == state.UserManual || acc.DisableSource == "user_manual"
 			isCand := acc.State == state.CandidateDead
 			isTrash := acc.State == state.Trashed || acc.State == state.Purged

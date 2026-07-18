@@ -221,13 +221,11 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 	}
 
 	res := match.Classify(ev.StatusCode, ev.Body)
-	// best-effort quota parse from failure body
-	q := quota.Parse(ev.Body)
 	if res.Signal == match.SignalFreeUsage429 {
-		q = quota.FreeUsageExhaustedEstimate(ev.Body, res.RecoverAt)
-	}
-	if q.Limit > 0 || q.Remaining > 0 || q.Used > 0 || !q.ResetAt.IsZero() {
-		g.State.UpdateQuota(ev.AuthIndex, q.Limit, q.Used, q.Remaining, q.Source, q.ResetAt)
+		q := quota.FreeUsageExhaustedEstimate(ev.Body, res.RecoverAt)
+		if q.Limit > 0 || q.Remaining > 0 || q.Used > 0 || !q.ResetAt.IsZero() {
+			g.State.UpdateQuota(ev.AuthIndex, q.Limit, q.Used, q.Remaining, q.Source, q.ResetAt)
+		}
 	}
 	errKey := errorsig.KeyFromMatch(res, ev.StatusCode, ev.Body)
 	shape, fingerprintLabel, _ := errorsig.ShapeOf(ev.Body, ev.StatusCode)
@@ -265,7 +263,8 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 	// Skip if user explicitly deleted (hid) this policy — respect user's choice.
 	if g.State != nil && !g.State.IsPolicyHidden(errKey) {
 		if _, ok := g.State.GetErrorPolicy(errKey); !ok {
-			if errKey == "free_usage_429" || errKey == "permission_403" || errKey == "unmatched" {
+			if errKey == "free_usage_429" || errKey == "spending_limit_402" ||
+				errKey == "permission_403" || errKey == "auth_401" || errKey == "unmatched" {
 				act := "observe"
 				th := 1
 				cd := 0
@@ -442,7 +441,7 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 						name = g.resolveFileName(ctx, ev.AuthIndex, ev.FileName, ev.Email)
 					}
 				}
-				g.State.SetAccountState(ev.AuthIndex, state.CooldownPermission, "plugin_auto")
+				g.State.SetAccountState(ev.AuthIndex, state.CooldownAuth, "plugin_auto")
 				g.State.SetRecoverAt(ev.AuthIndex, g.Now().Add(time.Duration(sec)*time.Second))
 				g.State.SetLastSignal(ev.AuthIndex, string(res.Signal))
 				if g.CPA != nil && name != "" && !cpaapi.LooksLikeOpaqueID(name) {
@@ -506,25 +505,32 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 }
 
 func (g *Guard) applyCooldown(ctx context.Context, ev UsageEvent, res match.Result, acc *state.Account, pol *state.ErrorPolicy, cooldownSecOverride ...int) error {
-	st := state.CooldownQuota
-	switch res.Signal {
-	case match.SignalSpendingLimit402:
-		st = state.CooldownSpending
-	case match.SignalPermission403:
-		st = state.CooldownPermission
-	case match.SignalAuth401:
-		st = state.CandidateDead
+	st := cooldownStateForResult(res, pol)
+	cur := acc
+	if g.State != nil {
+		if fresh := g.State.Get(ev.AuthIndex); fresh != nil {
+			cur = fresh
+		}
+	}
+	sig := ""
+	if cur != nil {
+		sig = cur.LastSignal
+	}
+	if sig == "" || sig == "any_error" {
+		if s := string(res.Signal); s != "" && s != "any_error" {
+			sig = s
+		}
 	}
 	// Idempotent: already plugin_auto cool with same family + recover not due →
 	// do not re-log cool / do not stretch recover_at; only reassert file closed.
-	if acc != nil && acc.DisableSource == "plugin_auto" {
-		sameFamily := coolStatesMatch(acc.State, st) || coolSignalFamily(acc.LastSignal, string(res.Signal))
-		recoverFuture := !acc.RecoverAt.IsZero() && acc.RecoverAt.After(g.Now())
+	if cur != nil && cur.DisableSource == "plugin_auto" {
+		sameFamily := coolStatesMatch(cur.State, st, cur.LastSignal, sig)
+		recoverFuture := !cur.RecoverAt.IsZero() && cur.RecoverAt.After(g.Now())
 		if sameFamily && recoverFuture {
 			name := ev.FileName
 			if name == "" || cpaapi.LooksLikeOpaqueID(name) {
-				if acc.FileName != "" && !cpaapi.LooksLikeOpaqueID(acc.FileName) {
-					name = acc.FileName
+				if cur.FileName != "" && !cpaapi.LooksLikeOpaqueID(cur.FileName) {
+					name = cur.FileName
 				}
 			}
 			if (name == "" || cpaapi.LooksLikeOpaqueID(name)) && g.Resolver != nil {
@@ -570,15 +576,6 @@ func (g *Guard) applyCooldown(ctx context.Context, ev UsageEvent, res match.Resu
 	}
 	// LastSignal is the classified error key (free_usage_429 / permission_403 / reason:fp_* / unmatched).
 	// Never overwrite a real class with empty SignalNone — callers stamp errKey first.
-	sig := ""
-	if cur := g.State.Get(ev.AuthIndex); cur != nil {
-		sig = cur.LastSignal
-	}
-	if sig == "" || sig == "any_error" {
-		if s := string(res.Signal); s != "" && s != "any_error" {
-			sig = s
-		}
-	}
 	if sig != "" && sig != "any_error" {
 		g.State.SetLastSignal(ev.AuthIndex, sig)
 	}
@@ -612,7 +609,7 @@ func (g *Guard) applyCooldown(ctx context.Context, ev UsageEvent, res match.Resu
 		closed, err, stillOpen := g.ensureAuthDisabled(ctx, name)
 		if err != nil {
 			g.State.Log(state.ActionLog{
-				Auth: ev.AuthIndex, Source: ev.Source, Signal: string(res.Signal),
+				Auth: ev.AuthIndex, Source: ev.Source, Signal: sig,
 				Action: "cooldown_failed", Reason: err.Error(),
 			})
 			// keep plugin_auto cool-down ownership even if file disable failed
@@ -621,7 +618,7 @@ func (g *Guard) applyCooldown(ctx context.Context, ev UsageEvent, res match.Resu
 		if !closed || stillOpen {
 			// PATCH ok but list still shows open after retry — state stays cool; tick reassert will retry
 			g.State.Log(state.ActionLog{
-				Auth: ev.AuthIndex, Source: ev.Source, Signal: string(res.Signal),
+				Auth: ev.AuthIndex, Source: ev.Source, Signal: sig,
 				Action: "cooldown_file_still_open",
 				Reason: "冷却已记录但文件校验仍开 · 将由冷却补关重试",
 			})
@@ -631,34 +628,50 @@ func (g *Guard) applyCooldown(ctx context.Context, ev UsageEvent, res match.Resu
 	return nil
 }
 
-func coolStatesMatch(cur state.AccountState, want state.AccountState) bool {
-	if cur == want {
-		return true
+func cooldownStateForResult(res match.Result, pol *state.ErrorPolicy) state.AccountState {
+	if pol != nil && pol.Key == "any_error" {
+		return state.CooldownPolicy
 	}
-	// treat all cool subtypes as same family for idempotent re-entry
-	cool := func(s state.AccountState) bool {
-		switch s {
-		case state.CooldownQuota, state.CooldownSpending, state.CooldownPermission, state.CandidateDead:
-			return true
-		}
+	switch res.Signal {
+	case match.SignalFreeUsage429:
+		return state.CooldownQuota
+	case match.SignalSpendingLimit402:
+		return state.CooldownSpending
+	case match.SignalPermission403:
+		return state.CooldownPermission
+	case match.SignalAuth401:
+		return state.CooldownAuth
+	default:
+		return state.CooldownPolicy
+	}
+}
+
+func cooldownStateForLastSignal(signal string) state.AccountState {
+	switch strings.TrimSpace(signal) {
+	case string(match.SignalFreeUsage429):
+		return state.CooldownQuota
+	case string(match.SignalSpendingLimit402):
+		return state.CooldownSpending
+	case string(match.SignalPermission403):
+		return state.CooldownPermission
+	case string(match.SignalAuth401):
+		return state.CooldownAuth
+	default:
+		return state.CooldownPolicy
+	}
+}
+
+func coolStatesMatch(cur state.AccountState, want state.AccountState, curKey, wantKey string) bool {
+	if cur != want || !state.IsCooldownState(cur) || !state.IsCooldownState(want) {
 		return false
 	}
-	return cool(cur) && cool(want)
+	return coolSignalFamily(curKey, wantKey)
 }
 
 func coolSignalFamily(a, b string) bool {
-	if a == "" || b == "" {
-		return false
-	}
-	if a == b {
-		return true
-	}
-	// free_usage and empty any_error cool both map to quota cool
-	quota := map[string]bool{"free_usage_429": true, "spending_limit_402": true}
-	if quota[a] && quota[b] {
-		return true
-	}
-	return false
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	return a != "" && a == b
 }
 
 // shouldDedupeFailUsage: same auth recently cooled / failed within short window.
@@ -682,7 +695,11 @@ func (g *Guard) shouldDedupeFailUsage(ev UsageEvent) bool {
 	}
 	// Deduplicate only the same normalized response shape. A changed real error
 	// must pass through immediately even if the previous action was seconds ago.
-	_, _, incomingKey := errorsig.ShapeOf(ev.Body, ev.StatusCode)
+	res := match.Classify(ev.StatusCode, ev.Body)
+	incomingKey := errorsig.KeyFromMatch(res, ev.StatusCode, ev.Body)
+	if incomingKey == "unmatched" {
+		_, _, incomingKey = errorsig.ShapeOf(ev.Body, ev.StatusCode)
+	}
 	if incomingKey != "" && acc.LastSignal != "" && incomingKey != acc.LastSignal {
 		return false
 	}
@@ -695,8 +712,7 @@ func (g *Guard) shouldDedupeFailUsage(ev UsageEvent) bool {
 		return true
 	}
 	// already in cool with recover still future
-	switch acc.State {
-	case state.CooldownQuota, state.CooldownSpending, state.CooldownPermission, state.CandidateDead:
+	if state.IsCooldownState(acc.State) || acc.State == state.CandidateDead {
 		if !acc.RecoverAt.IsZero() && acc.RecoverAt.After(g.Now()) {
 			return true
 		}
@@ -1204,7 +1220,10 @@ func (g *Guard) shouldProtectDisable(acc *state.Account, now time.Time) bool {
 	switch acc.State {
 	case state.Trashed, state.Purged:
 		return true
-	case state.CooldownQuota, state.CooldownSpending, state.CooldownPermission, state.CandidateDead:
+	case state.CandidateDead:
+		return true
+	}
+	if state.IsCooldownState(acc.State) {
 		return true
 	}
 	if acc.PreDisabled {
@@ -1597,8 +1616,11 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time, scanFore
 		switch acc.State {
 		case state.Trashed, state.Purged:
 			return true
-		case state.CooldownQuota, state.CooldownSpending, state.CooldownPermission, state.CandidateDead:
+		case state.CandidateDead:
 			// cool-down / 候删 regardless of disable_source
+			return true
+		}
+		if state.IsCooldownState(acc.State) {
 			return true
 		}
 		if acc.PreDisabled {
@@ -1633,10 +1655,9 @@ func (g *Guard) syncDisabledFromCPA(ctx context.Context, now time.Time, scanFore
 			if protect(a) {
 				score += 1000
 			}
-			switch a.State {
-			case state.CooldownQuota, state.CooldownSpending, state.CooldownPermission:
+			if state.IsCooldownState(a.State) {
 				score += 50
-			case state.CandidateDead, state.UserManual:
+			} else if a.State == state.CandidateDead || a.State == state.UserManual {
 				score += 40
 			}
 			if a.DisableSource == "plugin_auto" {
@@ -2037,14 +2058,16 @@ func (g *Guard) scrubDirtyActiveAccounts() {
 		// Active + future recover_at + plugin_auto = cool-down still in force but state flipped wrong.
 		// Restore cool-down state instead of scrubbing ownership away (which caused false "foreign reopen").
 		if acc.DisableSource == "plugin_auto" && !acc.RecoverAt.IsZero() && acc.RecoverAt.After(g.Now()) {
-			st := state.CooldownQuota
+			st := state.CooldownPolicy
 			switch acc.LastSignal {
+			case string(match.SignalFreeUsage429):
+				st = state.CooldownQuota
 			case string(match.SignalSpendingLimit402):
 				st = state.CooldownSpending
 			case string(match.SignalPermission403):
 				st = state.CooldownPermission
 			case string(match.SignalAuth401):
-				st = state.CandidateDead
+				st = state.CooldownAuth
 			}
 			g.State.SetAccountState(acc.AuthIndex, st, "plugin_auto")
 			g.State.Log(state.ActionLog{
@@ -2092,15 +2115,17 @@ func (g *Guard) pruneDuplicateAccounts() {
 		}
 		s := 0
 		// ownership / cool-down ALWAYS beats empty Active shells (closed-loop safety)
-		switch a.State {
-		case state.CooldownQuota, state.CooldownSpending, state.CooldownPermission:
+		if state.IsCooldownState(a.State) {
 			s += 1000
-		case state.CandidateDead:
-			s += 900
-		case state.UserManual:
-			s += 950
-		case state.Trashed, state.Purged:
-			s += 800
+		} else {
+			switch a.State {
+			case state.CandidateDead:
+				s += 900
+			case state.UserManual:
+				s += 950
+			case state.Trashed, state.Purged:
+				s += 800
+			}
 		}
 		switch a.DisableSource {
 		case "plugin_auto":
@@ -2279,8 +2304,7 @@ func (g *Guard) reopenAfterProbeAlive(ctx context.Context, ev UsageEvent) {
 	if acc.State == state.Trashed || acc.State == state.Purged {
 		return
 	}
-	wasCool := acc.State == state.CooldownQuota || acc.State == state.CooldownSpending ||
-		acc.State == state.CooldownPermission || acc.State == state.CandidateDead
+	wasCool := state.IsCooldownState(acc.State) || acc.State == state.CandidateDead
 	wasPermanent := acc.State == state.UserManual || acc.DisableSource == "user_manual"
 	// cpa_file_disabled sticky still treated as an owned closed file that probe can open.
 	if acc.State == state.UserManual && (acc.DisableSource == "cpa_file_disabled" || acc.DisableSource == "cpa_disabled") {
@@ -2458,7 +2482,7 @@ func (g *Guard) ApplySuggestedCooldown(ctx context.Context, authIndexes []string
 				continue
 			}
 		}
-		g.State.SetAccountState(id, state.CooldownQuota, "plugin_auto")
+		g.State.SetAccountState(id, cooldownStateForLastSignal(acc.LastSignal), "plugin_auto")
 		g.State.SetRecoverAt(id, recoverAt)
 		g.State.Log(state.ActionLog{Auth: id, Source: "panel", Signal: acc.LastSignal, Action: "cooldown", Reason: "bulk_suggested_cooldown"})
 		n++

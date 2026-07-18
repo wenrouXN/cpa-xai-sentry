@@ -7,14 +7,20 @@ import (
 	"github.com/openclaw-local/cpa-xai-sentry/internal/match"
 )
 
-func TestKeyFromMatchOnly429403(t *testing.T) {
+func TestKeyFromMatchStrictBuiltins(t *testing.T) {
 	if k := errorsig.KeyFromMatch(match.Result{Signal: match.SignalFreeUsage429}, 429); k != "free_usage_429" {
+		t.Fatal(k)
+	}
+	if k := errorsig.KeyFromMatch(match.Result{Signal: match.SignalSpendingLimit402}, 402); k != "spending_limit_402" {
 		t.Fatal(k)
 	}
 	if k := errorsig.KeyFromMatch(match.Result{}, 403, `{"error":"Access Denied"}`); k != "unmatched" {
 		t.Fatal(k)
 	}
 	if k := errorsig.KeyFromMatch(match.Result{Signal: match.SignalPermission403}, 403); k != "permission_403" {
+		t.Fatal(k)
+	}
+	if k := errorsig.KeyFromMatch(match.Result{Signal: match.SignalAuth401}, 401); k != "auth_401" {
 		t.Fatal(k)
 	}
 	// bare 429 without free-usage evidence is not free_usage_429
@@ -32,6 +38,15 @@ func TestKeyFromMatchOnly429403(t *testing.T) {
 	}
 	if k := errorsig.KeyFromMatch(match.Result{}, 404); k != "unmatched" {
 		t.Fatal(k)
+	}
+}
+
+func TestHumanMsgBare429IsNotFreeUsage(t *testing.T) {
+	if got := errorsig.HumanMsg("unmatched", `{"error":"Too many requests"}`, 429); got != "HTTP 429" {
+		t.Fatalf("bare 429 message = %q", got)
+	}
+	if got := errorsig.HumanMsg("free_usage_429", `{"error":"Too many requests"}`, 429); got != "免费额度用尽" {
+		t.Fatalf("free_usage key message = %q", got)
 	}
 }
 

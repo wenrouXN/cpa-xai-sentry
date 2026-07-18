@@ -582,7 +582,7 @@ let MASKED = localStorage.getItem('cpa-xai-sentry-mask') !== '0'; // default mas
 const SIG_ZH={free_usage_429:'免费额度用尽',spending_limit_402:'消费限额',auth_401:'凭证失效',permission_403:'权限拒绝',http_404:'HTTP 404', 'code:invalid-argument':'参数无效/上下文过长'};
 const API="/v0/management/cpa-xai-sentry";
 const KEY_LS="cpa-xai-sentry-management-key";
-const STATE_ZH={active:'正常·可用',cooldown_quota:'冷却',cooldown_spending:'402·消费冷却',cooldown_permission:'403·权限冷却',candidate_dead:'候删',user_manual:'永久禁用',trashed:'垃圾箱',purged:'已清除'};
+const STATE_ZH={active:'正常·可用',cooldown_quota:'429·额度冷却',cooldown_spending:'402·消费冷却',cooldown_permission:'403·权限冷却',cooldown_policy:'策略冷却',cooldown_auth:'401·凭证冷却',candidate_dead:'候删',user_manual:'永久禁用',trashed:'垃圾箱',purged:'已清除'};
 const ACT_ZH={observe:'仅观察',cooldown:'冷却',cooldown_reassert:'冷却补关',reenable:'到期恢复',candidate:'候删',disable:'永久禁用',manual_disable:'永久禁用',manual_enable:'手动启用',trash:'进垃圾箱',wait:'等待恢复',review:'复查',manual:'永久禁用',none:'无',restore_or_purge:'恢复/清除',reopen_foreign:'自愈打开',file_disabled_sync:'CPA禁用对齐',clear_cpa_disabled_tag:'清除禁用标记',scrub_active:'清理残留',repair_cooldown_state:'修复冷却态',maintenance:'立即维护',heal_active_file:'强制打开',heal_active_file_failed:'强制打开失败'};
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2400)}
 function esc(s){return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -697,9 +697,11 @@ function fillStateFilter(filters, summary){
       {value:'active_watch', label:'待观察（全部）', count:summary.active_watch||0},
       {value:'active_watch_idle', label:'正常·待观察', count:summary.active_watch_idle||0},
       {value:'active_watch_signal', label:'正常·有信号观察', count:summary.active_watch_signal||0},
-      {value:'cooldown_quota', label:'冷却', count:summary.cooldown_quota||0},
+      {value:'cooldown_quota', label:'429·额度冷却', count:summary.cooldown_quota||0},
       {value:'cooldown_spending', label:'402·消费冷却', count:summary.cooldown_spending||0},
       {value:'cooldown_permission', label:'403·权限冷却', count:summary.cooldown_permission||0},
+      {value:'cooldown_policy', label:'策略冷却', count:summary.cooldown_policy||0},
+      {value:'cooldown_auth', label:'401·凭证冷却', count:summary.cooldown_auth||0},
       {value:'candidate_dead', label:'候删', count:summary.candidate||0},
       {value:'user_manual', label:'永久禁用', count:summary.user_manual||0},
       {value:'cpa_disabled', label:'CPA已禁用', count:summary.cpa_disabled||0},
@@ -809,14 +811,16 @@ function stateLabel(st, a){
     return {text:'正常·可用', cls:'active', tip:'干净正常，可接流量'};
   }
   if(st==='cooldown_quota'){
-    // only exact free_usage is 429·额度；空 signal / 指纹冷却不伪装 429
-    if(sig==='free_usage_429') return {text:'429·额度冷却', cls:'cooldown', tip:'HTTP 429 免费额度用尽 → 冷却'};
-    const code=signalCode(sig,a);
-    if(code) return {text:code+'·冷却', cls:'cooldown', tip:'HTTP '+code+' → 冷却'};
-    return {text:'冷却', cls:'cooldown', tip:'策略冷却（无额度证据）'};
+    return {text:'429·额度冷却', cls:'cooldown', tip:'HTTP 429 免费额度用尽 → 冷却'};
   }
   if(st==='cooldown_spending') return {text:'402·消费冷却', cls:'cooldown', tip:'HTTP 402 消费限额 → 冷却'};
   if(st==='cooldown_permission') return {text:'403·权限冷却', cls:'cooldown', tip:'HTTP 403 权限拒绝 → 冷却'};
+  if(st==='cooldown_policy'){
+    const code=signalCode(sig,a);
+    if(code) return {text:code+'·策略冷却', cls:'cooldown', tip:'HTTP '+code+' 策略冷却'};
+    return {text:'策略冷却', cls:'cooldown', tip:'指纹/拆分/任意错误策略冷却'};
+  }
+  if(st==='cooldown_auth') return {text:'401·凭证冷却', cls:'cooldown', tip:'HTTP 401 重登短冷却'};
   if(st==='candidate_dead'){
     return Object.assign({cls:'candidate'}, candidateLabel(sig, a));
   }
