@@ -17,6 +17,13 @@ func TestKeyFromMatchOnly429403(t *testing.T) {
 	if k := errorsig.KeyFromMatch(match.Result{Signal: match.SignalPermission403}, 403); k != "permission_403" {
 		t.Fatal(k)
 	}
+	// bare 429 without free-usage evidence is not free_usage_429
+	if k := errorsig.KeyFromMatch(match.Result{}, 429); k != "unmatched" {
+		t.Fatalf("bare 429 want unmatched, got %s", k)
+	}
+	if k := errorsig.KeyFromMatch(match.Result{}, 429, `{"code":"subscription:free-usage-exhausted","error":"You've used all the included free usage"}`); k != "free_usage_429" {
+		t.Fatal(k)
+	}
 	if k := errorsig.KeyFromMatch(match.Result{}, 401); k != "unmatched" {
 		t.Fatal(k)
 	}

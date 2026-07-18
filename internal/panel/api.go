@@ -424,8 +424,10 @@ func (a *API) cooldownQuotaStatusLabel(acc *state.Account) string {
 	if acc == nil {
 		return "冷却"
 	}
+	// Only exact free_usage_429 is "429·额度冷却". Empty last_signal (historical wipe)
+	// or fingerprint cool → generic / HTTP·冷却 — never pretend bare cool is 429.
 	switch acc.LastSignal {
-	case "free_usage_429", "":
+	case "free_usage_429":
 		return "429·额度冷却"
 	case "spending_limit_402":
 		return "402·冷却"
@@ -433,6 +435,8 @@ func (a *API) cooldownQuotaStatusLabel(acc *state.Account) string {
 		return "403·冷却"
 	case "auth_401":
 		return "401·冷却"
+	case "":
+		return "冷却"
 	default:
 		if code := a.fingerprintHTTPCode(acc.LastSignal); code != "" {
 			return code + "·冷却"

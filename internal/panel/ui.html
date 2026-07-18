@@ -809,10 +809,11 @@ function stateLabel(st, a){
     return {text:'正常·可用', cls:'active', tip:'干净正常，可接流量'};
   }
   if(st==='cooldown_quota'){
-    if(sig==='free_usage_429' || !sig) return {text:'429·额度冷却', cls:'cooldown', tip:'HTTP 429 免费额度用尽 → 冷却'};
+    // only exact free_usage is 429·额度；空 signal / 指纹冷却不伪装 429
+    if(sig==='free_usage_429') return {text:'429·额度冷却', cls:'cooldown', tip:'HTTP 429 免费额度用尽 → 冷却'};
     const code=signalCode(sig,a);
     if(code) return {text:code+'·冷却', cls:'cooldown', tip:'HTTP '+code+' → 冷却'};
-    return {text:'冷却', cls:'cooldown', tip:'策略冷却'};
+    return {text:'冷却', cls:'cooldown', tip:'策略冷却（无额度证据）'};
   }
   if(st==='cooldown_spending') return {text:'402·消费冷却', cls:'cooldown', tip:'HTTP 402 消费限额 → 冷却'};
   if(st==='cooldown_permission') return {text:'403·权限冷却', cls:'cooldown', tip:'HTTP 403 权限拒绝 → 冷却'};

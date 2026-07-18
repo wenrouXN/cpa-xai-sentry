@@ -85,8 +85,9 @@ func NormalizeCatalogKey(key string) string {
 	return key
 }
 
-// KeyFromMatch builds catalog key from classifier result + status.
-// Only 429/403 are auto-classified; everything else goes to "unmatched".
+// KeyFromMatch builds catalog key from classifier result + status/body.
+// Only exact free_usage_429 and permission_403 are auto-classified.
+// HTTP status alone never decides the class (bare 429 stays unmatched).
 func KeyFromMatch(res match.Result, statusCode int, body ...string) string {
 	if res.Signal == match.SignalFreeUsage429 {
 		return "free_usage_429"
@@ -94,21 +95,18 @@ func KeyFromMatch(res match.Result, statusCode int, body ...string) string {
 	if res.Signal == match.SignalPermission403 {
 		return "permission_403"
 	}
-	// Status-only fallback is safe for 429. A bare 403 is not: gateways,
-	// region blocks and HTML deny pages also use 403 and must remain unmatched.
-	if statusCode == 429 {
-		return "free_usage_429"
-	}
-	// body hint (free-usage / permission) when status weird
+	// body evidence when signal missed (weird status / partial body)
 	if len(body) > 0 {
 		low := strings.ToLower(body[0])
-		if strings.Contains(low, "free-usage") || strings.Contains(low, "free_usage") {
+		if strings.Contains(low, "free-usage") || strings.Contains(low, "free_usage") ||
+			strings.Contains(low, "included free usage") {
 			return "free_usage_429"
 		}
 		if strings.Contains(low, "permission-denied") || strings.Contains(low, "access to the chat endpoint is denied") {
 			return "permission_403"
 		}
 	}
+	_ = statusCode // status alone is never a class
 	return "unmatched"
 }
 

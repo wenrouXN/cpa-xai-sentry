@@ -11,7 +11,8 @@ import (
 	"github.com/openclaw-local/cpa-xai-sentry/internal/trash"
 )
 
-// any_error enabled: consecutive failures across types trigger ladder.
+// any_error enabled: consecutive failures across *classified* types trigger ladder.
+// Unmatched-only failures must NOT be upgraded by any_error (see TestAnyErrorDoesNotUpgradeUnmatched).
 func TestAnyErrorLadderCoversMixedSignals(t *testing.T) {
 	dir := t.TempDir()
 	cfg := sentrycfg.Default()
@@ -24,25 +25,27 @@ func TestAnyErrorLadderCoversMixedSignals(t *testing.T) {
 		Escalations: []state.EscalationRule{{Streak: 3, Action: "cooldown", CooldownSec: 600}},
 		Source:      "builtin",
 	})
-	// per-signal 403 needs 3; we only fire 1x403 + 1x401 + 1x unmatched-ish body → any_error=3
+	// per-signal needs high threshold so only any_error fires
 	st.UpsertErrorPolicy(state.ErrorPolicy{
 		Key: "permission_403", Enabled: true, Action: "cooldown", Threshold: 99, CountMode: "streak",
 		Escalations: []state.EscalationRule{{Streak: 99, Action: "observe"}},
 	})
 	st.UpsertErrorPolicy(state.ErrorPolicy{
-		Key: "auth_401", Enabled: true, Action: "candidate", Threshold: 99, CountMode: "streak",
+		Key: "free_usage_429", Enabled: true, Action: "cooldown", Threshold: 99, CountMode: "streak",
 		Escalations: []state.EscalationRule{{Streak: 99, Action: "observe"}},
 	})
 	_ = st.Save()
 	g := guard.New(cfg, st, trash.New(filepath.Join(dir, "t"), 7, true, st), nil)
 
+	permBody := `{"code":"permission-denied","error":"Access to the chat endpoint is denied. Please ensure you're using the correct credentials."}`
+	freeBody := `{"code":"subscription:free-usage-exhausted","error":"You've used all the included free usage for model x"}`
 	evs := []guard.UsageEvent{
 		{AuthIndex: "a1", FileName: "xai-a1@lovc.eu.cc.json", Email: "a1@lovc.eu.cc", Provider: "xai",
-			StatusCode: 403, Body: `{"error":"permission denied"}`, Source: "usage", Model: "grok-4.5"},
+			StatusCode: 403, Body: permBody, Source: "usage", Model: "grok-4.5"},
 		{AuthIndex: "a1", FileName: "xai-a1@lovc.eu.cc.json", Email: "a1@lovc.eu.cc", Provider: "xai",
-			StatusCode: 401, Body: `{"error":"Authentication required"}`, Source: "usage", Model: "grok-3"},
+			StatusCode: 429, Body: freeBody, Source: "usage", Model: "grok-3"},
 		{AuthIndex: "a1", FileName: "xai-a1@lovc.eu.cc.json", Email: "a1@lovc.eu.cc", Provider: "xai",
-			StatusCode: 403, Body: `{"error":"permission denied"}`, Source: "usage", Model: "grok-4.5"},
+			StatusCode: 403, Body: permBody, Source: "usage", Model: "grok-4.5"},
 	}
 	for _, ev := range evs {
 		if err := g.HandleUsage(context.Background(), ev); err != nil {
@@ -58,8 +61,45 @@ func TestAnyErrorLadderCoversMixedSignals(t *testing.T) {
 	}
 	// should be in cool due to any_error ≥3
 	if acc.State != state.CooldownPermission && acc.State != state.CooldownQuota && acc.State != state.CooldownSpending {
-		// 403 cool types as permission when signal is 403
 		t.Fatalf("state=%s want cool (any_error)", acc.State)
+	}
+}
+
+// any_error must never demote the unmatched observe-only bucket.
+func TestAnyErrorDoesNotUpgradeUnmatched(t *testing.T) {
+	dir := t.TempDir()
+	cfg := sentrycfg.Default()
+	cfg.SentryEnabled = true
+	cfg.AutoCooldown = true
+	st := state.New(filepath.Join(dir, "s.json"))
+	st.EnsureBuiltinPolicies(map[string]state.ErrorPolicy{
+		"unmatched": {Key: "unmatched", Enabled: true, Action: "observe", Threshold: 1, Source: "builtin"},
+	})
+	st.UpsertErrorPolicy(state.ErrorPolicy{
+		Key: "any_error", Enabled: true, Action: "cooldown", Threshold: 2, CooldownSec: 600, CountMode: "streak",
+		Escalations: []state.EscalationRule{{Streak: 2, Action: "cooldown", CooldownSec: 600}},
+		Source:      "builtin",
+	})
+	_ = st.Save()
+	g := guard.New(cfg, st, trash.New(filepath.Join(dir, "t"), 7, true, st), nil)
+	body := "local error: tls: bad record MAC"
+	for i := 0; i < 3; i++ {
+		if err := g.HandleUsage(context.Background(), guard.UsageEvent{
+			AuthIndex: "u1", FileName: "xai-u1@lovc.eu.cc.json", Email: "u1@lovc.eu.cc", Provider: "xai",
+			StatusCode: 0, Body: body, Source: "usage",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	acc := st.Get("u1")
+	if acc == nil || acc.LastSignal != "unmatched" {
+		t.Fatalf("want unmatched last_signal, got %+v", acc)
+	}
+	if acc.State != state.Active && acc.State != "" {
+		t.Fatalf("unmatched must stay observe-only, state=%s", acc.State)
+	}
+	if acc.Streaks["any_error"] < 2 {
+		t.Fatalf("any_error may still count, got %v", acc.Streaks)
 	}
 }
 

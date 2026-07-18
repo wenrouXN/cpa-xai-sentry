@@ -308,17 +308,19 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 			g.State.IncStreak(ev.AuthIndex, errKey)
 		}
 
-		// 2) 任意错误阶梯（若更强则覆盖）
-		if ap, ok := g.State.GetErrorPolicy("any_error"); ok && ap.Enabled {
-			anyAct := policy.Decide(g.Cfg, policy.Input{
-				Signal: res.Signal, ErrorKey: "any_error", Streak: anyStreak,
-				Tier: tier.Tier(acc.Tier), Policy: &ap,
-			})
-			if policyActionRank(anyAct) > policyActionRank(act) {
-				act = anyAct
-				polPtr = &ap
-				if act.Reason != "" && !strings.Contains(act.Reason, "any_error") && !strings.Contains(act.Reason, "任意错误") {
-					act.Reason = act.Reason + " · 任意错误连续≥" + itoaGuard(anyStreak)
+		// 2) 任意错误阶梯（若更强则覆盖）— never upgrades unmatched (observe-only bucket)
+		if errKey != "unmatched" {
+			if ap, ok := g.State.GetErrorPolicy("any_error"); ok && ap.Enabled {
+				anyAct := policy.Decide(g.Cfg, policy.Input{
+					Signal: res.Signal, ErrorKey: "any_error", Streak: anyStreak,
+					Tier: tier.Tier(acc.Tier), Policy: &ap,
+				})
+				if policyActionRank(anyAct) > policyActionRank(act) {
+					act = anyAct
+					polPtr = &ap
+					if act.Reason != "" && !strings.Contains(act.Reason, "any_error") && !strings.Contains(act.Reason, "任意错误") {
+						act.Reason = act.Reason + " · 任意错误连续≥" + itoaGuard(anyStreak)
+					}
 				}
 			}
 		}
@@ -379,19 +381,21 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 		Signal: res.Signal, ErrorKey: errKey, Streak: streak,
 		Tier: tier.Tier(acc.Tier), Policy: polPtr,
 	})
-	// global any_error ladder: if stronger, upgrade act
-	if ap, ok := g.State.GetErrorPolicy("any_error"); ok && ap.Enabled {
-		anyAct := policy.Decide(g.Cfg, policy.Input{
-			Signal: res.Signal, ErrorKey: "any_error", Streak: anyStreak,
-			Tier: tier.Tier(acc.Tier), Policy: &ap,
-		})
-		if policyActionRank(anyAct) > policyActionRank(act) {
-			act = anyAct
-			if act.Reason != "" && !strings.Contains(act.Reason, "any_error") && !strings.Contains(act.Reason, "任意错误") {
-				act.Reason = act.Reason + " · 任意错误连续≥" + itoaGuard(anyStreak)
+	// global any_error ladder: if stronger, upgrade act — never upgrades unmatched
+	if errKey != "unmatched" {
+		if ap, ok := g.State.GetErrorPolicy("any_error"); ok && ap.Enabled {
+			anyAct := policy.Decide(g.Cfg, policy.Input{
+				Signal: res.Signal, ErrorKey: "any_error", Streak: anyStreak,
+				Tier: tier.Tier(acc.Tier), Policy: &ap,
+			})
+			if policyActionRank(anyAct) > policyActionRank(act) {
+				act = anyAct
+				if act.Reason != "" && !strings.Contains(act.Reason, "any_error") && !strings.Contains(act.Reason, "任意错误") {
+					act.Reason = act.Reason + " · 任意错误连续≥" + itoaGuard(anyStreak)
+				}
+				// use any_error policy cooldown seconds when cool
+				polPtr = &ap
 			}
-			// use any_error policy cooldown seconds when cool
-			polPtr = &ap
 		}
 	}
 
