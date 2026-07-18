@@ -568,13 +568,16 @@ func (g *Guard) applyCooldown(ctx context.Context, ev UsageEvent, res match.Resu
 			recoverAt = maxAt
 		}
 	}
-	// LastSignal is already the resolved fingerprint/class set by the caller.
+	// LastSignal is the classified error key (free_usage_429 / permission_403 / reason:fp_* / unmatched).
+	// Never overwrite a real class with empty SignalNone — callers stamp errKey first.
 	sig := ""
 	if cur := g.State.Get(ev.AuthIndex); cur != nil {
 		sig = cur.LastSignal
 	}
 	if sig == "" || sig == "any_error" {
-		sig = string(res.Signal)
+		if s := string(res.Signal); s != "" && s != "any_error" {
+			sig = s
+		}
 	}
 	if sig != "" && sig != "any_error" {
 		g.State.SetLastSignal(ev.AuthIndex, sig)

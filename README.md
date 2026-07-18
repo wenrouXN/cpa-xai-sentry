@@ -8,7 +8,7 @@ CLIProxyAPI **native CGO plugin** for xAI / Grok account fleet:
 - **Register** tab talks to local `grok-register-lite` (`:8788`) as a black box (manual / floor / schedule)
 - **Web panel** for live accounts, error policies, trash, action logs
 
-Current version: **v1.2.6** (single source: `internal/version.Version`)
+Current version: **v1.2.7** (single source: `internal/version.Version`)
 
 > Successor to `cpa-xai-quota-guard`. Run **only this plugin** for xAI free-usage guarding — do not run both enforcers.
 
@@ -289,7 +289,7 @@ See **[docs/AUTH_CLOSED_LOOP.md](docs/AUTH_CLOSED_LOOP.md)** for the full state 
 - Unit tests for match / guard / policy / patrol / state / panel paths
 - Atomic state save (`*.tmp` + rename, mode 0600)
 - Account `Get` returns a snapshot copy (no concurrent map/field races on returned pointers)
-- Single version source: `internal/version.Version` (currently **1.2.6**)
+- Single version source: `internal/version.Version` (currently **1.2.7**)
 - Permanent disable requires master `sentry_enabled`
 - Default remove path is trash (7d); 402 / Super-Heavy protected from auto-trash
 - Do not run together with `cpa-xai-quota-guard`

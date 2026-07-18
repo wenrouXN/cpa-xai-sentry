@@ -1030,7 +1030,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			{"value": "active_watch", "label": "待观察（全部）", "count": summary["active_watch"]},
 			{"value": "active_watch_idle", "label": "正常·待观察", "count": summary["active_watch_idle"]},
 			{"value": "active_watch_signal", "label": "正常·有信号观察", "count": summary["active_watch_signal"]},
-			{"value": "cooldown_quota", "label": "冷却（额度/指纹）", "count": summary["cooldown_quota"]},
+			{"value": "cooldown_quota", "label": "冷却", "count": summary["cooldown_quota"]},
 			{"value": "cooldown_spending", "label": "402·消费冷却", "count": summary["cooldown_spending"]},
 			{"value": "cooldown_permission", "label": "403·权限冷却", "count": summary["cooldown_permission"]},
 			{"value": "candidate_dead", "label": "候删", "count": summary["candidate"]},

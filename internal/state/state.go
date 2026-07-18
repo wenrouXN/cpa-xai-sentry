@@ -17,9 +17,9 @@ type AccountState string
 
 const (
 	Active             AccountState = "active"
-	CooldownQuota      AccountState = "cooldown_quota"
-	CooldownSpending   AccountState = "cooldown_spending"
-	CooldownPermission AccountState = "cooldown_permission"
+	CooldownQuota      AccountState = "cooldown_quota"      // generic cool bucket (free_usage 429 OR fingerprint cool); display uses last_signal
+	CooldownSpending   AccountState = "cooldown_spending"   // 402 spending
+	CooldownPermission AccountState = "cooldown_permission" // 403 permission cool
 	CandidateDead      AccountState = "candidate_dead"
 	UserManual         AccountState = "user_manual"
 	Trashed            AccountState = "trashed"

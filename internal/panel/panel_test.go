@@ -172,6 +172,43 @@ func TestStateCooldownQuotaFingerprintDisplayUsesLastSignalHTTP(t *testing.T) {
 	}
 }
 
+func TestEmptyLastSignalCooldownIsNotQuotaExhausted(t *testing.T) {
+	dir := t.TempDir()
+	cfg := sentrycfg.Default()
+	st := state.New(filepath.Join(dir, "s.json"))
+	tr := trash.New(filepath.Join(dir, "trash"), 7, true, st)
+	api := &panel.API{Cfg: &cfg, State: st, Trash: tr, Guard: guard.New(cfg, st, tr, nil)}
+	srv := httptest.NewServer(api.Handler())
+	defer srv.Close()
+
+	st.Touch("hist")
+	st.SetAccountState("hist", state.CooldownQuota, "plugin_auto")
+	// empty last_signal: historical v2 wipe — must not show 429·额度冷却
+	resp, err := http.Get(srv.URL + "/state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Accounts []struct {
+			Reason    string `json:"reason"`
+			QuotaText string `json:"quota_text"`
+		} `json:"accounts"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Accounts) != 1 {
+		t.Fatalf("%+v", out.Accounts)
+	}
+	if out.Accounts[0].Reason != "冷却" {
+		t.Fatalf("want 冷却, got %q", out.Accounts[0].Reason)
+	}
+	if strings.Contains(out.Accounts[0].Reason, "429") || strings.Contains(out.Accounts[0].QuotaText, "用尽") {
+		t.Fatalf("empty-signal cool must not look like free_usage: %+v", out.Accounts[0])
+	}
+}
+
 func TestAccountRecentHumanizesActionReasons(t *testing.T) {
 	dir := t.TempDir()
 	cfg := sentrycfg.Default()
