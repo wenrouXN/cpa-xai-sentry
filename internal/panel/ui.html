@@ -755,13 +755,9 @@ function candidateLabel(sig, acc){
   if(sig==='free_usage_429') return {text:'429·候删', tip:'额度类 → 候删'};
   if(sig==='spending_limit_402') return {text:'402·候删', tip:'消费限额 → 候删'};
   if(!sig) return {text:'候删', tip:'候选删除 · 关流仍在账本'};
-  // never dump reason:fp_* into 状态列
-  const name=signalZH(sig) || stripCodePrefix(acc&&acc.signal_msg||'');
+  // same style as builtins: 426·候删 only — never reason:fp_* or long Chinese name
   const code=signalCode(sig, acc);
-  if(name && !String(name).startsWith('reason:') && !String(name).startsWith('fp_')){
-    return {text:(code?code+'·':'')+name+'·候删', tip:name+' → 候删（不自动恢复）'};
-  }
-  if(code) return {text:code+'·候删', tip:'HTTP '+code+' → 候删'};
+  if(code) return {text:code+'·候删', tip:'HTTP '+code+' → 候删（不自动恢复）'};
   return {text:'候删', tip:'候选删除 · 关流仍在账本'};
 }
 function recoverWatchLabel(sig){

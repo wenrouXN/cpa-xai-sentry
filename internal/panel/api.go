@@ -395,7 +395,8 @@ func (a *API) suggestAction(acc *state.Account) (action, reason string) {
 }
 
 // candidateStatusLabel: 候删 row text by real last_signal (not always 401).
-// Never surface raw reason:fp_* / free_usage_429 machine keys.
+// Format matches builtins: 401·候删 / 403·候删 / 429·候删 / 426·候删.
+// Never surface reason:fp_* or Chinese error names in the status column.
 func (a *API) candidateStatusLabel(acc *state.Account) string {
 	if acc == nil {
 		return "候删"
@@ -412,21 +413,10 @@ func (a *API) candidateStatusLabel(acc *state.Account) string {
 	case "":
 		return "候删"
 	default:
-		zh := ""
-		if a != nil {
-			zh = a.signalDisplayZH(acc.LastSignal)
-		}
-		zh = stripSignalCodePrefix(zh)
-		if zh == "" || isInternalCatalogKey(zh) || strings.HasPrefix(zh, "reason:") || strings.HasPrefix(zh, "fp_") {
-			if code := a.fingerprintHTTPCode(acc.LastSignal); code != "" {
-				return code + "·候删"
-			}
-			return "候删"
-		}
 		if code := a.fingerprintHTTPCode(acc.LastSignal); code != "" {
-			return code + "·" + zh + "·候删"
+			return code + "·候删"
 		}
-		return zh + "·候删"
+		return "候删"
 	}
 }
 

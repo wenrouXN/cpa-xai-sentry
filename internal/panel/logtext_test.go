@@ -1,7 +1,6 @@
 package panel
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/openclaw-local/cpa-xai-sentry/internal/state"
@@ -38,13 +37,7 @@ func TestCandidateLabelNeverSurfacesFingerprintKey(t *testing.T) {
 	a := &API{State: st}
 	acc := &state.Account{AuthIndex: "a", State: state.CandidateDead, LastSignal: fp}
 	got := a.candidateStatusLabel(acc)
-	if strings.Contains(got, "reason:") || strings.Contains(got, "fp_") {
-		t.Fatalf("must not surface machine key: %q", got)
-	}
-	if !strings.Contains(got, "候删") {
-		t.Fatalf("want 候删 suffix: %q", got)
-	}
-	if !strings.Contains(got, "终端版本过低") && !strings.Contains(got, "426") {
-		t.Fatalf("want Chinese name or HTTP code: %q", got)
+	if got != "426·候删" {
+		t.Fatalf("want 426·候删, got %q", got)
 	}
 }
