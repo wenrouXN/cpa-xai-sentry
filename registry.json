@@ -3,7 +3,7 @@
     {
       "id": "cpa-xai-sentry",
       "name": "XAI Sentry",
-      "version": "1.1.82",
+      "version": "1.3.1",
       "description": "xAI/Grok observe + policy ladder + patrol + register(8788) + trash for CLIProxyAPI",
       "author": "local",
       "license": "MIT",

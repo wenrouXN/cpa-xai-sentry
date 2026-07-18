@@ -2263,12 +2263,37 @@ func policyActionRank(a policy.Action) int {
 
 func (g *Guard) applyPermanentDisable(ctx context.Context, ev UsageEvent, reason string) error {
 	name := ev.FileName
+	var cur *state.Account
+	if g.State != nil {
+		cur = g.State.Get(ev.AuthIndex)
+	}
 	if name == "" || cpaapi.LooksLikeOpaqueID(name) {
-		if acc := g.State.Get(ev.AuthIndex); acc != nil {
-			name = g.resolveFileName(ctx, ev.AuthIndex, acc.FileName, acc.Email)
+		if cur != nil {
+			name = g.resolveFileName(ctx, ev.AuthIndex, cur.FileName, cur.Email)
 		} else {
 			name = g.resolveFileName(ctx, ev.AuthIndex, ev.FileName, ev.Email)
 		}
+	}
+	// Idempotent: already panel/policy permanent (user_manual) → no second action log.
+	// Still reassert CPA file closed (file may have been wrongly opened).
+	// cpa_file_disabled / cpa_disabled sticky is a different ownership path — not quiet-skip.
+	alreadyPermanent := cur != nil &&
+		cur.State == state.UserManual &&
+		cur.DisableSource == "user_manual"
+	if alreadyPermanent {
+		if name != "" && !cpaapi.LooksLikeOpaqueID(name) {
+			g.State.UpdateMeta(ev.AuthIndex, name, ev.Email, "")
+		}
+		if g.CPA != nil && name != "" && !cpaapi.LooksLikeOpaqueID(name) {
+			if err := g.CPA.SetDisabled(ctx, name, true); err != nil {
+				// only log when reassert actually fails
+				g.State.Log(state.ActionLog{Auth: ev.AuthIndex, Source: ev.Source, Action: "manual_disable", Reason: "disable_failed:" + err.Error()})
+				return err
+			}
+		}
+		// quiet stamp — no second 【永久禁用】 log
+		g.State.StampLastAction(ev.AuthIndex, "manual_disable")
+		return nil
 	}
 	// ownership first (closed loop), then CPA file
 	g.State.SetAccountState(ev.AuthIndex, state.UserManual, "user_manual")

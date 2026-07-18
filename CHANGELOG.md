@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.1
+
+### 永禁幂等：状态不变不打动作日志
+- **现象**：已 `user_manual` 永久禁用的号，巡查/usage 再命中 disable 策略时每小时重复写 `manual_disable`（「策略阶梯永久禁用 · 连续≥1」刷屏）。
+- **修复**：`applyPermanentDisable` 若当前已是 `State=user_manual` 且 `DisableSource=user_manual`，只补关 CPA 文件 + `StampLastAction`，**不**再追加动作日志（对齐冷却幂等）。首次进永禁、以及 `cpa_file_disabled` 路径仍正常记日志。
+
 ## 1.1.83
 
 ### 修 403 候删循环 + 阶梯严重度 + 候删文案
