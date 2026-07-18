@@ -1497,6 +1497,16 @@ func (a *API) handleLogs(w http.ResponseWriter, r *http.Request) {
 
 func humanizeReason(reason, sigL, action string) string {
 	r := strings.TrimSpace(reason)
+	// Internal catalog / fingerprint keys must never surface raw in 动作日志.
+	// Prefer already-localized signal label (policy display/label → 429·免费额度用尽).
+	if isInternalCatalogKey(r) {
+		if sigL != "" {
+			return stripSignalCodePrefix(sigL)
+		}
+		if zh := logSignalZHFallback(r); zh != "" && zh != r {
+			return zh
+		}
+	}
 	switch r {
 	case "bulk_suggested_cooldown":
 		return "面板批量冷却"
@@ -1505,11 +1515,11 @@ func humanizeReason(reason, sigL, action string) string {
 			return "免费额度用尽"
 		}
 		if sigL != "" {
-			return sigL
+			return stripSignalCodePrefix(sigL)
 		}
 		return ""
 	case "permission_denied", "permission-denied":
-		return "权限拒绝 403"
+		return "权限拒绝"
 	case "recover_at":
 		return "冷却到期自动恢复"
 	case "cpa_disabled_sync":
@@ -1539,12 +1549,10 @@ func humanizeReason(reason, sigL, action string) string {
 	case "policy_permanent_disable":
 		return "策略阶梯触发永久禁用"
 	case "panel bulk/manual", "panel":
-		// handled below too
 		return "面板操作"
 	}
 	// historical policy reason strings with parentheses
 	if strings.HasPrefix(r, "策略阶梯=永久禁用") {
-		// 策略阶梯=永久禁用(≥6) → 策略阶梯永久禁用 · 连续≥6
 		n := strings.TrimSuffix(strings.TrimPrefix(r, "策略阶梯=永久禁用(≥"), ")")
 		if n != r && n != "" {
 			return "策略阶梯永久禁用 · 连续≥" + n
@@ -1582,10 +1590,40 @@ func humanizeReason(reason, sigL, action string) string {
 	case "free_usage_exhausted", "subscription:free-usage-exhausted":
 		return "免费额度用尽"
 	}
-	if sigL != "" && (r == action || r == sigL) {
-		return sigL
+	if sigL != "" && (r == action || r == sigL || r == strings.TrimSpace(reason)) {
+		// prefer Chinese signal when reason is redundant with action/signal key
+		if isInternalCatalogKey(r) || r == action {
+			return stripSignalCodePrefix(sigL)
+		}
+	}
+	// last resort: never leave bare free_usage_429 style keys
+	if zh := logSignalZHFallback(r); zh != "" && zh != r {
+		return zh
+	}
+	if sigL != "" && isInternalCatalogKey(r) {
+		return stripSignalCodePrefix(sigL)
 	}
 	return r
+}
+
+// isInternalCatalogKey reports machine keys that must not appear in 动作日志「原因」.
+func isInternalCatalogKey(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	switch s {
+	case "free_usage_429", "permission_403", "auth_401", "spending_limit_402",
+		"any_error", "unmatched", "free_usage", "permission_denied", "permission-denied":
+		return true
+	}
+	if strings.HasPrefix(s, "reason:") || strings.HasPrefix(s, "fp_") {
+		return true
+	}
+	if strings.HasPrefix(s, "http_") || strings.HasPrefix(s, "code:") || strings.HasPrefix(s, "msg:") {
+		return true
+	}
+	return false
 }
 
 func composeLogText(actL, action, sigL, signal, who, reason, srcL, source string) (string, string) {
@@ -1917,13 +1955,13 @@ func (a *API) signalDisplayZH(sig string) string {
 	if sig == "" {
 		return ""
 	}
-	// 1) 策略卡：标题用短 label（与 429·免费额度用尽 同风格）；display_msg 偏长留给详情
+	// 1) 策略卡：动作日志「原因」优先 display_msg（错误信息）；否则短 label
 	name := ""
 	if a != nil && a.State != nil {
 		if p, ok := a.State.GetErrorPolicy(sig); ok {
-			name = strings.TrimSpace(p.Label)
+			name = strings.TrimSpace(p.DisplayMsg)
 			if name == "" {
-				name = strings.TrimSpace(p.DisplayMsg)
+				name = strings.TrimSpace(p.Label)
 			}
 		}
 	}
@@ -1960,31 +1998,27 @@ func (a *API) signalDisplayZH(sig string) string {
 
 func stripSignalCodePrefix(s string) string {
 	s = strings.TrimSpace(s)
-	// HTTP 426 · xxx / 426·xxx / 426.xxx
-	if len(s) >= 4 {
-		// HTTP NNN
-		low := strings.ToLower(s)
-		if strings.HasPrefix(low, "http ") && len(s) >= 8 {
-			// "HTTP 426..."
-			rest := strings.TrimSpace(s[5:])
-			if len(rest) >= 3 {
-				if rest[0] >= '0' && rest[0] <= '9' {
-					i := 0
-					for i < len(rest) && rest[i] >= '0' && rest[i] <= '9' {
-						i++
-					}
-					rest = strings.TrimLeft(rest[i:], " ·.-")
-					if rest != "" {
-						return rest
-					}
-				}
+	// HTTP NNN …
+	low := strings.ToLower(s)
+	if strings.HasPrefix(low, "http ") {
+		rest := strings.TrimSpace(s[5:])
+		i := 0
+		for i < len(rest) && rest[i] >= '0' && rest[i] <= '9' {
+			i++
+		}
+		if i >= 3 {
+			rest = strings.TrimLeft(rest[i:], " ·.-")
+			if rest != "" {
+				return rest
 			}
 		}
 	}
-	// NNN· or NNN.
-	if len(s) >= 4 && s[0] >= '0' && s[0] <= '9' && s[1] >= '0' && s[1] <= '9' && s[2] >= '0' && s[2] <= '9' {
-		if s[3] == '·' || s[3] == '.' || s[3] == ' ' {
-			return strings.TrimSpace(s[4:])
+	// NNN·name / NNN.name / NNN name  (· is multi-byte; walk runes)
+	runes := []rune(s)
+	if len(runes) >= 4 && runes[0] >= '0' && runes[0] <= '9' && runes[1] >= '0' && runes[1] <= '9' && runes[2] >= '0' && runes[2] <= '9' {
+		switch runes[3] {
+		case '·', '.', ' ', '-', '—', '–':
+			return strings.TrimSpace(string(runes[4:]))
 		}
 	}
 	return s
