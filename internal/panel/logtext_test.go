@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/openclaw-local/cpa-xai-sentry/internal/state"
@@ -27,18 +28,23 @@ func TestHumanizeReasonNeverSurfacesInternalKeys(t *testing.T) {
 	}
 }
 
-func TestSignalDisplayPrefersDisplayMsg(t *testing.T) {
+func TestCandidateLabelNeverSurfacesFingerprintKey(t *testing.T) {
 	st := state.New("")
+	fp := "reason:fp_bb675aa3c700f17d"
 	st.UpsertErrorPolicy(state.ErrorPolicy{
-		Key: "free_usage_429", Label: "免费额度用尽", DisplayMsg: "额度用完了", Enabled: true,
+		Key: fp, Label: "终端版本过低", DisplayMsg: "终端版本过低", Enabled: true,
 	})
+	st.ObserveError(fp, "终端版本过低", "none", "x", `{"error":"outdated"}`, "a", "f", "usage", 426)
 	a := &API{State: st}
-	got := a.signalDisplayZH("free_usage_429")
-	if got != "429·额度用完了" {
-		t.Fatalf("want display_msg in title, got %q", got)
+	acc := &state.Account{AuthIndex: "a", State: state.CandidateDead, LastSignal: fp}
+	got := a.candidateStatusLabel(acc)
+	if strings.Contains(got, "reason:") || strings.Contains(got, "fp_") {
+		t.Fatalf("must not surface machine key: %q", got)
 	}
-	// 原因 strip code prefix → 用户设置的中文错误信息
-	if why := humanizeReason("free_usage_429", got, "cooldown"); why != "额度用完了" {
-		t.Fatalf("want 额度用完了 in log reason, got %q", why)
+	if !strings.Contains(got, "候删") {
+		t.Fatalf("want 候删 suffix: %q", got)
+	}
+	if !strings.Contains(got, "终端版本过低") && !strings.Contains(got, "426") {
+		t.Fatalf("want Chinese name or HTTP code: %q", got)
 	}
 }

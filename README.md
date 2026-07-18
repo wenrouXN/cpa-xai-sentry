@@ -8,7 +8,7 @@ CLIProxyAPI **native CGO plugin** for xAI / Grok account fleet:
 - **Register** tab talks to local `grok-register-lite` (`:8788`) as a black box (manual / floor / schedule)
 - **Web panel** for live accounts, error policies, trash, action logs
 
-Current version: **v1.2.1** (single source: `internal/version.Version`)
+Current version: **v1.2.2** (single source: `internal/version.Version`)
 
 > Successor to `cpa-xai-quota-guard`. Run **only this plugin** for xAI free-usage guarding — do not run both enforcers.
 

@@ -354,13 +354,13 @@ func hasLadderProgress(acc *state.Account) bool {
 	return false
 }
 
-func suggestAction(acc *state.Account) (action, reason string) {
+func (a *API) suggestAction(acc *state.Account) (action, reason string) {
 	if acc == nil {
 		return "none", ""
 	}
 	switch acc.State {
 	case state.CandidateDead:
-		return "trash", candidateStatusLabel(acc)
+		return "trash", a.candidateStatusLabel(acc)
 	case state.CooldownQuota:
 		return "wait", "429·额度冷却"
 	case state.CooldownSpending:
@@ -395,7 +395,8 @@ func suggestAction(acc *state.Account) (action, reason string) {
 }
 
 // candidateStatusLabel: 候删 row text by real last_signal (not always 401).
-func candidateStatusLabel(acc *state.Account) string {
+// Never surface raw reason:fp_* / free_usage_429 machine keys.
+func (a *API) candidateStatusLabel(acc *state.Account) string {
 	if acc == nil {
 		return "候删"
 	}
@@ -411,13 +412,38 @@ func candidateStatusLabel(acc *state.Account) string {
 	case "":
 		return "候删"
 	default:
-		// compact: strip common prefixes
-		sig := acc.LastSignal
-		if len(sig) > 24 {
-			sig = sig[:24]
+		zh := ""
+		if a != nil {
+			zh = a.signalDisplayZH(acc.LastSignal)
 		}
-		return sig + "·候删"
+		zh = stripSignalCodePrefix(zh)
+		if zh == "" || isInternalCatalogKey(zh) || strings.HasPrefix(zh, "reason:") || strings.HasPrefix(zh, "fp_") {
+			if code := a.fingerprintHTTPCode(acc.LastSignal); code != "" {
+				return code + "·候删"
+			}
+			return "候删"
+		}
+		if code := a.fingerprintHTTPCode(acc.LastSignal); code != "" {
+			return code + "·" + zh + "·候删"
+		}
+		return zh + "·候删"
 	}
+}
+
+// fingerprintHTTPCode prefers key-derived code, else observed status_code for reason:fp_*.
+func (a *API) fingerprintHTTPCode(sig string) string {
+	if c := signalHTTPCode(sig); c != "" {
+		return c
+	}
+	if a == nil || a.State == nil {
+		return ""
+	}
+	for _, o := range a.State.ListObserved() {
+		if o.Key == sig && o.StatusCode > 0 {
+			return itoaPanel(o.StatusCode)
+		}
+	}
+	return ""
 }
 
 // inventoryFromCPA counts xAI auth files enabled/disabled (cached ~20s).
@@ -691,7 +717,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			summary["with_signal"]++
 			signalCounts[acc.LastSignal]++
 		}
-		act, reason := suggestAction(acc)
+		act, reason := a.suggestAction(acc)
 		switch act {
 		case "cooldown":
 			summary["suggest_cooldown"]++

@@ -728,12 +728,52 @@ function streakN(a){
   Object.keys(s).forEach(k=>{ const v=Number(s[k]||0); if(v>n){ n=v; key=k; } });
   return {n, key};
 }
+function signalZH(sig){
+  sig=String(sig||'').trim();
+  if(!sig) return '';
+  if(SIG_ZH[sig]) return SIG_ZH[sig];
+  let e=(ERRORS||[]).find(x=>x.key===sig);
+  if(!e && String(sig).startsWith('reason:')) e=(ERRORS||[]).find(x=>x.key===sig || x.split_shape===sig.slice('reason:'.length));
+  if(e){
+    const name=stripCodePrefix(e.display_msg||e.sample_msg||e.label||'');
+    if(name && name!==sig) return name;
+  }
+  if(String(sig).startsWith('reason:') || String(sig).startsWith('fp_')) return '';
+  return '';
+}
+function signalCode(sig, acc){
+  const c=httpCodeOf({key:sig, label:'', status_code:(acc&&acc.status_code)||0});
+  if(c) return c;
+  // ERRORS may carry status_code for fingerprint cards
+  const e=(ERRORS||[]).find(x=>x.key===sig);
+  if(e && e.status_code) return String(e.status_code);
+  return '';
+}
+function candidateLabel(sig, acc){
+  if(sig==='permission_403') return {text:'403·候删', tip:'HTTP 403 权限拒绝阶梯 → 候删（不自动恢复）'};
+  if(sig==='auth_401') return {text:'401·候删', tip:'HTTP 401 凭证失效 → 候删/候选'};
+  if(sig==='free_usage_429') return {text:'429·候删', tip:'额度类 → 候删'};
+  if(sig==='spending_limit_402') return {text:'402·候删', tip:'消费限额 → 候删'};
+  if(!sig) return {text:'候删', tip:'候选删除 · 关流仍在账本'};
+  // never dump reason:fp_* into 状态列
+  const name=signalZH(sig) || stripCodePrefix(acc&&acc.signal_msg||'');
+  const code=signalCode(sig, acc);
+  if(name && !String(name).startsWith('reason:') && !String(name).startsWith('fp_')){
+    return {text:(code?code+'·':'')+name+'·候删', tip:name+' → 候删（不自动恢复）'};
+  }
+  if(code) return {text:code+'·候删', tip:'HTTP '+code+' → 候删'};
+  return {text:'候删', tip:'候选删除 · 关流仍在账本'};
+}
 function recoverWatchLabel(sig){
   if(sig==='free_usage_429') return {text:'429·恢复待观察', tip:'额度冷却/残留后已接流，等一次成功请求清为正常·可用'};
   if(sig==='spending_limit_402') return {text:'402·恢复待观察', tip:'消费冷却后已接流，等一次成功请求清为正常·可用'};
   if(sig==='permission_403') return {text:'403·恢复待观察', tip:'权限相关恢复后观察中'};
   if(sig==='auth_401') return {text:'401·恢复待观察', tip:'凭证相关恢复后观察中'};
   if(sig==='code:invalid-argument') return {text:'参数·恢复待观察', tip:'参数类问题恢复后观察中'};
+  // fingerprint residual: show 中文 if known, else generic
+  const name=signalZH(sig);
+  const code=signalCode(sig);
+  if(name) return {text:(code?code+'·':'')+name+'·待观察', tip:name+' 恢复后观察中'};
   return {text:'正常·待观察', tip:'已接流，等待成功请求确认干净'};
 }
 function stateLabel(st, a){
@@ -757,6 +797,9 @@ function stateLabel(st, a){
       if(k==='permission_403') return {text:'正常·观察·403×'+stn.n, cls:'observe', tip:'仍在接流，403 连续计数中（阶梯策略）'};
       if(k==='auth_401') return {text:'正常·观察·401×'+stn.n, cls:'observe', tip:'仍在接流，凭证异常连续计数'};
       if(k==='code:invalid-argument') return {text:'正常·观察·参数×'+stn.n, cls:'observe', tip:'仍在接流，参数/上下文问题'};
+      const name=signalZH(k);
+      const code=signalCode(k,a);
+      if(name) return {text:'正常·观察·'+(code?code+'·':'')+name+'×'+stn.n, cls:'observe', tip:'仍在接流，错误连续计数'};
       return {text:'正常·观察·×'+stn.n, cls:'observe', tip:'仍在接流，有错误连续计数'};
     }
     if(sig){
@@ -772,13 +815,7 @@ function stateLabel(st, a){
   if(st==='cooldown_spending') return {text:'402·消费冷却', cls:'cooldown', tip:'HTTP 402 消费限额 → 冷却'};
   if(st==='cooldown_permission') return {text:'403·权限冷却', cls:'cooldown', tip:'HTTP 403 权限拒绝 → 冷却'};
   if(st==='candidate_dead'){
-    const sig=a&&a.last_signal||'';
-    if(sig==='permission_403') return {text:'403·候删', cls:'candidate', tip:'HTTP 403 权限拒绝阶梯 → 候删（不自动恢复）'};
-    if(sig==='auth_401') return {text:'401·候删', cls:'candidate', tip:'HTTP 401 凭证失效 → 候删/候选'};
-    if(sig==='free_usage_429') return {text:'429·候删', cls:'candidate', tip:sig+' → 候删'};
-    if(sig==='spending_limit_402') return {text:'402·候删', cls:'candidate', tip:sig+' → 候删'};
-    if(sig) return {text:sig+'·候删', cls:'candidate', tip:sig+' → 候删（不自动恢复）'};
-    return {text:'候删', cls:'candidate', tip:'候选删除 · 关流仍在账本'};
+    return Object.assign({cls:'candidate'}, candidateLabel(sig, a));
   }
   if(st==='user_manual'){
     if(a.disable_source==='cpa_file_disabled' || a.disable_source==='cpa_disabled')
@@ -787,10 +824,10 @@ function stateLabel(st, a){
   }
   if(st==='trashed') return {text:'垃圾箱', cls:'trash', tip:'已进垃圾箱，可恢复'};
   if(st==='purged') return {text:'已清除', cls:'trash', tip:'已彻底清除'};
-  if(sig==='free_usage_429') return {text:'429·额度冷却', cls:'cooldown', tip:sig};
-  if(sig==='spending_limit_402') return {text:'402·消费冷却', cls:'cooldown', tip:sig};
-  if(sig==='permission_403') return {text:'403·权限冷却', cls:'cooldown', tip:sig};
-  if(sig==='auth_401') return {text:'401·候删', cls:'candidate', tip:sig};
+  if(sig==='free_usage_429') return {text:'429·额度冷却', cls:'cooldown', tip:'额度冷却'};
+  if(sig==='spending_limit_402') return {text:'402·消费冷却', cls:'cooldown', tip:'消费冷却'};
+  if(sig==='permission_403') return {text:'403·权限冷却', cls:'cooldown', tip:'权限冷却'};
+  if(sig==='auth_401') return {text:'401·候删', cls:'candidate', tip:'凭证候删'};
   return {text: STATE_ZH[st]||st||'-', cls:'', tip:st||''};
 }
 function stateTag(st, a){
