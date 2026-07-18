@@ -78,7 +78,7 @@ func TestRealLogLifecycleReplay(t *testing.T) {
 	fp := errorfp.Build(spending, 402)
 	st.UpsertErrorPolicy(state.ErrorPolicy{
 		Key: fp.SuggestKey, Label: "消费限额", Enabled: true, Action: "cooldown",
-		Threshold: 1, CooldownSec: 3600, CountMode: "streak",
+		Threshold: 1, CooldownSec: 3600, CountMode: "streak", SplitShape: fp.Shape,
 		Escalations: []state.EscalationRule{{Streak: 1, Action: "cooldown", CooldownSec: 3600}},
 	})
 	if err := g.HandleUsage(context.Background(), guard.UsageEvent{

@@ -214,6 +214,7 @@ func (p ErrorPolicy) NormalizedEscalations() []EscalationRule {
 type ObservedError struct {
 	Key        string    `json:"key"`
 	Label      string    `json:"label"`
+	Shape      string    `json:"shape,omitempty"`
 	Signal     string    `json:"signal"`
 	Code       string    `json:"code"`
 	StatusCode int       `json:"status_code"`
@@ -233,6 +234,7 @@ type ErrorHit struct {
 	File   string    `json:"file,omitempty"`
 	Source string    `json:"source,omitempty"` // usage|patrol|tick|panel
 	Status int       `json:"status,omitempty"`
+	Shape  string    `json:"shape,omitempty"`
 	Sample string    `json:"sample,omitempty"`
 	Model  string    `json:"model,omitempty"` // request model when known
 }
@@ -999,6 +1001,21 @@ func (s *Store) ObserveError(key, label, signal, code, sample, auth, file, sourc
 	if label != "" {
 		o.Label = label
 	}
+	shape := ""
+	modelVals := model
+	if len(modelVals) > 0 {
+		last := strings.TrimSpace(modelVals[len(modelVals)-1])
+		if strings.HasPrefix(last, "fp_") || last == "free_usage_429" || last == "permission_403" {
+			shape = last
+			modelVals = modelVals[:len(modelVals)-1]
+		}
+	}
+	if shape == "" && (key == "unmatched" || strings.HasPrefix(key, "reason:fp_")) {
+		shape, _, _ = shapeOfLocked(sample, status)
+	}
+	if shape != "" {
+		o.Shape = shape
+	}
 	o.Signal = signal
 	o.Code = code
 	o.StatusCode = status
@@ -1019,14 +1036,14 @@ func (s *Store) ObserveError(key, label, signal, code, sample, auth, file, sourc
 		hitSample = hitSample[:240]
 	}
 	mod := ""
-	if len(model) > 0 {
-		mod = strings.TrimSpace(model[0])
+	if len(modelVals) > 0 {
+		mod = strings.TrimSpace(modelVals[0])
 	}
 	if len(mod) > 80 {
 		mod = mod[:80]
 	}
 	o.Hits = append(o.Hits, ErrorHit{
-		At: o.LastAt, Auth: auth, File: file, Source: source, Status: status, Sample: hitSample, Model: mod,
+		At: o.LastAt, Auth: auth, File: file, Source: source, Status: status, Shape: shape, Sample: hitSample, Model: mod,
 	})
 	// retain max 7 days + hard cap
 	cut := time.Now().Add(-errorHitRetention)
@@ -1200,7 +1217,10 @@ func (s *Store) SplitObservedByShape(from, to, newLabel, shape string) (int, err
 	keep := src.Hits[:0]
 	moved := make([]ErrorHit, 0)
 	for _, h := range src.Hits {
-		sh, _, _ := shapeOfLocked(h.Sample, h.Status)
+		sh := strings.TrimSpace(h.Shape)
+		if sh == "" {
+			sh, _, _ = shapeOfLocked(h.Sample, h.Status)
+		}
 		// also allow match by human message equality as shape key msg:...
 		if sh == shape || strings.Contains(strings.ToLower(h.Sample), strings.ToLower(strings.TrimPrefix(shape, "msg:"))) {
 			moved = append(moved, h)
@@ -1227,7 +1247,7 @@ func (s *Store) SplitObservedByShape(from, to, newLabel, shape string) (int, err
 		dst.Count += src.Count
 		dst.Hits = append(dst.Hits, src.Hits...)
 		if src.LastAt.After(dst.LastAt) {
-			dst.LastAt, dst.Sample, dst.LastAuth, dst.LastFile, dst.StatusCode = src.LastAt, src.Sample, src.LastAuth, src.LastFile, src.StatusCode
+			dst.LastAt, dst.Sample, dst.LastAuth, dst.LastFile, dst.StatusCode, dst.Shape = src.LastAt, src.Sample, src.LastAuth, src.LastFile, src.StatusCode, src.Shape
 		}
 		delete(s.Observed, from)
 		if s.ErrorPolicies != nil {
@@ -1288,6 +1308,7 @@ func (s *Store) SplitObservedByShape(from, to, newLabel, shape string) (int, err
 		dst.LastAuth = last.Auth
 		dst.LastFile = last.File
 		dst.StatusCode = last.Status
+		dst.Shape = last.Shape
 	}
 	src.Hits = keep
 	src.Count -= int64(len(moved))
@@ -1310,6 +1331,7 @@ func (s *Store) SplitObservedByShape(from, to, newLabel, shape string) (int, err
 		src.LastAuth = lastK.Auth
 		src.LastFile = lastK.File
 		src.StatusCode = lastK.Status
+		src.Shape = lastK.Shape
 	}
 	// ensure policy for target
 	if s.ErrorPolicies == nil {

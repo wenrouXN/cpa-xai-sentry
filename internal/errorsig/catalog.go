@@ -205,8 +205,8 @@ func HumanMsg(key, sample string, status int) string {
 
 // ShapeOf returns a stable fingerprint from the actual response shape.
 // HTTP status is one component, never the whole identity. Known builtins retain
-// their stable keys; every other shape gets reason:fp_<hash> so 403/402/etc.
-// samples remain independently split/mergeable.
+// their stable keys; every other shape returns a suggested reason:fp_<hash> key
+// for user split/merge, but callers decide whether to promote it.
 func ShapeOf(sample string, status int) (shape, label, suggestKey string) {
 	fp := errorfp.Build(sample, status)
 	return fp.Shape, HumanMsg("", sample, status), fp.SuggestKey

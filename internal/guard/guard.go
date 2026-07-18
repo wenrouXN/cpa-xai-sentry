@@ -89,7 +89,7 @@ func (g *Guard) routeBySplitShape(body string, status int) string {
 		return ""
 	}
 	fp := errorfp.Build(body, status)
-	shape, suggest := fp.Shape, fp.SuggestKey
+	shape := fp.Shape
 	if shape == "" {
 		return ""
 	}
@@ -101,9 +101,6 @@ func (g *Guard) routeBySplitShape(body string, status int) string {
 			if ss == shape {
 				return p.Key
 			}
-		}
-		if p.Key == suggest || p.Key == "reason:"+shape || p.Key == shape {
-			return p.Key
 		}
 	}
 	return ""
@@ -233,14 +230,11 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 		g.State.UpdateQuota(ev.AuthIndex, q.Limit, q.Used, q.Remaining, q.Source, q.ResetAt)
 	}
 	errKey := errorsig.KeyFromMatch(res, ev.StatusCode, ev.Body)
-	_, fingerprintLabel, suggestedKey := errorsig.ShapeOf(ev.Body, ev.StatusCode)
-	// Classification is driven by the normalized actual response fingerprint.
-	// A saved split/merge mapping wins; otherwise the fingerprint itself becomes
-	// the learned class. HTTP status alone never decides the class.
+	shape, fingerprintLabel, _ := errorsig.ShapeOf(ev.Body, ev.StatusCode)
+	// A saved split/merge mapping wins. Otherwise only strict builtins become
+	// standalone classes; unfamiliar shapes stay in unmatched until user split.
 	if k := g.routeBySplitShape(ev.Body, ev.StatusCode); k != "" {
 		errKey = k
-	} else if suggestedKey != "" {
-		errKey = suggestedKey
 	}
 	// User withdrew a class → new hits go to unmatched until explicitly merged/split again.
 	if g.State != nil && g.State.IsPolicyHidden(errKey) {
@@ -265,7 +259,7 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 	if len(sample) > 900 {
 		sample = sample[:900]
 	}
-	g.State.ObserveError(errKey, label, string(res.Signal), res.Code, sample, ev.AuthIndex, ev.FileName, ev.Source, ev.StatusCode, ev.Model)
+	g.State.ObserveError(errKey, label, string(res.Signal), res.Code, sample, ev.AuthIndex, ev.FileName, ev.Source, ev.StatusCode, ev.Model, shape)
 
 	// seed policy for builtins/unmatched only; user splits already have a card.
 	// Skip if user explicitly deleted (hid) this policy — respect user's choice.
@@ -310,6 +304,8 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 					Tier: tier.Tier(acc.Tier), Policy: &p,
 				})
 			}
+		} else if errKey == "unmatched" {
+			g.State.IncStreak(ev.AuthIndex, errKey)
 		}
 
 		// 2) 任意错误阶梯（若更强则覆盖）
@@ -374,8 +370,8 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 	anyStreak := g.State.IncStreak(ev.AuthIndex, "any_error")
 	var polPtr *state.ErrorPolicy
 	if p, ok := g.State.GetErrorPolicy(errKey); ok {
-		// unmatched card is UI dump only; concrete signals (401/402/…) use global switches
-		if errKey != "unmatched" || res.Signal == match.SignalNone {
+		// unmatched card is UI dump only; unfamiliar 401/402/etc. remain observe-only.
+		if errKey != "unmatched" {
 			polPtr = &p
 		}
 	}

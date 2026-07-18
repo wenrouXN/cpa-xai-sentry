@@ -2756,9 +2756,9 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 		r0.LastFile = o.LastFile
 		// build account hits from observed Hits ring
 		type agg struct {
-			Auth, Label, File, Source, Sample, Model string
-			Status, Hits, Streak                     int
-			LastAt                                   time.Time
+			Auth, Label, File, Source, Shape, Sample, Model string
+			Status, Hits, Streak                            int
+			LastAt                                          time.Time
 		}
 		am := map[string]*agg{}
 		for _, h := range o.Hits {
@@ -2771,13 +2771,14 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 			}
 			a0 := am[id]
 			if a0 == nil {
-				a0 = &agg{Auth: h.Auth, File: h.File, Source: h.Source, Sample: h.Sample, Status: h.Status, Model: h.Model}
+				a0 = &agg{Auth: h.Auth, File: h.File, Source: h.Source, Shape: h.Shape, Sample: h.Sample, Status: h.Status, Model: h.Model}
 				am[id] = a0
 			}
 			a0.Hits++
 			if h.At.After(a0.LastAt) {
 				a0.LastAt = h.At
 				a0.Source = h.Source
+				a0.Shape = h.Shape
 				a0.Sample = h.Sample
 				a0.Status = h.Status
 				a0.File = h.File
@@ -2788,7 +2789,7 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 		}
 		// fallback: if no hits ring yet, use last_auth
 		if len(am) == 0 && o.LastAuth != "" {
-			am[o.LastAuth] = &agg{Auth: o.LastAuth, File: o.LastFile, Hits: int(o.Count), LastAt: o.LastAt, Sample: o.Sample, Status: o.StatusCode}
+			am[o.LastAuth] = &agg{Auth: o.LastAuth, File: o.LastFile, Shape: o.Shape, Hits: int(o.Count), LastAt: o.LastAt, Sample: o.Sample, Status: o.StatusCode}
 		}
 		hits := make([]map[string]any, 0, len(am))
 		for _, a0 := range am {
@@ -2878,7 +2879,14 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 				msg = r0.Label
 			}
 			msg = msg + " · " + srcZH
-			shape, shapeLabel, suggestKey := errorsig.ShapeOf(a0.Sample, a0.Status)
+			shape := strings.TrimSpace(a0.Shape)
+			shapeLabel := ""
+			suggestKey := ""
+			if shape == "" {
+				shape, shapeLabel, suggestKey = errorsig.ShapeOf(a0.Sample, a0.Status)
+			} else {
+				_, shapeLabel, suggestKey = errorsig.ShapeOf(a0.Sample, a0.Status)
+			}
 			// when dumping into unmatched shapes, use human shape_label; if policy later
 			// owns that suggest_key, UI will show policy label.
 			hit := map[string]any{

@@ -82,6 +82,146 @@ func TestNonBuiltinFingerprintsDoNotUseLegacyGlobalSignalActions(t *testing.T) {
 	}
 }
 
+func TestUnknownShapesStayUnmatchedUntilSplit(t *testing.T) {
+	cfg := sentrycfg.Default()
+	cfg.AutoCooldown, cfg.AutoCandidate, cfg.AutoDelete = true, true, true
+	cfg.SignalThresholds["auth_401"] = 1
+	g, st, _, _ := setup(t, cfg)
+	body := `Post "https://api.x.ai/v1/chat/completions": local error: tls: bad record MAC`
+	fp := errorfp.Build(body, 0)
+
+	if err := g.HandleUsage(context.Background(), guard.UsageEvent{
+		Provider: "xai", AuthIndex: "tls-a", FileName: "xai-a.json",
+		StatusCode: 0, Body: body, Source: "usage",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := st.GetErrorPolicy(fp.SuggestKey); ok {
+		t.Fatalf("unknown shape must not seed fingerprint policy %s", fp.SuggestKey)
+	}
+	obs := st.ListObserved()
+	var unmatched *state.ObservedError
+	for i := range obs {
+		if obs[i].Key == fp.SuggestKey {
+			t.Fatalf("unknown shape observed under fingerprint key: %+v", obs[i])
+		}
+		if obs[i].Key == "unmatched" {
+			unmatched = &obs[i]
+		}
+	}
+	if unmatched == nil || unmatched.Count != 1 || unmatched.Shape != fp.Shape || !strings.Contains(unmatched.Sample, "bad record MAC") {
+		t.Fatalf("want unmatched observation with shape/sample, got %+v", unmatched)
+	}
+	if len(unmatched.Hits) != 1 || unmatched.Hits[0].Shape != fp.Shape {
+		t.Fatalf("want hit shape preserved, got %+v", unmatched.Hits)
+	}
+	if acc := st.Get("tls-a"); acc == nil || acc.LastSignal != "unmatched" || acc.Streaks["unmatched"] != 1 {
+		t.Fatalf("want unmatched last_signal/streak, got %+v", acc)
+	}
+
+	if _, err := st.SplitObservedByShape("unmatched", fp.SuggestKey, "TLS 握手异常", fp.Shape); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.HandleUsage(context.Background(), guard.UsageEvent{
+		Provider: "xai", AuthIndex: "tls-b", FileName: "xai-a.json",
+		StatusCode: 0, Body: body, Source: "usage",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if acc := st.Get("tls-b"); acc == nil || acc.LastSignal != fp.SuggestKey || acc.Streaks[fp.SuggestKey] != 1 {
+		t.Fatalf("want split key last_signal/streak, got %+v", acc)
+	}
+	foundSplit := false
+	for _, o := range st.ListObserved() {
+		if o.Key == fp.SuggestKey {
+			foundSplit = true
+			if o.Count != 2 || o.Shape != fp.Shape {
+				t.Fatalf("want split observation count/shape, got %+v", o)
+			}
+		}
+	}
+	if !foundSplit {
+		t.Fatalf("split key %s did not receive routed hit", fp.SuggestKey)
+	}
+}
+
+func TestHTTP426StaysUnmatchedWithoutSplitPolicy(t *testing.T) {
+	cfg := sentrycfg.Default()
+	cfg.AutoCooldown = true
+	g, st, _, _ := setup(t, cfg)
+	body := `{"error":"Your Grok CLI version (none) is outdated. Please update to version 0.1.202 or later"}`
+	fp := errorfp.Build(body, 426)
+
+	if err := g.HandleUsage(context.Background(), guard.UsageEvent{
+		Provider: "xai", AuthIndex: "a426", FileName: "xai-a.json",
+		StatusCode: 426, Body: body, Source: "usage",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := st.GetErrorPolicy(fp.SuggestKey); ok {
+		t.Fatalf("426 must not seed fingerprint policy %s", fp.SuggestKey)
+	}
+	if acc := st.Get("a426"); acc == nil || acc.State != state.Active || acc.LastSignal != "unmatched" {
+		t.Fatalf("426 without split must only observe unmatched, got %+v", acc)
+	}
+	found := false
+	for _, o := range st.ListObserved() {
+		if o.Key == "unmatched" {
+			found = true
+			if o.Shape != fp.Shape {
+				t.Fatalf("want 426 shape %s, got %+v", fp.Shape, o)
+			}
+		}
+		if o.Key == fp.SuggestKey {
+			t.Fatalf("426 observed under fingerprint key without split: %+v", o)
+		}
+	}
+	if !found {
+		t.Fatal("missing unmatched observation")
+	}
+}
+
+func TestStrictBuiltinsBypassUnmatched(t *testing.T) {
+	cfg := sentrycfg.Default()
+	cfg.AutoCooldown = true
+	g, st, _, _ := setup(t, cfg)
+	cases := []struct {
+		auth   string
+		status int
+		body   string
+		key    string
+	}{
+		{
+			auth: "builtin-429", status: 429, key: "free_usage_429",
+			body: `{"code":"subscription:free-usage-exhausted","error":"You have reached your included free usage"}`,
+		},
+		{
+			auth: "builtin-403", status: 403, key: "permission_403",
+			body: `{"code":"permission-denied","error":"Access to the chat endpoint is denied. Please ensure you're using the correct credentials."}`,
+		},
+	}
+	for _, tc := range cases {
+		if err := g.HandleUsage(context.Background(), guard.UsageEvent{
+			Provider: "xai", AuthIndex: tc.auth, FileName: "xai-a.json",
+			StatusCode: tc.status, Body: tc.body, Source: "usage",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if acc := st.Get(tc.auth); acc == nil || acc.LastSignal != tc.key || acc.Streaks[tc.key] != 1 {
+			t.Fatalf("want builtin %s last_signal/streak, got %+v", tc.key, acc)
+		}
+		found := false
+		for _, o := range st.ListObserved() {
+			if o.Key == tc.key {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("missing builtin observation %s", tc.key)
+		}
+	}
+}
+
 func Test429CooldownNotTrash(t *testing.T) {
 	cfg := sentrycfg.Default()
 	cfg.AutoCooldown = true
