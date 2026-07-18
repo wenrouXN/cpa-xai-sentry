@@ -41,3 +41,14 @@ func TestCandidateLabelNeverSurfacesFingerprintKey(t *testing.T) {
 		t.Fatalf("want 426·候删, got %q", got)
 	}
 }
+
+func TestSignalDisplayFallbackNeverSurfacesFingerprint(t *testing.T) {
+	a := &API{State: state.New("")}
+	sig := "reason:fp_bb675aa3c700f17d"
+	if got := a.signalDisplayZH(sig); got == sig || got == "fp_bb675aa3c700f17d" {
+		t.Fatalf("fingerprint leaked in display label: %q", got)
+	}
+	if got := humanizeReason(sig, a.signalDisplayZH(sig), "cooldown"); got == sig || got == "fp_bb675aa3c700f17d" {
+		t.Fatalf("fingerprint leaked in reason: %q", got)
+	}
+}

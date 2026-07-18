@@ -362,7 +362,7 @@ func (a *API) suggestAction(acc *state.Account) (action, reason string) {
 	case state.CandidateDead:
 		return "trash", a.candidateStatusLabel(acc)
 	case state.CooldownQuota:
-		return "wait", "429·额度冷却"
+		return "wait", a.cooldownQuotaStatusLabel(acc)
 	case state.CooldownSpending:
 		return "wait", "402·消费冷却"
 	case state.CooldownPermission:
@@ -417,6 +417,27 @@ func (a *API) candidateStatusLabel(acc *state.Account) string {
 			return code + "·候删"
 		}
 		return "候删"
+	}
+}
+
+func (a *API) cooldownQuotaStatusLabel(acc *state.Account) string {
+	if acc == nil {
+		return "冷却"
+	}
+	switch acc.LastSignal {
+	case "free_usage_429", "":
+		return "429·额度冷却"
+	case "spending_limit_402":
+		return "402·冷却"
+	case "permission_403":
+		return "403·冷却"
+	case "auth_401":
+		return "401·冷却"
+	default:
+		if code := a.fingerprintHTTPCode(acc.LastSignal); code != "" {
+			return code + "·冷却"
+		}
+		return "冷却"
 	}
 }
 
@@ -737,8 +758,9 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		display := cpaapi.DisplayName(acc.Email, acc.FileName, acc.AuthIndex)
 		if q != "" {
 			// broad match: email/file/auth/state/signal/action/reason/quota text/tokens
+			coolQuotaZH := a.cooldownQuotaStatusLabel(acc)
 			stZH := map[string]string{
-				"active": "正常·可用", "cooldown_quota": "429·额度冷却", "cooldown_spending": "402·消费冷却",
+				"active": "正常·可用", "cooldown_quota": coolQuotaZH, "cooldown_spending": "402·消费冷却",
 				"cooldown_permission": "403·权限冷却", "candidate_dead": "候删", "user_manual": "永久禁用",
 				"trashed": "垃圾箱", "purged": "已清除",
 			}
@@ -807,8 +829,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		qText := ""
 		// Prefer real body/cpamp numbers. If none, show "用尽" without inventing 2M/2M.
 		if (qLimit == 0 && qUsed == 0 && qRem == 0) &&
-			(acc.LastSignal == "free_usage_429" || qSrc == "free_usage_exhausted" ||
-				acc.State == state.CooldownQuota) {
+			(acc.LastSignal == "free_usage_429" || qSrc == "free_usage_exhausted") {
 			// if CPAMP day tokens present, show that as used under free-tier limit estimate
 			if dayT > 0 {
 				qUsed = dayT
@@ -1005,7 +1026,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			{"value": "active_watch", "label": "待观察（全部）", "count": summary["active_watch"]},
 			{"value": "active_watch_idle", "label": "正常·待观察", "count": summary["active_watch_idle"]},
 			{"value": "active_watch_signal", "label": "正常·有信号观察", "count": summary["active_watch_signal"]},
-			{"value": "cooldown_quota", "label": "429·额度冷却", "count": summary["cooldown_quota"]},
+			{"value": "cooldown_quota", "label": "冷却（额度/指纹）", "count": summary["cooldown_quota"]},
 			{"value": "cooldown_spending", "label": "402·消费冷却", "count": summary["cooldown_spending"]},
 			{"value": "cooldown_permission", "label": "403·权限冷却", "count": summary["cooldown_permission"]},
 			{"value": "candidate_dead", "label": "候删", "count": summary["candidate"]},
@@ -1981,6 +2002,9 @@ func (a *API) signalDisplayZH(sig string) string {
 			}
 		}
 	}
+	if strings.HasPrefix(sig, "reason:fp_") && (name == "" || name == sig || strings.HasPrefix(name, "fp_")) {
+		name = "未命名错误"
+	}
 	if name == "" {
 		name = logSignalZHFallback(sig)
 	}
@@ -2003,11 +2027,10 @@ func (a *API) signalDisplayZH(sig string) string {
 	}
 	// 最后兜底：绝不把 reason: 原文甩给用户
 	if strings.HasPrefix(sig, "reason:") {
-		rest := strings.TrimPrefix(sig, "reason:")
 		if c := signalHTTPCode(sig); c != "" {
 			return c + "·未命名错误"
 		}
-		return rest
+		return "未命名错误"
 	}
 	return logSignalZHFallback(sig)
 }
@@ -2515,9 +2538,10 @@ func (a *API) handleAccountRecent(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
 	events, path, err := cpamp.FetchAuthRecentEvents(ctx, auth, account, file, limit)
+	recentErr := ""
 	if err != nil {
-		writeJSON(w, 500, map[string]string{"error": err.Error()})
-		return
+		recentErr = err.Error()
+		events = nil
 	}
 	// action logs for same auth (recent, success+fail narrative)
 	type actRow struct {
@@ -2543,9 +2567,10 @@ func (a *API) handleAccountRecent(w http.ResponseWriter, r *http.Request) {
 			if !e.At.IsZero() {
 				at = e.At.In(loc).Format("01-02 15:04:05")
 			}
+			sigL := a.signalDisplayZH(e.Signal)
 			acts = append(acts, actRow{
 				At: at, Action: e.Action, Label: logActionZH(e.Action),
-				Reason: e.Reason, Signal: e.Signal, Source: e.Source,
+				Reason: humanizeReason(e.Reason, sigL, e.Action), Signal: e.Signal, Source: e.Source,
 			})
 			if len(acts) >= 20 {
 				break
@@ -2554,7 +2579,7 @@ func (a *API) handleAccountRecent(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{
 		"ok": true, "auth": auth, "account": account, "file": file,
-		"limit": limit, "db": path,
+		"limit": limit, "db": path, "recent_error": recentErr,
 		"events":  events, // oldest→newest
 		"actions": acts,   // newest-first action log slice
 	})
@@ -2616,6 +2641,7 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 		Label        string                 `json:"label"`
 		DisplayMsg   string                 `json:"display_msg,omitempty"`
 		SplitShape   string                 `json:"split_shape,omitempty"`
+		SplitShapes  []string               `json:"split_shapes,omitempty"`
 		Enabled      bool                   `json:"enabled"`
 		Action       string                 `json:"action"`
 		ActionLabel  string                 `json:"action_label"`
@@ -2670,8 +2696,8 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 		}
 		byKey[p.Key] = row{
 			Key: p.Key, Label: lab, DisplayMsg: strings.TrimSpace(p.DisplayMsg),
-			SplitShape: strings.TrimSpace(p.SplitShape),
-			Enabled:    p.Enabled, Action: p.Action,
+			SplitShape: strings.TrimSpace(p.SplitShape), SplitShapes: p.SplitShapeList(),
+			Enabled: p.Enabled, Action: p.Action,
 			ActionLabel: actionLabel(p.Action), Threshold: p.Threshold, CooldownSec: p.CooldownSec,
 			CountMode: cm, Escalations: esc,
 			NeverTrash: p.NeverTrash, Note: p.Note, Source: p.Source,
@@ -3049,9 +3075,7 @@ func (a *API) handleErrorReclassify(w http.ResponseWriter, r *http.Request) {
 			if in.DisplayMsg != "" {
 				pol.DisplayMsg = in.DisplayMsg
 			}
-			if in.Shape != "" {
-				pol.SplitShape = in.Shape
-			}
+			pol.SplitShapes = append(pol.SplitShapes, in.Shape)
 			if pol.DisplayMsg == "" {
 				// keep a useful short msg even if user left blank
 				pol.DisplayMsg = errorsig.HumanMsg(in.To, "", 0)

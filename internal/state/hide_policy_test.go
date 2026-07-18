@@ -58,14 +58,21 @@ func TestReclassifyPersistsSourceShapeOnExistingDestination(t *testing.T) {
 	from := "reason:fp_source"
 	to := "merged"
 	st.ObserveError(from, "来源", "none", "x", "sample", "a", "f", "usage", 402)
-	st.UpsertErrorPolicy(ErrorPolicy{Key: from, Label: "来源", SplitShape: "fp_source", Enabled: true})
-	st.UpsertErrorPolicy(ErrorPolicy{Key: to, Label: "合并", Enabled: true})
+	st.UpsertErrorPolicy(ErrorPolicy{Key: from, Label: "来源", SplitShape: "fp_source", SplitShapes: []string{"fp_source_extra"}, Enabled: true})
+	st.UpsertErrorPolicy(ErrorPolicy{Key: to, Label: "合并", SplitShapes: []string{"fp_dest"}, Enabled: true})
 	if err := st.ReclassifyErrorKey(from, to, "合并"); err != nil {
 		t.Fatal(err)
 	}
 	p, ok := st.GetErrorPolicy(to)
-	if !ok || p.SplitShape != "fp_source" {
+	if !ok {
 		t.Fatalf("destination must retain source fingerprint route: %+v ok=%v", p, ok)
+	}
+	want := map[string]bool{"fp_dest": true, "fp_source": true, "fp_source_extra": true}
+	for _, sh := range p.SplitShapeList() {
+		delete(want, sh)
+	}
+	if len(want) != 0 {
+		t.Fatalf("destination missing merged split routes: %+v policy=%+v", want, p)
 	}
 }
 

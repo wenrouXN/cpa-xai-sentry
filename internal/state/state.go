@@ -118,12 +118,13 @@ type ErrorPolicy struct {
 	Label string `json:"label"` // 显示名称（用户可改；不再被硬编码覆盖）
 	// DisplayMsg: 报错日志「错误信息」短文案；空则用 HumanMsg 默认。
 	DisplayMsg string `json:"display_msg,omitempty"`
-	// SplitShape: when set, new unmatched hits with this shape route here (user split).
-	SplitShape  string `json:"split_shape,omitempty"`
-	Enabled     bool   `json:"enabled"`
-	Action      string `json:"action"` // legacy single action: observe|cooldown|candidate|trash|disable
-	Threshold   int    `json:"threshold"`
-	CooldownSec int    `json:"cooldown_seconds"`
+	// SplitShape is the legacy single route shape. SplitShapes is the full set.
+	SplitShape  string   `json:"split_shape,omitempty"`
+	SplitShapes []string `json:"split_shapes,omitempty"`
+	Enabled     bool     `json:"enabled"`
+	Action      string   `json:"action"` // legacy single action: observe|cooldown|candidate|trash|disable
+	Threshold   int      `json:"threshold"`
+	CooldownSec int      `json:"cooldown_seconds"`
 	// CountMode: "streak" (default, success clears) | "total" (accumulate until reset)
 	CountMode string `json:"count_mode,omitempty"`
 	// Escalations optional multi-tier rules; if empty, Threshold+Action is used as one tier.
@@ -132,6 +133,49 @@ type ErrorPolicy struct {
 	Note        string           `json:"note"`
 	Source      string           `json:"source"`
 	UpdatedAt   string           `json:"updated_at,omitempty"`
+}
+
+// SplitShapeList returns all route shapes owned by this policy, preserving
+// legacy split_shape while de-duplicating split_shapes.
+func (p ErrorPolicy) SplitShapeList() []string {
+	return normalizeSplitShapes(p.SplitShape, p.SplitShapes...)
+}
+
+func normalizeSplitShapes(primary string, shapes ...string) []string {
+	out := make([]string, 0, 1)
+	seen := map[string]bool{}
+	add := func(v string) {
+		v = strings.TrimSpace(v)
+		if v == "" || seen[v] {
+			return
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	add(primary)
+	for _, v := range shapes {
+		add(v)
+	}
+	return out
+}
+
+func setPolicySplitShapes(p *ErrorPolicy, shapes []string) {
+	shapes = normalizeSplitShapes("", shapes...)
+	p.SplitShapes = shapes
+	if len(shapes) > 0 {
+		p.SplitShape = shapes[0]
+	} else {
+		p.SplitShape = ""
+	}
+}
+
+func mergePolicySplitShapes(p *ErrorPolicy, shapes ...string) {
+	if p == nil {
+		return
+	}
+	all := append(append([]string{}, p.SplitShapes...), shapes...)
+	all = normalizeSplitShapes(p.SplitShape, all...)
+	setPolicySplitShapes(p, all)
 }
 
 // NormalizedEscalations returns tiers sorted by streak ascending; synthesizes from legacy fields if needed.
@@ -1055,16 +1099,14 @@ func (s *Store) ReclassifyErrorKey(from, to, newLabel string) error {
 		dst.Hits = dst.Hits[len(dst.Hits)-maxErrorHits:]
 	}
 	delete(s.Observed, from)
-	// move/drop policy; when destination already exists, still keep source SplitShape
-	// so future fingerprints continue to route to the merged card.
+	// move/drop policy; always carry source split routes so future fingerprints
+	// continue to route to the merged card.
 	if s.ErrorPolicies != nil {
 		if p, ok := s.ErrorPolicies[from]; ok {
 			delete(s.ErrorPolicies, from)
 			if to != "unmatched" {
 				if dest, exists := s.ErrorPolicies[to]; exists {
-					if strings.TrimSpace(dest.SplitShape) == "" && strings.TrimSpace(p.SplitShape) != "" {
-						dest.SplitShape = p.SplitShape
-					}
+					mergePolicySplitShapes(&dest, p.SplitShapeList()...)
 					if strings.TrimSpace(dest.DisplayMsg) == "" && strings.TrimSpace(p.DisplayMsg) != "" {
 						dest.DisplayMsg = p.DisplayMsg
 					}
@@ -1074,6 +1116,7 @@ func (s *Store) ReclassifyErrorKey(from, to, newLabel string) error {
 					s.ErrorPolicies[to] = dest
 				} else {
 					p.Key = to
+					setPolicySplitShapes(&p, p.SplitShapeList())
 					if newLabel != "" {
 						p.Label = newLabel
 					}
@@ -1193,7 +1236,14 @@ func (s *Store) SplitObservedByShape(from, to, newLabel, shape string) (int, err
 				if newLabel != "" {
 					p.Label = newLabel
 				}
-				if _, exists := s.ErrorPolicies[to]; !exists {
+				if dest, exists := s.ErrorPolicies[to]; exists {
+					mergePolicySplitShapes(&dest, p.SplitShapeList()...)
+					if strings.TrimSpace(dest.DisplayMsg) == "" && strings.TrimSpace(p.DisplayMsg) != "" {
+						dest.DisplayMsg = p.DisplayMsg
+					}
+					s.ErrorPolicies[to] = dest
+				} else {
+					mergePolicySplitShapes(&p, shape)
 					s.ErrorPolicies[to] = p
 				}
 				delete(s.ErrorPolicies, from)
@@ -1205,6 +1255,9 @@ func (s *Store) SplitObservedByShape(from, to, newLabel, shape string) (int, err
 		if _, ok := s.ErrorPolicies[to]; !ok {
 			s.ErrorPolicies[to] = ErrorPolicy{Key: to, Label: newLabel, Enabled: true, Action: "observe", Threshold: 1, Source: "split", Note: "从错误形态拆分"}
 		}
+		p := s.ErrorPolicies[to]
+		mergePolicySplitShapes(&p, shape)
+		s.ErrorPolicies[to] = p
 		return n, nil
 	}
 	if len(moved) == 0 {
@@ -1268,6 +1321,9 @@ func (s *Store) SplitObservedByShape(from, to, newLabel, shape string) (int, err
 			Threshold: 1, Source: "split", Note: "从错误形态拆分",
 		}
 	}
+	p := s.ErrorPolicies[to]
+	mergePolicySplitShapes(&p, shape)
+	s.ErrorPolicies[to] = p
 	return len(moved), nil
 }
 
@@ -1328,11 +1384,14 @@ func (s *Store) UpsertErrorPolicy(p ErrorPolicy) {
 		}
 		s.HiddenPolicyKeys = out
 	}
-	// preserve split_shape / display_msg if panel save omitted them
+	// Preserve and merge split routes if panel save omitted them or sent only one
+	// shape. User split/merge can intentionally append routes, but saving a card
+	// must not drop existing routing fingerprints.
 	if old, ok := s.ErrorPolicies[p.Key]; ok {
-		if strings.TrimSpace(p.SplitShape) == "" && strings.TrimSpace(old.SplitShape) != "" {
-			p.SplitShape = old.SplitShape
-		}
+		oldShapes := old.SplitShapeList()
+		inShapes := p.SplitShapeList()
+		allShapes := append(append([]string{}, oldShapes...), inShapes...)
+		setPolicySplitShapes(&p, allShapes)
 		if strings.TrimSpace(p.DisplayMsg) == "" && strings.TrimSpace(old.DisplayMsg) != "" {
 			p.DisplayMsg = old.DisplayMsg
 		}
@@ -1341,8 +1400,10 @@ func (s *Store) UpsertErrorPolicy(p ErrorPolicy) {
 		}
 	}
 	// derive split_shape only for fingerprint keys (reason:fp_*)
-	if strings.TrimSpace(p.SplitShape) == "" && strings.HasPrefix(p.Key, "reason:fp_") {
-		p.SplitShape = strings.TrimPrefix(p.Key, "reason:")
+	if strings.HasPrefix(p.Key, "reason:fp_") {
+		mergePolicySplitShapes(&p, strings.TrimPrefix(p.Key, "reason:"))
+	} else {
+		setPolicySplitShapes(&p, p.SplitShapeList())
 	}
 	p.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	s.ErrorPolicies[p.Key] = p

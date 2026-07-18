@@ -79,3 +79,72 @@ func TestSplitHTTP426PolicyTriggersDisable(t *testing.T) {
 		t.Fatal("want observed under fingerprint policy key")
 	}
 }
+
+func TestMergedSplitPolicyRoutesMultipleShapes(t *testing.T) {
+	cfg := sentrycfg.Default()
+	cfg.SentryEnabled = true
+	g, st, _, _ := setup(t, cfg)
+
+	bodyA := `{"error":"Your Grok CLI version (none) is outdated. Please update to version 0.1.202 or later"}`
+	bodyB := `{"error":"Grok CLI version 0.1.0 is no longer supported. Please update to version 0.2.0"}`
+	fpA := errorfp.Build(bodyA, 426)
+	fpB := errorfp.Build(bodyB, 426)
+	keyA := fpA.SuggestKey
+	keyB := fpB.SuggestKey
+	if keyA == keyB || fpA.Shape == fpB.Shape {
+		t.Fatalf("test bodies must produce different shapes: %s/%s", keyA, keyB)
+	}
+
+	st.ObserveError("unmatched", "未分类错误", "none", "", bodyA, "seed-a", "a.json", "usage", 426)
+	st.ObserveError("unmatched", "未分类错误", "none", "", bodyB, "seed-b", "b.json", "usage", 426)
+	if _, err := st.SplitObservedByShape("unmatched", keyA, "终端版本过低", fpA.Shape); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SplitObservedByShape("unmatched", keyB, "终端版本过低", fpB.Shape); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReclassifyErrorKey(keyB, keyA, "终端版本过低"); err != nil {
+		t.Fatal(err)
+	}
+	p, ok := st.GetErrorPolicy(keyA)
+	if !ok {
+		t.Fatalf("missing merged policy %s", keyA)
+	}
+	gotShapes := map[string]bool{}
+	for _, sh := range p.SplitShapeList() {
+		gotShapes[sh] = true
+	}
+	if !gotShapes[fpA.Shape] || !gotShapes[fpB.Shape] {
+		t.Fatalf("merged policy missing routes: %+v policy=%+v", gotShapes, p)
+	}
+
+	for _, tc := range []struct {
+		auth string
+		body string
+	}{
+		{"route-a", bodyA},
+		{"route-b", bodyB},
+	} {
+		if err := g.HandleUsage(context.Background(), guard.UsageEvent{
+			Provider: "xai", AuthIndex: tc.auth, FileName: tc.auth + ".json",
+			StatusCode: 426, Success: false, Body: tc.body, Source: "usage",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	foundMerged := false
+	for _, o := range st.ListObserved() {
+		if o.Key == keyB {
+			t.Fatalf("old merged key received traffic: %+v", o)
+		}
+		if o.Key == keyA {
+			foundMerged = true
+			if o.Count != 4 {
+				t.Fatalf("want both new bodies routed to merged key count=4, got %+v", o)
+			}
+		}
+	}
+	if !foundMerged {
+		t.Fatalf("merged key %s missing after routing", keyA)
+	}
+}

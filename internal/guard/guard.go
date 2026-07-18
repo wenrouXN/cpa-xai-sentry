@@ -82,7 +82,8 @@ func New(cfg sentrycfg.Config, st *state.Store, tr *trash.Store, cpa *cpaapi.Cli
 	return g
 }
 
-// routeBySplitShape maps an unmatched body to a user-split policy key via SplitShape.
+// routeBySplitShape maps an unmatched body to a user-split policy key via any
+// split route shape owned by the policy.
 func (g *Guard) routeBySplitShape(body string, status int) string {
 	if g.State == nil {
 		return ""
@@ -96,9 +97,10 @@ func (g *Guard) routeBySplitShape(body string, status int) string {
 		if p.Key == "" || p.Key == "unmatched" || p.Key == "any_error" {
 			continue
 		}
-		ss := strings.TrimSpace(p.SplitShape)
-		if ss != "" && ss == shape {
-			return p.Key
+		for _, ss := range p.SplitShapeList() {
+			if ss == shape {
+				return p.Key
+			}
 		}
 		if p.Key == suggest || p.Key == "reason:"+shape || p.Key == shape {
 			return p.Key
