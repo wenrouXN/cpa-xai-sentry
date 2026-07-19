@@ -222,7 +222,11 @@ func (g *Guard) HandleUsage(ctx context.Context, ev UsageEvent) error {
 
 	res := match.Classify(ev.StatusCode, ev.Body)
 	if res.Signal == match.SignalFreeUsage429 {
-		q := quota.FreeUsageExhaustedEstimate(ev.Body, res.RecoverAt)
+		est := quota.DefaultFreeQuotaPerAccount
+		if g.Cfg.FreeQuotaPerAccount > 0 {
+			est = g.Cfg.FreeQuotaPerAccount
+		}
+		q := quota.FreeUsageExhaustedEstimateWith(ev.Body, res.RecoverAt, est)
 		if q.Limit > 0 || q.Remaining > 0 || q.Used > 0 || !q.ResetAt.IsZero() {
 			g.State.UpdateQuota(ev.AuthIndex, q.Limit, q.Used, q.Remaining, q.Source, q.ResetAt)
 		}

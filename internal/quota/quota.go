@@ -135,19 +135,44 @@ func fromMap(m map[string]any) Info {
 	return info
 }
 
-// FreeQuotaPerAccount is the rolling free-tier estimate per xAI account
-// (× 2M tokens / rolling 24h). Only used when upstream body has no numbers.
-const FreeQuotaPerAccount int64 = 2_000_000
+// DefaultFreeQuotaPerAccount is the built-in rolling free-tier estimate per
+// xAI account (tokens / rolling 24h). Used only when config free_quota_per_account
+// is unset/invalid, or when an upstream body has no parseable actual/limit.
+//
+// FreeQuotaPerAccount remains as a synonym for older call sites.
+const DefaultFreeQuotaPerAccount int64 = 2_000_000
+
+// FreeQuotaPerAccount is the historical constant name (same as DefaultFreeQuotaPerAccount).
+// Prefer Effective(limit) or sentrycfg FreeQuotaPerAccount for day-pool KPIs.
+const FreeQuotaPerAccount int64 = DefaultFreeQuotaPerAccount
+
+// Effective returns a positive free-quota estimate. Non-positive → default 2M.
+func Effective(limit int64) int64 {
+	if limit > 0 {
+		return limit
+	}
+	return DefaultFreeQuotaPerAccount
+}
 
 var (
 	reTokensActualLimit = regexp.MustCompile(`(?i)tokens?\s*\(\s*actual\s*/\s*limit\s*\)\s*:\s*(\d+)\s*/\s*(\d+)`)
 )
 
 // FreeUsageExhaustedEstimate marks remaining=0 when free usage exhausted.
-// Prefer parsing actual/limit from xAI error text; only fall back to 2M estimate
-// when the body has no numbers.
+// Prefer parsing actual/limit from xAI error text; only fall back to estimate
+// (cfgLimit if >0, else DefaultFreeQuotaPerAccount) when the body has no numbers.
+//
+// FreeUsageExhaustedEstimate keeps the 2-arg form for call sites that have no
+// config; FreeUsageExhaustedEstimateWith uses an explicit estimate limit.
 func FreeUsageExhaustedEstimate(body string, recoverAt time.Time) Info {
+	return FreeUsageExhaustedEstimateWith(body, recoverAt, DefaultFreeQuotaPerAccount)
+}
+
+// FreeUsageExhaustedEstimateWith is like FreeUsageExhaustedEstimate but uses
+// estimateLimit (effective) when the body has no parseable numbers.
+func FreeUsageExhaustedEstimateWith(body string, recoverAt time.Time, estimateLimit int64) Info {
 	info := Parse(body)
+	est := Effective(estimateLimit)
 	// xAI free-usage message often embeds: tokens (actual/limit): 2312448/2000000
 	if m := reTokensActualLimit.FindStringSubmatch(body); len(m) == 3 {
 		if u, err := strconv.ParseInt(m[1], 10, 64); err == nil {
@@ -166,8 +191,8 @@ func FreeUsageExhaustedEstimate(body string, recoverAt time.Time) Info {
 	}
 	if info.Limit == 0 && info.Used == 0 && info.Remaining == 0 {
 		// no numbers at all — estimate only
-		info.Limit = FreeQuotaPerAccount
-		info.Used = FreeQuotaPerAccount
+		info.Limit = est
+		info.Used = est
 		info.Remaining = 0
 		info.Source = "free_usage_exhausted_est"
 	} else if info.Source == "" {

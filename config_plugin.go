@@ -43,6 +43,7 @@ func configFields() []pluginapi.ConfigField {
 		{Name: "patrol_proxy_url", Type: pluginapi.ConfigFieldTypeString, Description: "巡查代理"},
 		{Name: "cpamp_url", Type: pluginapi.ConfigFieldTypeString, Description: "CPAMP 基址(可选)"},
 		{Name: "cpamp_admin_key", Type: pluginapi.ConfigFieldTypeString, Description: "CPAMP key(敏感)"},
+		{Name: "free_quota_per_account", Type: pluginapi.ConfigFieldTypeNumber, Description: "日池预估每号免费额度(token/24h，默认2000000；xAI降额可改1000000)"},
 	}
 }
 
@@ -206,6 +207,9 @@ func applyConfigMap(cfg *sentrycfg.Config, m map[string]any) {
 	}
 	if v, ok := asBool(m["reopen_foreign_disabled"]); ok {
 		cfg.ReopenForeignDisabled = v
+	}
+	if v, ok := asFloat(m["free_quota_per_account"]); ok && v > 0 {
+		cfg.FreeQuotaPerAccount = int64(v)
 	}
 	// register tab
 	if v, ok := asBool(m["register_enabled"]); ok {
@@ -398,5 +402,6 @@ func redactConfig(cfg sentrycfg.Config) map[string]any {
 		"patrol_auto_model_switch": cfg.PatrolAutoModelSwitch,
 		"cpamp_url":               cfg.CPAMPURL,
 		"cpamp_admin_key_set":     cfg.CPAMPAdminKey != "",
+		"free_quota_per_account":  cfg.FreeQuotaPerAccount,
 	}
 }

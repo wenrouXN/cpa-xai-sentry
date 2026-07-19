@@ -438,6 +438,12 @@ td.num,th.num{text-align:right}
           <label>模型<input id="pModel" type="text" value="grok-4.5"/></label>
           <label>代理URL<input id="pProxy" type="text" placeholder="可选 http://..."/></label>
         </div>
+        <div class="meta" style="font-weight:700;margin:12px 0 6px">③ 日池预估</div>
+        <div class="patrol-grid">
+          <label title="日池总量 = (CPA开启+额度冷却) × 此值；仅影响 KPI 预估，不改冷却逻辑。xAI 报错体有 actual/limit 时单号占用优先用真实 limit。">每号免费额度(token)
+            <input id="pFreeQuota" type="number" min="1000" step="100000" value="2000000"/>
+          </label>
+        </div>
         <div class="meta" style="margin:10px 0 4px;line-height:1.45">
           冷却/永禁阶梯由「错误策略」决定，不在巡查里配。维护 tick 与 401/403 默认秒数已内置，无需在此改。
         </div>
@@ -887,13 +893,19 @@ function renderKPIs(s, trashCount, cool, inv, usage){
     ['候删', hold, 'danger', '候选'+candOnly+'+箱'+trashed],
     ['禁用', residual, 'danger', '永禁'+permanent+(other?('+未归类'+other):'')],
     ['xAI 总量', xai, '', '可接+冷却+候删+禁用'],
-    ['日池总量', fmtTok(usage.pool_est||0), 'accent', (usage.pool_accounts!=null?('号'+(usage.pool_enabled||0)+'+冷'+(usage.pool_cooldown||0)+'='+usage.pool_accounts+'×2M'):'开启+冷却×2M')],
+    ['日池总量', fmtTok(usage.pool_est||0), 'accent', (usage.pool_accounts!=null?('号'+(usage.pool_enabled||0)+'+冷'+(usage.pool_cooldown||0)+'='+usage.pool_accounts+'×'+fmtPoolUnit(usage.pool_per_account)):'开启+冷却×预估')],
     ['日池已用', fmtTok(usage.pool_used||0), 'warn', (usage.pool_used_pct!=null? (Number(usage.pool_used_pct).toFixed(1)+'% · 今日token') : '今日token')],
     ['日池剩余', fmtTok(usage.pool_remaining||0), 'ok', (usage.pool_used_pct!=null? ((100-Number(usage.pool_used_pct)).toFixed(1)+'% · 总量-已用') : '总量-已用')],
   ];
   document.getElementById('kpis').innerHTML=items.map(([l,v,c,sub])=>
     '<div class="kpi '+(c||'')+'"><span>'+l+'</span><b>'+v+'</b>'+(sub?('<span class="subn">'+esc(sub)+'</span>'):'')+'</div>'
   ).join('');
+}
+function fmtPoolUnit(n){
+  n=Number(n)||2000000;
+  if(n>=1e6 && n%1e6===0) return (n/1e6)+'M';
+  if(n>=1e3 && n%1e3===0) return Math.floor(n/1e3)+'k';
+  return fmtTok(n);
 }
 function accountCell(a){
   const name=dispName(a);
@@ -969,7 +981,7 @@ function quotaRatioCell(a){
   // 今日用量 / 24h额度 → 百分比
   const day=Number(a.day_tokens||0);
   let lim=Number(a.quota_limit||0);
-  if(lim<=0) lim=2000000; // free-tier 24h estimate
+  if(lim<=0) lim=Number((typeof CFG!=='undefined'&&CFG&&CFG.free_quota_per_account)||2000000); // free-tier 24h estimate
   // prefer explicit used from free-usage body when day tokens missing
   let used=day>0?day:Number(a.quota_used||0);
   if(!used || !lim){
@@ -2232,6 +2244,7 @@ function fillPatrolForm(cfg){
   set('pBatch', cfg.patrol_batch_size!=null?cfg.patrol_batch_size:500);
   set('pModel', cfg.patrol_model||'grok-4.5');
   set('pProxy', cfg.patrol_proxy_url||'');
+  set('pFreeQuota', cfg.free_quota_per_account!=null?cfg.free_quota_per_account:2000000);
   const modeEl=document.getElementById('pMode');
   if(modeEl && document.activeElement!==modeEl){
     let m=String(cfg.patrol_mode||'enabled').toLowerCase();
@@ -2242,7 +2255,7 @@ function fillPatrolForm(cfg){
   syncPatrolPanels();
 }
 function markPatrolDirty(){ PATROL_CFG_DIRTY=true; }
-['pInterval','pTimeout','pConc','pBatch','pModel','pProxy','pMode'].forEach(id=>{
+['pInterval','pTimeout','pConc','pBatch','pModel','pProxy','pMode','pFreeQuota'].forEach(id=>{
   // bound after DOM ready via refresh; also attach now if present
   const el=document.getElementById(id);
   if(el){ el.addEventListener('input', markPatrolDirty); el.addEventListener('change', markPatrolDirty); }
@@ -2278,13 +2291,14 @@ async function savePatrolCfg(){
       patrol_model: (document.getElementById('pModel').value||'grok-4.5').trim(),
       patrol_proxy_url: (document.getElementById('pProxy').value||'').trim(),
       patrol_mode: (document.getElementById('pMode')?.value||'enabled').trim(),
+      free_quota_per_account: Number(document.getElementById('pFreeQuota')?.value||2000000),
     };
     CFG=await j('/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     PATROL_CFG_DIRTY=false;
     fillPatrolForm(CFG);
-    toast('已保存（双向同步）：面板 → 宿主配置 + 本地 overrides · 自动范围='+(CFG.patrol_mode||body.patrol_mode));
+    toast('已保存（双向同步）：每号额度='+(CFG.free_quota_per_account||body.free_quota_per_account)+' · 自动范围='+(CFG.patrol_mode||body.patrol_mode));
     const hint=document.getElementById('persistHint');
-    if(hint) hint.textContent='双向同步已写 · mode='+(CFG.patrol_mode||body.patrol_mode)+' · batch='+(CFG.patrol_batch_size||'?');
+    if(hint) hint.textContent='双向同步已写 · free_quota='+(CFG.free_quota_per_account||'?')+' · mode='+(CFG.patrol_mode||body.patrol_mode);
   }catch(e){ toast('保存失败:'+e.message) }
 }
 function patrolModeLabel(mode){

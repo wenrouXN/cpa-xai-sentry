@@ -45,6 +45,11 @@ type Config struct {
 	// usage/patrol error re-stamps cool-down ownership. Owned cool-downs / panel
 	// permanent disables are NEVER opened. Set false to keep unknown disables closed.
 	ReopenForeignDisabled bool `yaml:"reopen_foreign_disabled" json:"reopen_foreign_disabled"`
+	// FreeQuotaPerAccount is the rolling free-tier estimate (tokens/24h) used for
+	// day-pool KPI (pool_est = pool_accounts × this) and as fallback when an xAI
+	// free-usage body has no parseable actual/limit. Prefer real limit from body.
+	// Default 2_000_000; set e.g. 1_000_000 when xAI free tier drops.
+	FreeQuotaPerAccount int64 `yaml:"free_quota_per_account" json:"free_quota_per_account"`
 
 	// --- Register tab (grok-register-lite / :8788) ---
 	RegisterEnabled              bool    `yaml:"register_enabled" json:"register_enabled"`
@@ -114,6 +119,7 @@ func Default() Config {
 		PatrolMode:            "enabled",
 		CPAMPUsageFloor:       true,
 		ReopenForeignDisabled: true, // ops: open unowned disables; wait next error to re-stamp
+		FreeQuotaPerAccount:   2_000_000,
 		// Register tab defaults (off until configured)
 		RegisterEnabled:            false,
 		RegisterBaseURL:            "http://192.168.1.68:8788",
@@ -225,6 +231,9 @@ func (c Config) Validate() Config {
 	if out.RegisterReloginConcurrency <= 0 {
 		out.RegisterReloginConcurrency = 2
 	}
+	if out.FreeQuotaPerAccount <= 0 {
+		out.FreeQuotaPerAccount = 2_000_000
+	}
 	return out
 }
 
@@ -266,6 +275,7 @@ func (c Config) Redact() map[string]any {
 		"cpamp_admin_key_set":         c.CPAMPAdminKey != "",
 		"cpamp_usage_floor":           c.CPAMPUsageFloor,
 		"reopen_foreign_disabled":     c.ReopenForeignDisabled,
+		"free_quota_per_account":      c.FreeQuotaPerAccount,
 		"register_enabled":                   c.RegisterEnabled,
 		"register_base_url":                  c.RegisterBaseURL,
 		"register_admin_base":                c.RegisterAdminBase,
@@ -331,6 +341,7 @@ func (c Config) HostPluginPatch() map[string]any {
 		"cpamp_admin_key":             c.CPAMPAdminKey,
 		"cpamp_usage_floor":           c.CPAMPUsageFloor,
 		"reopen_foreign_disabled":     c.ReopenForeignDisabled,
+		"free_quota_per_account":      c.FreeQuotaPerAccount,
 		"register_enabled":                   c.RegisterEnabled,
 		"register_base_url":                  c.RegisterBaseURL,
 		"register_admin_base":                c.RegisterAdminBase,

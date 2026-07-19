@@ -561,7 +561,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		if o.Key != "free_usage_429" && o.Signal != "free_usage_429" && !strings.Contains(o.Sample, "free-usage-exhausted") {
 			continue
 		}
-		qi := quota.FreeUsageExhaustedEstimate(o.Sample, time.Time{})
+		qi := quota.FreeUsageExhaustedEstimateWith(o.Sample, time.Time{}, perAccountFreeQuota(a))
 		if qi.Used > 0 || qi.Limit > 0 {
 			a.State.UpdateQuotaQuiet(o.LastAuth, qi.Limit, qi.Used, qi.Remaining, "free_usage_exhausted", qi.ResetAt)
 		}
@@ -870,7 +870,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			// if CPAMP day tokens present, show that as used under free-tier limit estimate
 			if dayT > 0 {
 				qUsed = dayT
-				qLimit = quota.FreeQuotaPerAccount
+				qLimit = perAccountFreeQuota(a)
 				if qUsed > qLimit {
 					qRem = 0
 				} else {
@@ -905,10 +905,10 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		if dayC > 0 {
 			dayRate = float64(dayS) / float64(dayC) * 100
 		}
-		// free-tier 24h quota: prefer real limit from error body, else 2M estimate
+		// free-tier 24h quota: prefer real limit from error body, else config estimate
 		quota24 := qLimit
 		if quotaEvidence && quota24 <= 0 {
-			quota24 = quota.FreeQuotaPerAccount
+			quota24 = perAccountFreeQuota(a)
 		}
 		ratioText := ""
 		if quotaEvidence && (dayT > 0 || qUsed > 0) {
@@ -986,12 +986,17 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		xaiN = asInt(inv["auth_total"])
 	}
 	enabledN := asInt(inv["auth_enabled"])
-	// 日池口径（v3）：
+	// 日池口径（v3 + 可配每号额度）：
 	//   日池账号数 = CPA 已开启 + 真实 free_usage_429 额度冷却中
-	//   日池总量   = 日池账号数 × 2M
+	//   日池总量   = 日池账号数 × free_quota_per_account（默认 2M，可面板改）
 	//   日池已用   = 今日 token（优先 CPAMP 按号汇总，否则本地 floor）
 	//   日池剩余   = max(0, 总量-已用)
 	// 说明：spending/permission/auth/policy 冷却、候删、永禁、垃圾箱不计入免费日池。
+	// 单号额度占用：优先 xAI 报错体 actual/limit；无数字时才回退 free_quota_per_account。
+	perAccQuota := quota.DefaultFreeQuotaPerAccount
+	if a.Cfg != nil && a.Cfg.FreeQuotaPerAccount > 0 {
+		perAccQuota = a.Cfg.FreeQuotaPerAccount
+	}
 	coolN := 0
 	for _, acc := range a.State.AccountsSnapshot() {
 		if acc.State == state.CooldownQuota && acc.LastSignal == "free_usage_429" {
@@ -999,7 +1004,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	poolAccounts := enabledN + coolN
-	poolEst := int64(poolAccounts) * quota.FreeQuotaPerAccount
+	poolEst := int64(poolAccounts) * perAccQuota
 	// used: prefer summed day tokens; if zero, floor from metrics
 	usedTok := dayTokens
 	if usedTok == 0 {
@@ -1016,6 +1021,8 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			pct = 100
 		}
 	}
+	// human unit for pool_source (e.g. 1M / 2M)
+	perLabel := fmtTokShort(perAccQuota)
 	usage := map[string]any{
 		"day_calls":        dayCalls,
 		"day_fail_calls":   dayFails,
@@ -1026,7 +1033,7 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 		"cpamp_db":         cpampDB,
 		"cpamp_accounts":   len(cpampByAuth),
 		"pool_est":         poolEst,
-		"pool_per_account": quota.FreeQuotaPerAccount,
+		"pool_per_account": perAccQuota,
 		"pool_xai_total":   xaiN,
 		"pool_enabled":     enabledN,
 		"pool_cooldown":    coolN,
@@ -1041,8 +1048,8 @@ func (a *API) handleState(w http.ResponseWriter, r *http.Request) {
 			}
 			return v
 		}(),
-		"pool_source": "日池=(CPA开启+free_usage_429额度冷却)×2M；已用=今日token",
-		"pool_note":   "policy/auth/spending/permission冷却、候删、永禁不计入；可接流量≠日池账号（可接=仅CPA开）",
+		"pool_source": "日池=(CPA开启+free_usage_429额度冷却)×" + perLabel + "；已用=今日token",
+		"pool_note":   "policy/auth/spending/permission冷却、候删、永禁不计入；可接流量≠日池账号（可接=仅CPA开）；每号额度=free_quota_per_account",
 	}
 	writeJSON(w, 200, map[string]any{
 		"plugin":     "cpa-xai-sentry",
@@ -1151,6 +1158,28 @@ func formatTokens(n int64) string {
 		return itoa64(n/1000) + "k"
 	}
 	return itoa64(n)
+}
+
+// fmtTokShort is a compact unit for pool_source (1M / 2M / 500k).
+func fmtTokShort(n int64) string {
+	if n <= 0 {
+		return "2M"
+	}
+	if n%1_000_000 == 0 {
+		return itoa64(n/1_000_000) + "M"
+	}
+	if n%1000 == 0 && n >= 1000 {
+		return itoa64(n/1000) + "k"
+	}
+	return formatTokens(n)
+}
+
+// perAccountFreeQuota is the configured day-pool estimate (default 2M).
+func perAccountFreeQuota(a *API) int64 {
+	if a != nil && a.Cfg != nil && a.Cfg.FreeQuotaPerAccount > 0 {
+		return a.Cfg.FreeQuotaPerAccount
+	}
+	return quota.DefaultFreeQuotaPerAccount
 }
 
 func itoa64(n int64) string {
@@ -1295,6 +1324,9 @@ func (a *API) handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		if v, ok := raw["cpamp_usage_floor"].(bool); ok {
 			cfg.CPAMPUsageFloor = v
+		}
+		if v, ok := asFloatAny(raw["free_quota_per_account"]); ok && v > 0 {
+			cfg.FreeQuotaPerAccount = int64(v)
 		}
 		if v, ok := asFloatAny(raw["trash_retention_days"]); ok && v > 0 {
 			cfg.TrashRetentionDays = int(v)
@@ -1459,6 +1491,7 @@ func (a *API) handlePersist(w http.ResponseWriter, r *http.Request) {
 			"auth401_cooldown_seconds":    cfg.Auth401CooldownSec,
 			"reopen_foreign_disabled":     cfg.ReopenForeignDisabled,
 			"max_reset_seconds":           cfg.MaxResetSeconds,
+			"free_quota_per_account":      cfg.FreeQuotaPerAccount,
 		},
 	})
 }

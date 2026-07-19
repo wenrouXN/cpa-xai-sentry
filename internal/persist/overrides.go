@@ -28,6 +28,8 @@ type Overrides struct {
 	Auth401CooldownSec    *int  `json:"auth401_cooldown_seconds,omitempty"`
 	ReopenForeignDisabled *bool `json:"reopen_foreign_disabled,omitempty"`
 	CPAMPUsageFloor       *bool `json:"cpamp_usage_floor,omitempty"`
+	// FreeQuotaPerAccount: day-pool estimate tokens per account (e.g. 1000000).
+	FreeQuotaPerAccount  *int64 `json:"free_quota_per_account,omitempty"`
 	TrashRetentionDays    *int  `json:"trash_retention_days,omitempty"`
 	TrashAutoPurge        *bool `json:"trash_auto_purge,omitempty"`
 	RestoreDefaultDis     *bool `json:"restore_default_disabled,omitempty"`
@@ -160,6 +162,9 @@ func Apply(cfg sentrycfg.Config, o Overrides) sentrycfg.Config {
 	if o.CPAMPUsageFloor != nil {
 		cfg.CPAMPUsageFloor = *o.CPAMPUsageFloor
 	}
+	if o.FreeQuotaPerAccount != nil && *o.FreeQuotaPerAccount > 0 {
+		cfg.FreeQuotaPerAccount = *o.FreeQuotaPerAccount
+	}
 	if o.TrashRetentionDays != nil && *o.TrashRetentionDays > 0 {
 		cfg.TrashRetentionDays = *o.TrashRetentionDays
 	}
@@ -286,6 +291,7 @@ func FromConfig(cfg sentrycfg.Config) Overrides {
 	tick, maxR, minR := cfg.TickSeconds, cfg.MaxResetSeconds, cfg.MinResetSeconds
 	pcool, a401 := cfg.PermissionCooldownSec, cfg.Auth401CooldownSec
 	reopen, floor := cfg.ReopenForeignDisabled, cfg.CPAMPUsageFloor
+	fq := cfg.FreeQuotaPerAccount
 	trd, tap, rdd := cfg.TrashRetentionDays, cfg.TrashAutoPurge, cfg.RestoreDefaultDis
 	pe := cfg.PatrolEnabled
 	pi, pt, pc, pb := cfg.PatrolInterval, cfg.PatrolTimeout, cfg.PatrolConcurrency, cfg.PatrolBatchSize
@@ -308,6 +314,7 @@ func FromConfig(cfg sentrycfg.Config) Overrides {
 		TickSeconds: &tick, MaxResetSeconds: &maxR, MinResetSeconds: &minR,
 		PermissionCooldownSec: &pcool, Auth401CooldownSec: &a401,
 		ReopenForeignDisabled: &reopen, CPAMPUsageFloor: &floor,
+		FreeQuotaPerAccount: &fq,
 		TrashRetentionDays: &trd, TrashAutoPurge: &tap, RestoreDefaultDis: &rdd,
 		PatrolEnabled: &pe, PatrolInterval: &pi, PatrolTimeout: &pt,
 		PatrolConcurrency: &pc, PatrolBatchSize: &pb,
