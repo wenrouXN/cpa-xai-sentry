@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.5
+
+### 降噪：停止刷 CPA 容器 main.log
+- 去掉每条失败 usage 的 `usage_in …` host 日志（故障切换 402/429 风暴时会淹没 CPA）。
+- 热重载不再打 `rebuild: reusing in-memory state`；仅冷启动写一条 `cold start: loaded state`。
+- `HandleUsage` 错误改为 60s 同 key 节流。
+- 面板动作日志 / state 决策路径不变。
+
 ## 1.3.4
 
 ### 未分类形态标签：只显示代码，中文仅拆分时手填

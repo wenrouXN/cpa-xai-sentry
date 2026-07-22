@@ -151,8 +151,9 @@ func (r *Runtime) rebuild(cfg sentrycfg.Config) error {
 		// Only reload from disk on cold start (first init).
 		st = r.State
 		// Save current state so disk is up-to-date before rewiring.
+		// Do not hostLog on every hot rebuild — host config sync can fire often
+		// and previously flooded CPA main.log with "rebuild: reusing…".
 		_ = st.Save()
-		hostLog("info", fmt.Sprintf("rebuild: reusing in-memory state (%d accounts)", len(st.AccountsSnapshot())))
 	} else {
 		// Cold start: load from disk.
 		var err error
@@ -160,6 +161,8 @@ func (r *Runtime) rebuild(cfg sentrycfg.Config) error {
 		if err != nil {
 			hostLog("error", "load state: "+err.Error())
 			st = state.New(cfg.StatePath)
+		} else {
+			hostLog("info", fmt.Sprintf("cold start: loaded state (%d accounts)", len(st.AccountsSnapshot())))
 		}
 	}
 
@@ -196,7 +199,10 @@ func (r *Runtime) rebuild(cfg sentrycfg.Config) error {
 		reg.SetHistoryPath(filepath.Join(cfg.AuthDir, "cpa-xai-sentry", "register-history.json"))
 	}
 	reg.Logf = func(level, msg string) {
-		hostLog(level, msg)
+		// register chatter stays in panel action log; host only gets errors (throttled)
+		if level == "error" || level == "warn" {
+			hostLogThrottled(level, msg, 30*time.Second, "register:"+level+":"+msg)
+		}
 		if st != nil {
 			st.Log(state.ActionLog{At: time.Now(), Source: "register", Action: "register", Reason: msg})
 		}
@@ -426,17 +432,11 @@ func (r *Runtime) HandleUsage(ev guard.UsageEvent) {
 	if g == nil {
 		return
 	}
-	// observability: every usage event (esp. failover intermediate failures)
-	if !ev.Success || ev.StatusCode >= 400 {
-		body := strings.TrimSpace(ev.Body)
-		if len(body) > 80 {
-			body = body[:80]
-		}
-		hostLog("info", fmt.Sprintf("usage_in source=%s auth=%s file=%s status=%d success=%v body=%q",
-			ev.Source, ev.AuthIndex, ev.FileName, ev.StatusCode, ev.Success, body))
-	}
+	// Do NOT hostLog every failure here. Failover 402/429 storms used to flood
+	// CPA main.log with usage_in lines; real decisions already land in panel
+	// action logs + state. Only surface HandleUsage errors.
 	if err := g.HandleUsage(context.Background(), ev); err != nil {
-		hostLog("error", "usage: "+err.Error())
+		hostLogThrottled("error", "usage:"+err.Error(), 60*time.Second, "usage:"+err.Error())
 	}
 }
 
