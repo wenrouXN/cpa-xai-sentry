@@ -227,6 +227,7 @@ tr:hover td{background:#f5f9ff}
 .shape-row{display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #e8eef7}
 .shape-row:last-child{border-bottom:0}
 .shape-lab{flex:1;font-size:12px;font-weight:700;color:#0f172a}
+.shape-preview{flex:2;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;border:0;background:transparent;color:#475569;font:11.5px ui-monospace,Menlo,Consolas,monospace;cursor:pointer;padding:2px 0}
 .policy-pager{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px;font-size:11px;color:var(--muted)}
 .err-title{font-size:15px;font-weight:800;color:#0f172a;letter-spacing:.2px}
 .err-title .err-http{color:#64748b;font-weight:600;font-size:12px;margin-left:6px}
@@ -732,8 +733,13 @@ function fillStateFilter(filters, summary){
 function streakN(a){
   a=a||{};
   const s=a.streaks||{};
-  let n=0, key='';
-  Object.keys(s).forEach(k=>{ const v=Number(s[k]||0); if(v>n){ n=v; key=k; } });
+  let n=0, key='', anyN=0;
+  Object.keys(s).forEach(k=>{
+    const v=Number(s[k]||0);
+    if(k==='any_error'){ anyN=v; return; }
+    if(v>n){ n=v; key=k; }
+  });
+  if(!n && anyN>0){ n=anyN; key=a.last_signal==='any_error'?'':(a.last_signal||''); }
   return {n, key};
 }
 function signalZH(sig){
@@ -788,8 +794,8 @@ function stateLabel(st, a){
   const sig=a.last_signal||'';
   if(st==='active' || st===''){
     const stn=streakN(a);
-    const k=stn.key||sig;
-    const isQuota=(k==='free_usage_429'||k==='spending_limit_402'||sig==='free_usage_429'||sig==='spending_limit_402');
+    const k=stn.key||(sig==='any_error'?'':sig);
+    const isQuota=(k==='free_usage_429'||k==='spending_limit_402');
     if(a.pending_observe){
       const r=recoverWatchLabel(k||sig);
       return {text:r.text, cls:'observe', tip:r.tip};
@@ -802,6 +808,7 @@ function stateLabel(st, a){
       if(k==='permission_403') return {text:'正常·观察·403×'+stn.n, cls:'observe', tip:'仍在接流，403 连续计数中（阶梯策略）'};
       if(k==='auth_401') return {text:'正常·观察·401×'+stn.n, cls:'observe', tip:'仍在接流，凭证异常连续计数'};
       if(k==='code:invalid-argument') return {text:'正常·观察·参数×'+stn.n, cls:'observe', tip:'仍在接流，参数/上下文问题'};
+      if(k==='unmatched') return {text:'正常·观察·未分类×'+stn.n, cls:'observe', tip:'仍在接流，未分类错误连续计数'};
       const name=signalZH(k);
       const code=signalCode(k,a);
       if(name) return {text:'正常·观察·'+(code?code+'·':'')+name+'×'+stn.n, cls:'observe', tip:'仍在接流，错误连续计数'};
@@ -1781,8 +1788,12 @@ function policyLogsHTML(key){
           const lab=s.label||s.shape||'未命名';
           const cnt=s.count||0;
           const sk=s.suggest_key||('reason:'+(s.shape||'x'));
+          const raw=cleanSample(s.sample||'');
+          const body=parseErrorBody(raw);
+          const preview=String(body.message||raw||'暂无样本').replace(/\s+/g,' ').slice(0,120);
           return '<div class="shape-row">'+
-            '<span class="shape-lab" title="'+esc(s.sample||'')+'">'+esc(lab)+'</span>'+
+            '<span class="shape-lab">'+esc(lab)+'</span>'+
+            '<button type="button" class="shape-preview" data-label="'+esc(lab)+'" data-sample="'+esc(raw)+'" onclick="event.stopPropagation();openShapeSample(this)" title="点击查看完整样本">'+esc(preview)+(String(body.message||raw||'').length>120?'…':'')+'</button>'+
             '<span class="meta">约 '+cnt+' 次</span>'+
             '<button class="xs primary" onclick="splitShape(\''+esc(s.shape||'')+'\',\''+esc(sk)+'\',\''+esc(lab)+'\')">拆成此类</button>'+
           '</div>';
@@ -1845,6 +1856,14 @@ function policyLogsHTML(key){
       '<button class="xs" '+(page>=pages?'disabled':'')+' onclick="setPolicyPage(\''+esc(key)+'\','+(page+1)+')">下一页</button>'+
     '</span></div>';
   return shapeBox+head+table+pager;
+}
+function openShapeSample(el){
+  const raw=cleanSample((el&&el.dataset&&el.dataset.sample)||'');
+  const label=(el&&el.dataset&&el.dataset.label)||'未分类错误样本';
+  const body=parseErrorBody(raw);
+  const pretty=body.pretty||raw||'暂无完整错误样本';
+  const html='<div class="ep-head"><div><div class="ep-code"><span class="fail-dot"></span>'+esc(label)+'</div><div class="ep-sub">未分类错误形态 · 完整样本</div></div><button class="ep-close" type="button" onclick="closeErrPop()">×</button></div><div class="ep-body"><div class="ep-json">'+esc(pretty)+'</div></div>';
+  showErrPop(html, el||null);
 }
 function logsForPolicy(key){ return policyErrorRows(key); }
 function errorStructureKey(list){

@@ -297,3 +297,38 @@ func TestErrorsListReturnsSplitShapes(t *testing.T) {
 	}
 	t.Fatalf("policy missing from /errors: %+v", out.Errors)
 }
+
+func TestErrorsUnmatchedShapeReturnsRawSample(t *testing.T) {
+	dir := t.TempDir()
+	cfg := sentrycfg.Default()
+	st := state.New(filepath.Join(dir, "s.json"))
+	tr := trash.New(filepath.Join(dir, "trash"), 7, true, st)
+	api := &panel.API{Cfg: &cfg, State: st, Trash: tr, Guard: guard.New(cfg, st, tr, nil)}
+
+	sample := `{"error":{"code":"spending-limit","message":"monthly spending limit reached"}}`
+	st.ObserveError("unmatched", "连接中断", "none", "", sample, "a402", "xai-a.json", "usage", 402)
+	req := httptest.NewRequest(http.MethodGet, "/errors", nil)
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, req)
+	var out struct {
+		Errors []struct {
+			Key    string `json:"key"`
+			Shapes []struct {
+				Sample string `json:"sample"`
+			} `json:"shapes"`
+		} `json:"errors"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range out.Errors {
+		if e.Key != "unmatched" || len(e.Shapes) == 0 {
+			continue
+		}
+		if !strings.Contains(e.Shapes[0].Sample, "spending-limit") || e.Shapes[0].Sample == "连接中断" {
+			t.Fatalf("want raw hit body in shape sample, got %q", e.Shapes[0].Sample)
+		}
+		return
+	}
+	t.Fatalf("unmatched shapes missing: %+v", out.Errors)
+}

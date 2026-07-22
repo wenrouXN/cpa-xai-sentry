@@ -268,9 +268,13 @@ func liveActiveReason(acc *state.Account) string {
 	if acc == nil {
 		return "正常·待观察"
 	}
-	bestK, bestN := "", 0
+	bestK, bestN, anyN := "", 0, 0
 	if acc.Streaks != nil {
 		for k, v := range acc.Streaks {
+			if k == "any_error" {
+				anyN = v
+				continue
+			}
 			if v > bestN {
 				bestK, bestN = k, v
 			}
@@ -279,6 +283,11 @@ func liveActiveReason(acc *state.Account) string {
 	sig := acc.LastSignal
 	if bestN > 0 {
 		sig = bestK
+	} else if anyN > 0 {
+		bestN = anyN
+		if sig == "any_error" {
+			sig = ""
+		}
 	}
 	// cool/候删 到期恢复：pending 优先，按 residual 信号标成「xxx·恢复待观察」
 	if acc.PendingObserve {
@@ -298,6 +307,8 @@ func liveActiveReason(acc *state.Account) string {
 			return "正常·观察·401×" + itoaPanel(bestN)
 		case "code:invalid-argument":
 			return "正常·观察·参数×" + itoaPanel(bestN)
+		case "unmatched":
+			return "正常·观察·未分类×" + itoaPanel(bestN)
 		}
 		return "正常·观察·×" + itoaPanel(bestN)
 	}
@@ -3039,7 +3050,7 @@ func (a *API) handleErrors(w http.ResponseWriter, r *http.Request) {
 				}
 				cur := shCount[sh]
 				if cur == nil {
-					cur = map[string]any{"shape": sh, "label": h["shape_label"], "suggest_key": h["suggest_key"], "count": 0, "sample": h["message"]}
+					cur = map[string]any{"shape": sh, "label": h["shape_label"], "suggest_key": h["suggest_key"], "count": 0, "sample": h["sample"]}
 					shCount[sh] = cur
 				}
 				cur["count"] = asInt(cur["count"]) + asInt(h["hits"])

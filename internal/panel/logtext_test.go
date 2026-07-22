@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/openclaw-local/cpa-xai-sentry/internal/state"
@@ -24,6 +25,25 @@ func TestHumanizeReasonNeverSurfacesInternalKeys(t *testing.T) {
 	// Chinese policy reason kept
 	if got := humanizeReason("策略阶梯冷却 · 连续≥1", "429·免费额度用尽", "cooldown"); got != "策略阶梯冷却 · 连续≥1" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestLiveActiveReasonSkipsAnyErrorForDisplay(t *testing.T) {
+	tests := []struct {
+		name    string
+		streaks map[string]int
+	}{
+		{name: "prefer real streak", streaks: map[string]int{"any_error": 40, "unmatched": 39}},
+		{name: "label global count with last signal", streaks: map[string]int{"any_error": 40}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			acc := &state.Account{State: state.Active, LastSignal: "unmatched", Streaks: tt.streaks}
+			got := liveActiveReason(acc)
+			if !strings.Contains(got, "未分类") || strings.Contains(got, "任意错误") {
+				t.Fatalf("want unmatched display instead of any_error, got %q", got)
+			}
+		})
 	}
 }
 
