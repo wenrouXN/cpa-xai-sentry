@@ -229,9 +229,60 @@ func HumanMsg(key, sample string, status int) string {
 // HTTP status is one component, never the whole identity. Known builtins retain
 // their stable keys; every other shape returns a suggested reason:fp_<hash> key
 // for user split/merge, but callers decide whether to promote it.
+//
+// The second return is a machine-readable shape label (business code / HTTP N /
+// raw fragment) — not Chinese. Chinese display names are filled only when the
+// user splits a shape into a policy card.
 func ShapeOf(sample string, status int) (shape, label, suggestKey string) {
 	fp := errorfp.Build(sample, status)
-	return fp.Shape, HumanMsg("", sample, status), fp.SuggestKey
+	return fp.Shape, ShapeLabel(fp, sample, status), fp.SuggestKey
+}
+
+// ShapeLabel builds the unmatched-shape list label: prefer business code, else
+// HTTP status, else a short raw fragment. Never auto-translates to Chinese.
+func ShapeLabel(fp errorfp.Result, sample string, status int) string {
+	code := strings.TrimSpace(fp.Code)
+	if code == "" {
+		code, _ = fieldsFromSample(sample)
+	}
+	if code != "" {
+		if status > 0 {
+			return fmt.Sprintf("%d·%s", status, code)
+		}
+		return code
+	}
+	if status > 0 {
+		return fmt.Sprintf("HTTP %d", status)
+	}
+	raw := strings.TrimSpace(htmlUnescape(sample))
+	if raw == "" {
+		raw = strings.TrimSpace(fp.Message)
+	}
+	// first line only for network errors like: Post "https://…": EOF
+	if i := strings.IndexByte(raw, '\n'); i >= 0 {
+		raw = raw[:i]
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return fp.Shape
+	}
+	// Prefer the tail after the last ": " for Go net errors (…: EOF / bad MAC).
+	if j := strings.LastIndex(raw, ": "); j >= 0 && j+2 < len(raw) {
+		tail := strings.TrimSpace(raw[j+2:])
+		if tail != "" && len(tail) <= 80 {
+			raw = tail
+		}
+	}
+	if len(raw) > 64 {
+		raw = raw[:64] + "…"
+	}
+	return raw
+}
+
+// fieldsFromSample reuses fingerprint field extraction without importing internals.
+func fieldsFromSample(sample string) (code, msg string) {
+	fp := errorfp.Build(sample, 0)
+	return fp.Code, fp.Message
 }
 
 func htmlUnescape(s string) string {

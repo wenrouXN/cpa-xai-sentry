@@ -1,6 +1,7 @@
 package errorsig_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/openclaw-local/cpa-xai-sentry/internal/errorsig"
@@ -47,6 +48,24 @@ func TestHumanMsgBare429IsNotFreeUsage(t *testing.T) {
 	}
 	if got := errorsig.HumanMsg("free_usage_429", `{"error":"Too many requests"}`, 429); got != "免费额度用尽" {
 		t.Fatalf("free_usage key message = %q", got)
+	}
+}
+
+func TestShapeOfLabelIsMachineCodeNotChinese(t *testing.T) {
+	body := `{"code":"personal-team-blocked:spending-limit","error":"You have run out of credits or need a Grok subscription."}`
+	_, lab, _ := errorsig.ShapeOf(body, 402)
+	if lab != "402·personal-team-blocked:spending-limit" {
+		t.Fatalf("shape label want machine code, got %q", lab)
+	}
+	if strings.Contains(lab, "消费") || strings.Contains(lab, "连接") {
+		t.Fatalf("shape label must not auto-translate Chinese: %q", lab)
+	}
+	_, eofLab, _ := errorsig.ShapeOf(`Post "https://cli-chat-proxy.grok.com/v1/responses": unexpected EOF`, 0)
+	if eofLab == "连接中断" || strings.Contains(eofLab, "连接") {
+		t.Fatalf("EOF shape must not be Chinese 连接中断, got %q", eofLab)
+	}
+	if !strings.Contains(strings.ToLower(eofLab), "eof") {
+		t.Fatalf("EOF shape should keep raw fragment, got %q", eofLab)
 	}
 }
 

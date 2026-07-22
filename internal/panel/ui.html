@@ -2159,16 +2159,17 @@ function sanitizePolicyKey(s){
 async function splitShape(shape, suggestKey, label){
   if(!shape){ toast('形态为空'); return; }
   const defKey=suggestKey||('reason:'+shape);
-  // 推断错误码：http_426 → 426；free_usage_429 → 429
-  const codeGuess=httpCodeOf({key:defKey, label:label||'', status_code:0}) || httpCodeOf({key:shape}) || '';
-  const defName=stripCodePrefix(label||shape||'未命名');
+  // 形态列表 label 已是机器码（402·spending-limit / EOF）；中文名必须手填
+  const machine=String(label||shape||'').trim();
+  const codeGuess=httpCodeOf({key:defKey, label:machine, status_code:0}) || httpCodeOf({key:shape}) || (machine.match(/^(\d{3})[·.]/)||[])[1] || '';
   const nameIn=prompt(
-    '拆成新分类 — 只填中文名称\n（错误码会自动加在前面'+(codeGuess?('，如 '+codeGuess+'·'+defName):'')+'）\n不要手写 429· / 403· 前缀',
-    defName
+    '拆成新分类 — 手动填中文显示名\n形态代码：'+machine+'\n（列表标题会拼成 '+(codeGuess?(codeGuess+'·你的中文名'):'你的中文名')+'）\n不要手写 429· / 403· 前缀',
+    ''
   );
   if(nameIn===null) return;
-  const name=stripCodePrefix(String(nameIn||'').trim()||defName);
-  const msgIn=prompt('错误信息短文案（报错日志）\n只填中文，例如：消费限额 / 权限拒绝 / 终端版本过低\n留空=用显示名称', name);
+  const name=stripCodePrefix(String(nameIn||'').trim());
+  if(!name){ toast('请填写中文显示名'); return; }
+  const msgIn=prompt('错误信息短文案（报错日志，手动中文）\n留空=用显示名称', name);
   if(msgIn===null) return;
   const display_msg=stripCodePrefix(String(msgIn||'').trim());
   // key 默认自动用 suggest（reason:http_426），不再强制手填
