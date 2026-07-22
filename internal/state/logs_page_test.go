@@ -7,7 +7,8 @@ import (
 
 func TestSnapshotLogsPageNewestFirst(t *testing.T) {
 	s := New("")
-	base := time.Date(2026, 7, 14, 10, 0, 0, 0, time.FixedZone("CST", 8*3600))
+	// Relative to now so 7-day Log retention does not drop fixtures.
+	base := time.Now().Add(-5 * time.Minute)
 	for i := 0; i < 5; i++ {
 		s.Log(ActionLog{At: base.Add(time.Duration(i) * time.Minute), Action: "a", Auth: "x", Reason: string(rune('0' + i))})
 	}
